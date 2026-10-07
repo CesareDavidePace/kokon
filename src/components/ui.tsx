@@ -1,0 +1,95 @@
+import { Check } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+
+/** Largest w×h box with the given aspect that fits the container. */
+export function useFit(aspect: number) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [box, setBox] = useState({ w: 0, h: 0 });
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      const W = el.clientWidth;
+      const H = el.clientHeight;
+      const w = Math.min(W, H * aspect);
+      setBox({ w, h: w / aspect });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [aspect]);
+  return { ref, box };
+}
+
+/** Button + anchored popover that closes on outside click / Escape. */
+export function Popover(props: {
+  trigger: (open: boolean, toggle: () => void) => ReactNode;
+  children: (close: () => void) => ReactNode;
+  placement?: "top-start" | "top-end" | "bottom-end" | "bottom-start";
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  const pos: Record<string, React.CSSProperties> = {
+    "top-start": { bottom: "calc(100% + 8px)", left: 0 },
+    "top-end": { bottom: "calc(100% + 8px)", right: 0 },
+    "bottom-end": { top: "calc(100% + 6px)", right: 0 },
+    "bottom-start": { top: "calc(100% + 6px)", left: 0 },
+  };
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      {props.trigger(open, () => setOpen((o) => !o))}
+      {open && (
+        <div className={`popover ${props.className ?? ""}`} style={pos[props.placement ?? "top-start"]}>
+          {props.children(() => setOpen(false))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function Option(props: { selected?: boolean; onClick: () => void; icon?: ReactNode; label: string; sub?: string }) {
+  return (
+    <button className="opt" onClick={props.onClick} role="menuitemradio" aria-checked={!!props.selected}>
+      <span className="check">{props.selected ? <Check size={15} /> : props.icon}</span>
+      <span>{props.label}</span>
+      {props.sub && <span className="sub">{props.sub}</span>}
+    </button>
+  );
+}
+
+export function Seg<T extends string>(props: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void }) {
+  return (
+    <div className="seg" role="radiogroup">
+      {props.options.map((o) => (
+        <button key={o.value} className={o.value === props.value ? "on" : ""} onClick={() => props.onChange(o.value)} role="radio" aria-checked={o.value === props.value}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function Switch(props: { on: boolean; onChange: (v: boolean) => void; label?: string }) {
+  return <button className={`switch ${props.on ? "on" : ""}`} role="switch" aria-checked={props.on} aria-label={props.label} onClick={() => props.onChange(!props.on)} />;
+}
+
+export function IconButton(props: { title: string; onClick?: () => void; children: ReactNode; active?: boolean; disabled?: boolean; small?: boolean }) {
+  return (
+    <button className={`icon-btn ${props.small ? "sm" : ""} ${props.active ? "active" : ""}`} title={props.title} aria-label={props.title} onClick={props.onClick} disabled={props.disabled}>
+      {props.children}
+    </button>
+  );
+}

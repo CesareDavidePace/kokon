@@ -1,0 +1,317 @@
+import { Activity, Copy, Cpu, FolderOpen, HardDrive, RefreshCw, RotateCcw, Settings2, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { api } from "../lib/api";
+import { native } from "../lib/native";
+import { refreshStatus, setState, toastError, toastInfo } from "../lib/store";
+import { UPSCALERS } from "../lib/logic";
+import type { AppConfig, Check, ModelProfile, RefineMode, SetupReport, TextEncoderPlacement } from "../lib/types";
+import { IconButton, Seg, Switch } from "./ui";
+
+type Tab = "general" | "models" | "performance" | "diagnostics";
+
+export function defaultProfilePaths(dir: string, p: ModelProfile): ModelProfile {
+  const m = `${dir.replace(/[\\/]+$/, "")}\\models\\qwen21\\`;
+  return {
+    ...p,
+    diffusionModel: m + "qwen-image-2.1-UC-Q4_K_M.gguf",
+    vae: m + "qwen_image_2.1_vae_bf16.safetensors",
+    textEncoder: m + "Qwen3VL-8B-Instruct-Q4_K_M.gguf",
+    visionProjector: m + "mmproj-Qwen3VL-8B-Instruct-F16.gguf",
+  };
+}
+
+function PathField(props: { label: string; value: string; onChange: (v: string) => void; folder?: boolean; extensions?: string[] }) {
+  return (
+    <label className="field">
+      <span>{props.label}</span>
+      <div className="path-row">
+        <input className="input" type="text" value={props.value} onChange={(e) => props.onChange(e.target.value)} spellCheck={false} />
+        <button
+          className="btn"
+          onClick={async () => {
+            const p = props.folder ? await native.pickFolder(props.value) : await native.pickFile(props.extensions ?? ["gguf", "safetensors"], props.value);
+            if (p) props.onChange(p);
+          }}
+        >
+          Browse
+        </button>
+      </div>
+    </label>
+  );
+}
+
+function Diagnostics() {
+  const [text, setText] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = async () => {
+    setText(null);
+    try {
+      setText((await api.diagnostics()).text);
+    } catch (e) {
+      toastError(e);
+      setText("");
+    }
+  };
+  useEffect(() => {
+    load();
+  }, []);
+  return (
+    <>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button className="btn" disabled={!text} onClick={async () => (await writeText(text ?? ""), toastInfo("Diagnostics copied"))}>
+          <Copy size={14} /> Copy
+        </button>
+        <button className="btn" onClick={load}>
+          <RefreshCw size={14} /> Refresh
+        </button>
+        <button
+          className="btn"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await api.restartBackend();
+              toastInfo("Inference server restarted");
+              load();
+            } catch (e) {
+              toastError(e);
+            } finally {
+              setBusy(false);
+              refreshStatus();
+            }
+          }}
+        >
+          <RotateCcw size={14} /> {busy ? "Restarting…" : "Restart server"}
+        </button>
+        <button className="btn" onClick={async () => native.openFolder(`${await native.dataFolder()}\\logs`).catch(toastError)}>
+          <FolderOpen size={14} /> Logs
+        </button>
+      </div>
+      <pre className="diag">{text ?? "Collecting…"}</pre>
+    </>
+  );
+}
+
+export function Settings() {
+  const [tab, setTab] = useState<Tab>("general");
+  const [cfg, setCfg] = useState<AppConfig | null>(null);
+  const [devices, setDevices] = useState<[string, string][]>([]);
+  const [upscaler, setUpscaler] = useState<Check | null>(null);
+  const [dirty, setDirty] = useState(false);
+
+  useEffect(() => {
+    api.config().then(setCfg, toastError);
+    api.setup().then(
+      (r: SetupReport) => {
+        setDevices(r.devices);
+        setUpscaler(r.checks.find((c) => c.id === "upscaler") ?? null);
+      },
+      () => {},
+    );
+  }, []);
+
+  const close = () => setState({ overlay: null });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  if (!cfg) return null;
+  const profile = cfg.profiles.find((p) => p.id === cfg.activeProfile) ?? cfg.profiles[0];
+  const set = (patch: Partial<AppConfig>) => {
+    setCfg({ ...cfg, ...patch });
+    setDirty(true);
+  };
+  const setProfile = (patch: Partial<ModelProfile>) => set({ profiles: cfg.profiles.map((p) => (p.id === profile.id ? { ...p, ...patch } : p)) });
+
+  const save = async () => {
+    try {
+      const r = await api.saveConfig(cfg);
+      setDirty(false);
+      api.setup().then((s: SetupReport) => setUpscaler(s.checks.find((c) => c.id === "upscaler") ?? null), () => {});
+      toastInfo(r.backend_restart_needed ? "Saved. The model reloads with the new settings on the next generation." : "Saved");
+      refreshStatus();
+    } catch (e) {
+      toastError(e);
+    }
+  };
+
+  const nav: [Tab, string, React.ReactNode][] = [
+    ["general", "General", <Settings2 size={16} key="g" />],
+    ["models", "Models", <HardDrive size={16} key="m" />],
+    ["performance", "Performance", <Cpu size={16} key="p" />],
+    ["diagnostics", "Diagnostics", <Activity size={16} key="d" />],
+  ];
+
+  return (
+    <div className="modal-scrim" onMouseDown={(e) => e.target === e.currentTarget && close()}>
+      <div className="modal" role="dialog" aria-label="Settings">
+        <div className="modal-nav">
+          {nav.map(([t, label, icon]) => (
+            <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>
+              {icon} {label}
+            </button>
+          ))}
+          <span style={{ flex: 1 }} />
+          {tab !== "diagnostics" && (
+            <button className="btn primary" style={{ justifyContent: "center" }} disabled={!dirty} onClick={save}>
+              Save
+            </button>
+          )}
+        </div>
+        <div className="modal-body">
+          <div style={{ display: "flex", alignItems: "center" }}>
+            <h3 style={{ flex: 1 }}>{nav.find((n) => n[0] === tab)?.[1]}</h3>
+            <IconButton title="Close" onClick={close}>
+              <X size={18} />
+            </IconButton>
+          </div>
+
+          {tab === "general" && (
+            <>
+              <PathField label="Save images to" value={cfg.outputDir} folder onChange={(v) => set({ outputDir: v })} />
+              <div className="field-row">
+                <span>Keep inference server running after closing the app</span>
+                <Switch on={cfg.keepServerRunning} onChange={(v) => set({ keepServerRunning: v })} />
+              </div>
+              <span className="muted" style={{ marginTop: -10 }}>Keeps the model in VRAM so the next start is instant.</span>
+              <label className="field-row">
+                <span>Unload the model after idle minutes (app closed)</span>
+                <input className="input" type="number" min={0} max={1440} style={{ width: 90 }} value={cfg.idleUnloadMinutes} onChange={(e) => set({ idleUnloadMinutes: Math.max(0, Number(e.target.value) || 0) })} />
+              </label>
+              <span className="muted" style={{ marginTop: -10 }}>Applies to MCP and API use without the desktop window. 0 keeps it loaded.</span>
+            </>
+          )}
+
+          {tab === "models" && (
+            <>
+              <PathField label="stable-diffusion.cpp folder" value={cfg.sdcppDir} folder onChange={(v) => set({ sdcppDir: v })} />
+              <button className="btn" style={{ alignSelf: "flex-start" }} onClick={() => setProfile(defaultProfilePaths(cfg.sdcppDir, profile))}>
+                Use default model paths in this folder
+              </button>
+              <span className="muted">Profile: {profile.displayName}</span>
+              <PathField label="Diffusion model" value={profile.diffusionModel} onChange={(v) => setProfile({ diffusionModel: v })} />
+              <PathField label="VAE" value={profile.vae} onChange={(v) => setProfile({ vae: v })} />
+              <PathField label="Text encoder (Qwen3-VL)" value={profile.textEncoder} onChange={(v) => setProfile({ textEncoder: v })} />
+              <PathField label="Vision projector (mmproj)" value={profile.visionProjector ?? ""} onChange={(v) => setProfile({ visionProjector: v || null })} />
+              <PathField label="Upscalers folder (ESRGAN)" value={cfg.upscalersDir ?? `${cfg.sdcppDir.replace(/[\\/]+$/, "")}\\models\\upscalers`} folder onChange={(v) => set({ upscalersDir: v || null })} />
+              <label className="field-row">
+                <span>Upscaler model (ESRGAN)</span>
+                <select className="select" value={cfg.upscalerModel} onChange={(e) => set({ upscalerModel: e.target.value })}>
+                  {UPSCALERS.map(([name, label], i) => (
+                    <option key={name} value={name}>
+                      {label}
+                      {i === 0 ? " (default)" : ""}
+                    </option>
+                  ))}
+                  {!UPSCALERS.some(([n]) => n === cfg.upscalerModel) && <option value={cfg.upscalerModel}>{cfg.upscalerModel}</option>}
+                </select>
+              </label>
+              <span className="muted">Enlarges every result from the model's output to its final size, and runs the Upscale button.</span>
+              {upscaler && <span className="muted">{upscaler.ok ? `Found: ${upscaler.detail}` : upscaler.detail}</span>}
+            </>
+          )}
+
+          {tab === "performance" && (
+            <>
+              <label className="field-row">
+                <span>GPU device</span>
+                <select className="select" value={cfg.device} onChange={(e) => set({ device: e.target.value })}>
+                  {(devices.length ? devices : [[cfg.device, ""] as [string, string]]).map(([n, d]) => (
+                    <option key={n} value={n.toLowerCase()}>
+                      {n}
+                      {d ? ` — ${d}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="field">
+                <span>Text encoder weights</span>
+                <Seg<TextEncoderPlacement>
+                  value={cfg.textEncoderPlacement}
+                  options={[
+                    { value: "ram", label: "RAM" },
+                    { value: "gpu", label: "GPU" },
+                    { value: "cpu", label: "CPU" },
+                    { value: "auto", label: "Auto" },
+                  ]}
+                  onChange={(v) => set({ textEncoderPlacement: v })}
+                />
+                <span className="muted">
+                  RAM (recommended): weights in system memory, computed on the GPU. CPU uses the least VRAM but makes image editing several times slower.
+                </span>
+              </div>
+              <label className="field-row">
+                <span>VRAM reserve (GiB)</span>
+                <input className="input" type="number" min={0} max={16} step={0.5} style={{ width: 90 }} value={cfg.vramReserveGib} onChange={(e) => set({ vramReserveGib: Math.max(0, Number(e.target.value) || 0) })} />
+              </label>
+              <div className="field-row">
+                <span>Flash attention</span>
+                <Switch on={cfg.flashAttention} onChange={(v) => set({ flashAttention: v })} />
+              </div>
+              <div className="field-row">
+                <span>SageAttention (faster sampling)</span>
+                <Switch on={cfg.sageAttention} onChange={(v) => set({ sageAttention: v })} />
+              </div>
+              <label className="field-row">
+                <span>VAE tile size (px, 0 = off)</span>
+                <input className="input" type="number" min={0} max={2048} step={128} style={{ width: 90 }} value={cfg.vaeTileSize} onChange={(e) => set({ vaeTileSize: Math.max(0, Math.round(Number(e.target.value) || 0)) })} />
+              </label>
+              <div className="field">
+                <span>Edit prefix cache</span>
+                <Seg<string>
+                  value={cfg.prefixCacheType}
+                  options={[
+                    { value: "q8_0", label: "8-bit" },
+                    { value: "f16", label: "FP16" },
+                    { value: "auto", label: "Auto" },
+                    { value: "off", label: "Off" },
+                  ]}
+                  onChange={(v) => set({ prefixCacheType: v })}
+                />
+                <span className="muted">
+                  Reuses the reference image and prompt across steps so each step only computes the new image. 8-bit (recommended) fits a 2 MP edit on 16 GB; FP16 is more exact but needs twice the memory; Auto uses FP32 when SageAttention is on and usually does not fit.
+                </span>
+              </div>
+              <div className="field-row">
+                <span>Load all weights at startup</span>
+                <Switch on={cfg.eagerLoad} onChange={(v) => set({ eagerLoad: v })} />
+              </div>
+              <div className="field">
+                <span>Detailed upscale</span>
+                <Seg<RefineMode>
+                  value={cfg.refineMode === "best" ? "best" : "fast"}
+                  options={[
+                    { value: "fast", label: "Fast" },
+                    { value: "best", label: "Best" },
+                  ]}
+                  onChange={(v) => set({ refineMode: v })}
+                />
+                <span className="muted">
+                  Only for Upscale → Detailed, which re-renders fine detail at about 2K before the upscaler model. Fast: 6 steps with caching. Best: 8 steps, no cache. Generation always renders in one pass and is then enlarged with the upscaler model.
+                </span>
+              </div>
+              <label className="field-row">
+                <span>ESRGAN tile size (px, 0 = default 128)</span>
+                <input className="input" type="number" min={0} max={1024} step={64} style={{ width: 90 }} value={cfg.upscaleTileSize} onChange={(e) => set({ upscaleTileSize: Math.max(0, Math.round(Number(e.target.value) || 0)) })} />
+              </label>
+              <label className="field-row">
+                <span>Inference server port</span>
+                <input className="input" type="number" min={1024} max={65535} style={{ width: 100 }} value={cfg.serverPort} onChange={(e) => set({ serverPort: Number(e.target.value) || cfg.serverPort })} />
+              </label>
+              <label className="field">
+                <span>Extra server arguments</span>
+                <input className="input" type="text" spellCheck={false} placeholder="e.g. --vae-conv-direct" value={cfg.extraServerArgs.join(" ")} onChange={(e) => set({ extraServerArgs: e.target.value.split(/\s+/).filter(Boolean) })} />
+              </label>
+              <span className="muted">The server always listens on 127.0.0.1 only.</span>
+            </>
+          )}
+
+          {tab === "diagnostics" && <Diagnostics />}
+        </div>
+      </div>
+    </div>
+  );
+}

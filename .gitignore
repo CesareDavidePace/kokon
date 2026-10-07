@@ -1,0 +1,11 @@
+/target
+node_modules
+/dist
+/mcp/dist
+/mcp/build
+/src-tauri/target
+/src-tauri/binaries/*.exe
+*.log
+/.test-data
+/dist-release
+/src-tauri/gen

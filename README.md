@@ -32,7 +32,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/media/demo.gif" alt="Kokon: open a photo, type a sentence, get the edited photo" width="860">
+  <img src="docs/media/demo.gif" alt="Kokon demo: create the Colosseum, rebuild it out of pasta, combine it into a kitchen scene, expand it and add a title" width="860">
 </p>
 
 <p align="center">

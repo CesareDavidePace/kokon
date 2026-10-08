@@ -1,32 +1,29 @@
-import {
-  ArrowUp, Brush, ChevronDown, Combine, Expand, Gauge, ImagePlus, Pencil, RectangleHorizontal, RectangleVertical, SlidersHorizontal, Sparkles, Square, Wand2, X, ZoomIn,
-} from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { ArrowUp, Brush, ChevronDown, Expand, FolderOpen, Gauge, ImagePlus, RectangleHorizontal, RectangleVertical, SlidersHorizontal, Sparkles, Square, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, urls } from "../lib/api";
-import { activeOverrides, buildRequest, expansionPixels, formatDuration, hasOutpaint, MODE_LABEL, moveRef, type Ref } from "../lib/logic";
+import { activeOverrides, buildRequest, expansionPixels, formatDuration, hasOutpaint, moveRef, needsPrompt, versionLabels, type Ref } from "../lib/logic";
 import { native } from "../lib/native";
-import { addInputs, getState, setState, submitComposer, toastError, updateComposer, useStore } from "../lib/store";
-import type { Mode, Plan, Quality } from "../lib/types";
+import {
+  addAsReference, addInputs, getState, itemSource, selectedItem, selectItem, setState, submitComposer, toastError, updateComposer, useStore, type SessionItem,
+} from "../lib/store";
+import type { InpaintAction, Plan, Quality } from "../lib/types";
 import { AdvancedPanel } from "./Advanced";
-import { Option, Popover } from "./ui";
-
-const thumbUrl = (r: Ref) => (r.source.startsWith("gen:") ? urls.genThumb(r.source.slice(4)) : urls.inputThumb(r.source.slice(6)));
-
-const MODE_ICON: Record<Mode, React.ReactNode> = {
-  auto: <Sparkles size={15} />,
-  generate: <Wand2 size={15} />,
-  edit: <Pencil size={15} />,
-  multi_reference: <Combine size={15} />,
-  inpaint: <Brush size={15} />,
-  outpaint: <Expand size={15} />,
-  upscale: <ZoomIn size={15} />,
-};
+import { Option, Popover, Seg } from "./ui";
 
 const QUALITY: { value: Quality; label: string; sub: string }[] = [
   { value: "fast", label: "Fast", sub: "~1 MP, 20 steps" },
   { value: "balanced", label: "Balanced", sub: "~1 MP, 40 steps · recommended" },
   { value: "quality", label: "Quality", sub: "native 2K, 40 steps · slower" },
 ];
+
+const INPAINT_ACTIONS: { value: InpaintAction; label: string; placeholder: string }[] = [
+  { value: "edit", label: "Change", placeholder: "Describe the change in the painted area…" },
+  { value: "remove", label: "Remove", placeholder: "What to remove (optional)…" },
+  { value: "replace", label: "Replace", placeholder: "What to put there instead…" },
+  { value: "add", label: "Add", placeholder: "What to add in the painted area…" },
+];
+
+const INPAINT_VERB: Record<InpaintAction, string> = { edit: "Changing", remove: "Clearing", replace: "Replacing", add: "Adding to" };
 
 const ASPECT_ICON: Record<string, React.ReactNode> = {
   "1:1": <Square size={15} />,
@@ -48,9 +45,24 @@ export async function importPaths(paths: string[]) {
   addInputs(recs);
 }
 
+/** Version name of a reference when it is part of the project ("v2", "Original"). */
+function useRefNames() {
+  const session = useStore((s) => s.session);
+  return useMemo(() => {
+    const labels = versionLabels(session);
+    const bySource = new Map<string, string>();
+    for (const i of session) {
+      const s = itemSource(i);
+      if (s) bySource.set(s, labels[i.key]);
+    }
+    return (r: Ref) => bySource.get(r.source) ?? null;
+  }, [session]);
+}
+
+/** Thumbnails of the images the prompt works on; drag to reorder when there are several. */
 function RefStrip() {
   const refs = useStore((s) => s.composer.refs);
-  const mask = useStore((s) => s.composer.mask);
+  const nameOf = useRefNames();
   const [drag, setDrag] = useState<{ from: number; to: number; active: boolean } | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const start = useRef<{ x: number; idx: number } | null>(null);
@@ -64,7 +76,6 @@ function RefStrip() {
     return els.length;
   };
 
-  if (!refs.length) return null;
   return (
     <div
       className="refs"
@@ -77,7 +88,7 @@ function RefStrip() {
       onPointerUp={() => {
         if (drag?.active) {
           const to = drag.to > drag.from ? drag.to - 1 : drag.to;
-          updateComposer({ refs: moveRef(getState().composer.refs, drag.from, to) });
+          updateComposer({ refs: moveRef(getState().composer.refs, drag.from, to), mask: null, outpaint: null });
         }
         start.current = null;
         setDrag(null);
@@ -91,34 +102,158 @@ function RefStrip() {
         <div
           key={r.key}
           className={`ref ${drag?.active && drag.from === i ? "dragging" : ""} ${drag?.active && drag.to === i && drag.from !== i ? "drop-before" : ""}`}
-          title={`Image ${i + 1} · ${r.width}×${r.height}${refs.length > 1 ? " — drag to reorder" : ""}`}
+          title={`${refs.length > 1 ? `Image ${i + 1}: ` : ""}${nameOf(r) ?? r.name} · ${r.width}×${r.height}${refs.length > 1 ? " — drag to reorder" : ""}`}
           onPointerDown={(e) => {
             if ((e.target as HTMLElement).closest(".rm")) return;
             (e.currentTarget.parentElement as HTMLElement).setPointerCapture?.(e.pointerId);
             start.current = { x: e.clientX, idx: i };
           }}
         >
-          <img src={thumbUrl(r)} alt="" draggable={false} />
+          <img src={urls.sourceThumb(r.source)} alt="" draggable={false} />
           {refs.length > 1 && <span className="num">{i + 1}</span>}
-          {mask && mask.refKey === r.key && (
-            <span className="badge" title="Mask painted">
-              <Brush size={11} />
-            </span>
-          )}
           <button
             className="rm"
             title="Remove"
             aria-label={`Remove image ${i + 1}`}
             onClick={() => {
               const c = getState().composer;
-              updateComposer({ refs: c.refs.filter((x) => x.key !== r.key), mask: c.mask?.refKey === r.key ? null : c.mask, outpaint: i === 0 ? null : c.outpaint });
+              updateComposer({ refs: c.refs.filter((x) => x.key !== r.key), mask: i === 0 ? null : c.mask, outpaint: i === 0 ? null : c.outpaint });
             }}
           >
-            <X size={12} />
+            <X size={11} />
           </button>
         </div>
       ))}
     </div>
+  );
+}
+
+/** Says, in words, what the prompt is going to do, and offers the tools for that image. */
+function TargetBar() {
+  const c = useStore((s) => s.composer);
+  const sel = useStore(selectedItem);
+  const session = useStore((s) => s.session);
+  const nameOf = useRefNames();
+
+  if (!c.refs.length) {
+    const img = sel && (sel.gen || sel.input) ? sel : [...session].reverse().find((i) => i.gen || i.input);
+    if (!img) return null;
+    return (
+      <div className="target create">
+        <span className="target-icon">
+          <Sparkles size={15} />
+        </span>
+        <span className="target-text">
+          <span className="what">New image</span>
+          <span className="sub">Made from the prompt alone</span>
+        </span>
+        <span className="spacer" />
+        <button className="tool" onClick={() => selectItem(img.key)}>
+          Edit {versionLabels(session)[img.key]} instead
+        </button>
+      </div>
+    );
+  }
+
+  const first = c.refs[0];
+  const name = nameOf(first) ?? (first.source.startsWith("gen:") ? "this result" : first.name);
+  const outPx = hasOutpaint(c.outpaint) ? expansionPixels(c.outpaint!, first.width, first.height) : null;
+  const what =
+    c.refs.length > 1 ? `Combining ${c.refs.length} images` : c.mask ? `${INPAINT_VERB[c.inpaintAction]} the painted area of ${name}` : outPx ? `Expanding ${name}` : `Editing ${name}`;
+  const sub =
+    c.refs.length > 1
+      ? "Refer to them as image 1, image 2… in the prompt"
+      : outPx
+        ? `${first.width}×${first.height} → ${first.width + outPx.left + outPx.right}×${first.height + outPx.top + outPx.bottom}`
+        : `${first.width}×${first.height}`;
+
+  return (
+    <div className="target">
+      <RefStrip />
+      <span className="target-text">
+        <span className="what">{what}</span>
+        <span className="sub">{sub}</span>
+      </span>
+      <span className="spacer" />
+      <span className="tool-group">
+        <button className={`tool ${c.mask ? "on" : ""}`} onClick={() => setState({ overlay: "inpaint" })} title="Paint the area to change; the rest stays as it is">
+          <Brush size={14} /> {c.mask ? "Area painted" : "Paint area"}
+        </button>
+        {c.mask && (
+          <button className="tool-x" title="Remove the painted area" onClick={() => updateComposer({ mask: null })}>
+            <X size={13} />
+          </button>
+        )}
+      </span>
+      <span className="tool-group">
+        <button className={`tool ${outPx ? "on" : ""}`} onClick={() => setState({ overlay: "expand" })} title="Extend the image beyond its borders">
+          <Expand size={14} /> {outPx ? "Expanded" : "Expand"}
+        </button>
+        {outPx && (
+          <button className="tool-x" title="Remove the expansion" onClick={() => updateComposer({ outpaint: null })}>
+            <X size={13} />
+          </button>
+        )}
+      </span>
+      <button className="tool" title="Create a new image from the prompt instead" onClick={() => updateComposer({ refs: [], mask: null, outpaint: null })}>
+        New image
+      </button>
+    </div>
+  );
+}
+
+/** Adds a reference: a version from this project, or files. */
+function AddImage() {
+  const session = useStore((s) => s.session);
+  const refs = useStore((s) => s.composer.refs);
+  const labels = useMemo(() => versionLabels(session), [session]);
+  const used = new Set(refs.map((r) => r.source));
+  const candidates = session.filter((i) => {
+    const s = itemSource(i);
+    return s && !used.has(s);
+  });
+  const browse = async () => importPaths(await native.pickImages());
+  const title = refs.length ? "Add a reference image" : "Add an image to edit";
+
+  if (!candidates.length) {
+    return (
+      <button className="icon-btn" title={`${title} (or drop / paste)`} aria-label={title} onClick={browse}>
+        <ImagePlus size={19} />
+      </button>
+    );
+  }
+  return (
+    <Popover
+      placement="top-start"
+      trigger={(open, toggle) => (
+        <button className={`icon-btn ${open ? "active" : ""}`} title={title} aria-label={title} onClick={toggle}>
+          <ImagePlus size={19} />
+        </button>
+      )}
+    >
+      {(close) => (
+        <div className="add-menu">
+          <div className="label">{refs.length ? "Add a version as reference" : "Edit a version"}</div>
+          <div className="add-grid">
+            {candidates.map((it: SessionItem) => (
+              <button key={it.key} title={it.gen?.prompt ?? labels[it.key]} onClick={() => (addAsReference(it), close())}>
+                <img src={urls.sourceThumb(itemSource(it)!)} alt="" draggable={false} />
+                <span>{labels[it.key]}</span>
+              </button>
+            ))}
+          </div>
+          <button className="opt" onClick={() => (close(), browse())}>
+            <span className="check">
+              <FolderOpen size={15} />
+            </span>
+            <span>Browse files…</span>
+          </button>
+          <div className="muted" style={{ padding: "2px 10px 6px" }}>
+            You can also drop or paste images.
+          </div>
+        </div>
+      )}
+    </Popover>
   );
 }
 
@@ -141,12 +276,13 @@ function usePlanPreview(): { plan: Plan | null; error: string | null } {
       cancelled = true;
       window.clearTimeout(t);
     };
-  }, [connected, c.prompt, c.refs, c.mode, c.quality, c.resolution, c.aspect, c.outpaint, c.mask, c.customWidth, c.customHeight, c.advanced]);
+  }, [connected, c.prompt, c.refs, c.mode, c.quality, c.resolution, c.aspect, c.outpaint, c.mask, c.inpaintAction, c.customWidth, c.customHeight, c.advanced]);
   return res;
 }
 
 export function Composer() {
   const c = useStore((s) => s.composer);
+  const hasProject = useStore((s) => s.session.length > 0);
   const { plan, error } = usePlanPreview();
   const taRef = useRef<HTMLTextAreaElement>(null);
   const hasImages = c.refs.length > 0;
@@ -159,69 +295,40 @@ export function Composer() {
     ta.style.height = Math.min(200, ta.scrollHeight) + "px";
   }, [c.prompt]);
 
-  const detected = plan ? (plan.mode as Mode) : null;
-  const modeShown: Mode = c.mode === "auto" ? detected ?? "auto" : c.mode;
   const outPx = hasOutpaint(c.outpaint) && c.refs[0] ? expansionPixels(c.outpaint!, c.refs[0].width, c.refs[0].height) : null;
 
   const placeholder = !hasImages
-    ? "Describe an image…"
+    ? hasProject
+      ? "Describe a new image…"
+      : "Describe an image to create, or drop one in to edit it…"
     : c.refs.length > 1
       ? "Describe how to combine image 1, image 2…"
       : c.mask
-        ? "Describe what goes in the painted area…"
+        ? INPAINT_ACTIONS.find((a) => a.value === c.inpaintAction)!.placeholder
         : outPx
           ? "Describe the extended scene (optional details)…"
           : "Describe the change…";
 
-  const openEditor = (overlay: "inpaint" | "expand") => {
-    const first = getState().composer.refs[0];
-    if (!first) return;
-    setState({ overlay });
-  };
-
   const hint = (() => {
     if (error) return error;
     if (!plan) return "";
-    const parts = [`${plan.output.width}×${plan.output.height}`];
-    if (plan.working.width !== plan.output.width || plan.working.height !== plan.output.height) parts.push(`works at ${plan.working.width}×${plan.working.height}`);
-    parts.push(`~${formatDuration(plan.estimated_seconds)}`);
-    if (plan.optimized_for_vram) parts.push("optimized for VRAM");
-    return parts.join(" · ");
+    return `${plan.output.width}×${plan.output.height} · ~${formatDuration(plan.estimated_seconds)}`;
   })();
+  const hintTitle = plan
+    ? [
+        plan.working.width !== plan.output.width || plan.working.height !== plan.output.height ? `Works at ${plan.working.width}×${plan.working.height}` : "",
+        plan.optimized_for_vram ? "Optimized for VRAM" : "",
+        ...plan.notes,
+      ]
+        .filter(Boolean)
+        .join("\n")
+    : "";
+  const shaped = c.resolution !== "custom" && !c.mask && !outPx;
 
   return (
     <div className="composer-wrap">
       <div className="composer">
-        <RefStrip />
-        {(outPx || c.mask) && (
-          <div style={{ display: "flex", gap: 6, paddingBottom: 6 }}>
-            {outPx && (
-              <span className="chip">
-                <Expand size={13} /> Expand {outPx.left ? `←${outPx.left} ` : ""}
-                {outPx.right ? `→${outPx.right} ` : ""}
-                {outPx.top ? `↑${outPx.top} ` : ""}
-                {outPx.bottom ? `↓${outPx.bottom}` : ""}
-                <button onClick={() => openEditor("expand")} title="Adjust">
-                  <Pencil size={12} />
-                </button>
-                <button onClick={() => updateComposer({ outpaint: null })} title="Remove expansion">
-                  <X size={13} />
-                </button>
-              </span>
-            )}
-            {c.mask && (
-              <span className="chip">
-                <Brush size={13} /> Mask on image 1
-                <button onClick={() => openEditor("inpaint")} title="Edit mask">
-                  <Pencil size={12} />
-                </button>
-                <button onClick={() => updateComposer({ mask: null })} title="Remove mask">
-                  <X size={13} />
-                </button>
-              </span>
-            )}
-          </div>
-        )}
+        <TargetBar />
         <textarea
           id="prompt"
           ref={taRef}
@@ -234,71 +341,29 @@ export function Composer() {
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
               submitComposer();
+            } else if (e.key === "ArrowUp" && !c.prompt) {
+              const last = getState().lastPrompt;
+              if (last) {
+                e.preventDefault();
+                updateComposer({ prompt: last });
+              }
             }
           }}
           spellCheck
         />
         <div className="controls">
-          <button
-            className="icon-btn"
-            title="Add images (or drop / paste)"
-            aria-label="Add images"
-            onClick={async () => importPaths(await native.pickImages())}
-          >
-            <ImagePlus size={19} />
-          </button>
+          <AddImage />
 
-          <Popover
-            trigger={(open, toggle) => (
-              <button className={`pill ${open ? "on" : ""}`} onClick={toggle} title={plan?.mode_reason ? `Auto: ${plan.mode_reason}` : "Mode"}>
-                {MODE_ICON[modeShown]}
-                {c.mode === "auto" ? (detected ? MODE_LABEL[detected] : "Auto") : MODE_LABEL[c.mode]}
-                <ChevronDown size={13} />
-              </button>
-            )}
-          >
-            {(close) => (
-              <>
-                <Option selected={c.mode === "auto"} label="Auto" sub={detected ? MODE_LABEL[detected] : undefined} icon={MODE_ICON.auto} onClick={() => (updateComposer({ mode: "auto" }), close())} />
-                <Option selected={c.mode === "generate"} label="Create" sub="New image from text" icon={MODE_ICON.generate} onClick={() => (updateComposer({ mode: "generate" }), close())} />
-                {hasImages && <Option selected={c.mode === "edit"} label="Edit" sub="Change the image" icon={MODE_ICON.edit} onClick={() => (updateComposer({ mode: "edit" }), close())} />}
-                {c.refs.length > 1 && <Option selected={c.mode === "multi_reference"} label="Combine" sub="Use several images" icon={MODE_ICON.multi_reference} onClick={() => (updateComposer({ mode: "multi_reference" }), close())} />}
-                {hasImages && (
-                  <Option
-                    selected={c.mode === "inpaint"}
-                    label="Inpaint"
-                    sub="Paint an area"
-                    icon={MODE_ICON.inpaint}
-                    onClick={() => {
-                      close();
-                      updateComposer({ mode: "auto" });
-                      openEditor("inpaint");
-                    }}
-                  />
-                )}
-                {hasImages && (
-                  <Option
-                    selected={c.mode === "outpaint"}
-                    label="Expand"
-                    sub="Extend the borders"
-                    icon={MODE_ICON.outpaint}
-                    onClick={() => {
-                      close();
-                      updateComposer({ mode: "auto" });
-                      openEditor("expand");
-                    }}
-                  />
-                )}
-              </>
-            )}
-          </Popover>
+          {c.mask && (
+            <Seg value={c.inpaintAction} options={INPAINT_ACTIONS} onChange={(v) => updateComposer({ inpaintAction: v })} />
+          )}
 
-          {c.resolution !== "custom" && !c.mask && !outPx && (!hasImages || modeShown === "generate" || modeShown === "edit" || modeShown === "multi_reference" || modeShown === "auto") && (
+          {shaped && (
             <Popover
               trigger={(open, toggle) => (
                 <button className={`pill ${open ? "on" : ""}`} onClick={toggle} title="Aspect ratio">
                   {ASPECT_ICON[c.aspect] ?? <RectangleHorizontal size={15} />}
-                  {c.aspect === "auto" ? (plan && (modeShown === "generate" || hasImages) ? plan.aspect_label : "Auto") : c.aspect}
+                  {c.aspect === "auto" ? (plan ? plan.aspect_label : "Auto") : c.aspect}
                   <ChevronDown size={13} />
                 </button>
               )}
@@ -306,7 +371,7 @@ export function Composer() {
               {(close) => (
                 <>
                   {["auto", "1:1", "4:3", "3:4", "16:9", "9:16"].map((a) => (
-                    <Option key={a} selected={c.aspect === a} label={a === "auto" ? "Auto" : a} sub={a === "auto" ? (hasImages && c.mode !== "generate" ? "Same as image 1" : "From the prompt") : undefined} icon={ASPECT_ICON[a]} onClick={() => (updateComposer({ aspect: a }), close())} />
+                    <Option key={a} selected={c.aspect === a} label={a === "auto" ? "Auto" : a} sub={a === "auto" ? (hasImages ? "Same as image 1" : "From the prompt") : undefined} icon={ASPECT_ICON[a]} onClick={() => (updateComposer({ aspect: a }), close())} />
                   ))}
                   <Option label="Custom size…" icon={<SlidersHorizontal size={15} />} onClick={() => (updateComposer({ resolution: "custom" }), close())} />
                 </>
@@ -347,10 +412,10 @@ export function Composer() {
           </Popover>
 
           <span className="spacer" />
-          <span className="plan-hint" title={plan?.notes.join("\n") || plan?.mode_reason || ""}>
+          <span className="plan-hint" title={hintTitle}>
             {hint}
           </span>
-          <button className="send" title="Generate (Enter)" aria-label="Generate" disabled={!c.prompt.trim()} onClick={() => submitComposer()}>
+          <button className="send" title={hasImages ? "Apply (Enter)" : "Create (Enter)"} aria-label="Generate" disabled={!c.prompt.trim() && needsPrompt(c)} onClick={() => submitComposer()}>
             <ArrowUp size={18} strokeWidth={2.4} />
           </button>
         </div>

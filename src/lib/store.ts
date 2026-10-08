@@ -1,8 +1,13 @@
 // Minimal global store (useSyncExternalStore) — no extra dependencies.
+//
+// Work is organised in projects: each project is one line of work (an original or a first
+// result and every version made from it). The open project lives in `session`/`selected`;
+// every project is kept as ids in `projects` (persisted) and re-loaded from the service when
+// opened again.
 
 import { useSyncExternalStore } from "react";
-import { api, ApiError, subscribe } from "./api";
-import { buildRequest, emptyComposer, newKey, persistentAdvanced, refFromGen, refFromInput, type CompareMode, type Composer } from "./logic";
+import { api, ApiError, setPrivateInputs, subscribe } from "./api";
+import { buildRequest, emptyComposer, needsPrompt, newKey, persistentAdvanced, refFromGen, refFromInput, undoTarget, type CompareMode, type Composer, type Ref } from "./logic";
 import type { AppErrorBody, GenerationRecord, GenerationRequest, InputRecord, JobView, ServerState, StatusResponse } from "./types";
 
 export type Overlay = null | "gallery" | "settings" | "inpaint" | "expand";
@@ -15,6 +20,17 @@ export interface SessionItem {
   jobId?: string;
   /** Request that produced a pending job (for "Try again"). */
   request?: GenerationRequest;
+}
+
+export interface ProjectMeta {
+  id: string;
+  title: string;
+  /** The title was typed by the user (otherwise it follows the first prompt). */
+  named?: boolean;
+  updatedAt: number;
+  /** "gen:<id>" / "input:<id>" of the latest image. */
+  cover: string | null;
+  count: number;
 }
 
 export interface Toast {
@@ -30,10 +46,17 @@ export interface State {
   connectError: string | null;
   server: { state: ServerState; owned: boolean; error: AppErrorBody | null };
   status: StatusResponse | null;
+  /** Versions of the open project, in order. */
   session: SessionItem[];
   selected: string | null;
+  projectId: string;
+  /** Saved projects, most recent first (empty ones are left out). */
+  projects: ProjectMeta[];
+  sidebar: boolean;
   jobs: Record<string, JobView>;
   composer: Composer;
+  /** Last submitted prompt (Up arrow in an empty prompt brings it back). */
+  lastPrompt: string;
   overlay: Overlay;
   toasts: Toast[];
   galleryVersion: number;
@@ -42,9 +65,15 @@ export interface State {
   compare: CompareMode;
   /** Flicker period in ms. */
   flickerMs: number;
+  /** Private mode: nothing is saved to the gallery, the output folder or the project list. */
+  privateMode: boolean;
+  /** Versions left with Undo, most recent last (Redo walks back through them). */
+  redo: string[];
 }
 
 const PREFS_KEY = "qls.prefs.v1";
+const PROJECTS_KEY = "qls.projects.v1";
+const SIDEBAR_KEY = "qls.sidebar.v1";
 
 function loadPrefs(): Partial<Composer> {
   try {
@@ -66,6 +95,159 @@ function savePrefs(c: Composer) {
   }
 }
 
+// ---------------------------------------------------------------------------------------
+// Projects (persisted as ids; records are fetched from the service when a project opens)
+// ---------------------------------------------------------------------------------------
+
+interface StoredItem {
+  key: string;
+  kind: SessionItem["kind"];
+  genId?: string;
+  inputId?: string;
+  jobId?: string;
+  request?: GenerationRequest;
+}
+
+interface ProjectData {
+  meta: ProjectMeta;
+  items: StoredItem[];
+  selected: string | null;
+}
+
+const projects: Record<string, ProjectData> = (() => {
+  try {
+    const p = JSON.parse(localStorage.getItem(PROJECTS_KEY) || "{}");
+    return p && typeof p === "object" ? p : {};
+  } catch {
+    return {};
+  }
+})();
+
+const genCache = new Map<string, GenerationRecord>();
+const inputCache = new Map<string, InputRecord>();
+
+let saveTimer: number | undefined;
+function persistProjects() {
+  window.clearTimeout(saveTimer);
+  saveTimer = window.setTimeout(() => {
+    const keep: Record<string, ProjectData> = {};
+    for (const [id, p] of Object.entries(projects)) if (p.items.length || p.meta.named) keep[id] = p;
+    try {
+      localStorage.setItem(PROJECTS_KEY, JSON.stringify(keep));
+    } catch {
+      /* storage unavailable */
+    }
+  }, 300);
+}
+
+function projectList(): ProjectMeta[] {
+  return Object.values(projects)
+    .filter((p) => p.items.length || p.meta.named)
+    .map((p) => p.meta)
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+export const itemSource = (i: { gen?: GenerationRecord; input?: InputRecord }) => (i.gen ? `gen:${i.gen.id}` : i.input ? `input:${i.input.id}` : null);
+const storedSource = (i: StoredItem) => (i.genId ? `gen:${i.genId}` : i.inputId ? `input:${i.inputId}` : null);
+
+const toStored = (i: SessionItem): StoredItem => ({
+  key: i.key,
+  kind: i.kind,
+  genId: i.gen?.id,
+  inputId: i.input?.id,
+  jobId: i.jobId,
+  request: i.kind === "job" ? i.request : undefined,
+});
+
+function titleOf(items: SessionItem[]): string | null {
+  for (const i of items) {
+    const p = i.gen?.prompt || i.request?.prompt;
+    if (p) return p;
+    if (i.input) return i.input.original_name ? safeDecode(i.input.original_name) : "Imported image";
+  }
+  return null;
+}
+
+function safeDecode(s: string) {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+
+const lastCover = (items: StoredItem[]) => {
+  for (let k = items.length - 1; k >= 0; k--) {
+    const s = storedSource(items[k]);
+    if (s) return s;
+  }
+  return null;
+};
+const countOf = (items: StoredItem[]) => items.filter((i) => i.kind !== "job").length;
+
+/** Writes the open project back into `projects` after its versions or selection changed. */
+function syncProject(prev: State) {
+  // Private work is never written to the project list (titles come from prompts).
+  if (state.privateMode) return;
+  const id = state.projectId;
+  const old = projects[id];
+  const items = state.session.map(toStored);
+  for (const i of state.session) {
+    if (i.gen) genCache.set(i.gen.id, i.gen);
+    if (i.input) inputCache.set(i.input.id, i.input);
+  }
+  // Opening a project must not move it to the top; adding a version does.
+  const edited = id === prev.projectId && state.session !== prev.session;
+  projects[id] = {
+    meta: {
+      id,
+      title: old?.meta.named ? old.meta.title : titleOf(state.session) ?? old?.meta.title ?? "Untitled",
+      named: old?.meta.named,
+      updatedAt: edited || !old ? Date.now() : old.meta.updatedAt,
+      cover: lastCover(items),
+      count: countOf(items),
+    },
+    items,
+    selected: state.selected,
+  };
+  state = { ...state, projects: projectList() };
+  persistProjects();
+}
+
+/** Loads the records of a stored project. Versions deleted from the gallery are skipped. */
+async function hydrate(items: StoredItem[]): Promise<SessionItem[]> {
+  const out = await Promise.all(
+    items.map(async (it): Promise<SessionItem | null> => {
+      try {
+        if (it.kind === "gen" && it.genId) {
+          const g = genCache.get(it.genId) ?? (await api.generation(it.genId));
+          genCache.set(g.id, g);
+          return { key: it.key, kind: "gen", gen: g, jobId: it.jobId };
+        }
+        if (it.kind === "input" && it.inputId) {
+          const r = inputCache.get(it.inputId) ?? (await api.input(it.inputId));
+          inputCache.set(r.id, r);
+          return { key: it.key, kind: "input", input: r };
+        }
+        // A job is only shown while the service still knows it (e.g. not after a restart).
+        if (it.kind === "job" && it.jobId && state.jobs[it.jobId]) return { key: it.key, kind: "job", jobId: it.jobId, request: it.request };
+      } catch {
+        /* deleted */
+      }
+      return null;
+    }),
+  );
+  return out.filter((x): x is SessionItem => !!x);
+}
+
+const loadSidebar = () => {
+  try {
+    return localStorage.getItem(SIDEBAR_KEY) !== "0";
+  } catch {
+    return true;
+  }
+};
+
 let state: State = {
   connected: false,
   connectError: null,
@@ -73,14 +255,20 @@ let state: State = {
   status: null,
   session: [],
   selected: null,
+  projectId: newKey(),
+  projects: projectList(),
+  sidebar: loadSidebar(),
   jobs: {},
   composer: emptyComposer(loadPrefs()),
+  lastPrompt: "",
   overlay: null,
   toasts: [],
   galleryVersion: 0,
   needsSetup: false,
   compare: "off",
   flickerMs: 500,
+  privateMode: false,
+  redo: [],
 };
 
 const listeners = new Set<() => void>();
@@ -90,9 +278,18 @@ export function getState() {
 }
 
 export function setState(patch: Partial<State> | ((s: State) => Partial<State>)) {
+  const prev = state;
   const p = typeof patch === "function" ? patch(state) : patch;
   state = { ...state, ...p };
   if (p.composer) savePrefs(state.composer);
+  if (state.session !== prev.session || state.selected !== prev.selected || state.projectId !== prev.projectId) syncProject(prev);
+  if (p.sidebar !== undefined) {
+    try {
+      localStorage.setItem(SIDEBAR_KEY, p.sidebar ? "1" : "0");
+    } catch {
+      /* storage unavailable */
+    }
+  }
   listeners.forEach((l) => l());
 }
 
@@ -169,70 +366,276 @@ export function startEvents() {
 
 function onJob(job: JobView) {
   setState((s) => {
-    if (!s.session.some((i) => i.jobId === job.id) && !s.jobs[job.id]) {
-      // A job from another client (e.g. MCP): track it but do not add it to this session.
-      return { jobs: { ...s.jobs, [job.id]: job } };
-    }
     const jobs = { ...s.jobs, [job.id]: job };
     if (job.status !== "done") return { jobs };
-    // Replace the pending item with one item per result.
+    const results = job.results.map((g): SessionItem => ({ key: newKey(), kind: "gen", gen: g, jobId: job.id }));
+    // Replace the pending version with one version per result.
     const idx = s.session.findIndex((i) => i.jobId === job.id && i.kind === "job");
-    if (idx < 0) return { jobs };
-    const results: SessionItem[] = job.results.map((g) => ({ key: newKey(), kind: "gen", gen: g, jobId: job.id }));
-    const session = [...s.session.slice(0, idx), ...results, ...s.session.slice(idx + 1)];
-    const wasSelected = s.selected === s.session[idx].key;
-    return { jobs, session, selected: wasSelected && results[0] ? results[0].key : s.selected };
+    if (idx >= 0) {
+      const pending = s.session[idx];
+      const session = [...s.session.slice(0, idx), ...results, ...s.session.slice(idx + 1)];
+      const wasSelected = s.selected === pending.key;
+      // Editing carries on from the new version; creating new images stays in create mode.
+      let composer = s.composer;
+      const src = pending.request?.images?.[0];
+      if (wasSelected && results[0]?.gen && src && composer.refs[0]?.source === src) {
+        composer = { ...composer, refs: [refFromGen(results[0].gen), ...composer.refs.slice(1)], mask: null, outpaint: null };
+      }
+      return { jobs, session, composer, selected: wasSelected && results[0] ? results[0].key : s.selected };
+    }
+    // A job of another (closed) project.
+    for (const p of Object.values(projects)) {
+      const k = p.items.findIndex((i) => i.jobId === job.id && i.kind === "job");
+      if (k < 0) continue;
+      const stored = results.map(toStored);
+      for (const g of job.results) genCache.set(g.id, g);
+      const wasSelected = p.selected === p.items[k].key;
+      p.items = [...p.items.slice(0, k), ...stored, ...p.items.slice(k + 1)];
+      if (wasSelected && stored[0]) p.selected = stored[0].key;
+      p.meta = { ...p.meta, cover: lastCover(p.items), count: countOf(p.items), updatedAt: Date.now() };
+      persistProjects();
+      return { jobs, projects: projectList() };
+    }
+    // A job from another client (e.g. MCP): track it but do not add it to a project.
+    return { jobs };
   });
   if (job.status === "failed" && job.error) toastError(new ApiError(job.error, 500));
+}
+
+// ---------------------------------------------------------------------------------------
+// Projects
+// ---------------------------------------------------------------------------------------
+
+/** A fresh composer (keeping quality/size preferences) that edits `selected`, if it is an image. */
+function composerFor(c: Composer, session: SessionItem[], selected: string | null): Composer {
+  const it = session.find((i) => i.key === selected);
+  const ref = it?.gen ? refFromGen(it.gen) : it?.input ? refFromInput(it.input) : null;
+  return { ...emptyComposer(c), refs: ref ? [ref] : [] };
+}
+
+/** Starts a new project; the current one stays in the list. */
+export function newProject() {
+  setState((s) =>
+    s.session.length
+      ? { projectId: newKey(), session: [], selected: null, overlay: null, redo: [], composer: emptyComposer(s.composer) }
+      : { overlay: null, composer: { ...emptyComposer(s.composer), prompt: s.composer.prompt } },
+  );
+  focusPrompt();
+}
+
+/** Private mode on: a fresh project whose images stay out of the gallery, the output folder
+ * and the project list. Off: those images are deleted (after confirming). */
+export async function setPrivateMode(on: boolean, confirmDiscard: () => Promise<boolean>) {
+  const s = getState();
+  if (on === s.privateMode) return;
+  if (!on && s.session.length > 0 && !(await confirmDiscard())) return;
+  if (!on) {
+    try {
+      await api.clearPrivate();
+    } catch (e) {
+      toastError(e);
+      return;
+    }
+  }
+  setPrivateInputs(on);
+  // The project being left was saved already (normal mode) or is discarded (private mode).
+  setState((st) => ({ privateMode: on, projectId: newKey(), session: [], selected: null, overlay: null, redo: [], composer: emptyComposer(st.composer) }));
+  if (on) toastInfo("Private mode: images are not saved, and are deleted when you turn it off or close the app.");
+  focusPrompt();
+}
+
+let switching = 0;
+
+export async function switchProject(id: string, selectKey?: string) {
+  if (id === state.projectId) {
+    setState({ overlay: null });
+    if (selectKey) selectItem(selectKey);
+    return;
+  }
+  const data = projects[id];
+  if (!data) return;
+  const token = ++switching;
+  const session = await hydrate(data.items);
+  if (token !== switching) return;
+  const keep = (k: string | null | undefined) => (k && session.some((i) => i.key === k) ? k : null);
+  const selected = keep(selectKey) ?? keep(data.selected) ?? session[session.length - 1]?.key ?? null;
+  setState((s) => ({ projectId: id, session, selected, overlay: null, redo: [], composer: composerFor(s.composer, session, selected) }));
+}
+
+/** Gives a project a name; an empty name goes back to naming it after its first prompt. */
+export function renameProject(id: string, name: string) {
+  const title = name.trim().replace(/\s+/g, " ").slice(0, 120);
+  const p = projects[id] ?? { meta: { id, title: "", updatedAt: Date.now(), cover: null, count: 0 }, items: [], selected: null };
+  const auto = id === state.projectId ? titleOf(state.session) : null;
+  p.meta = title ? { ...p.meta, title, named: true } : { ...p.meta, title: auto ?? p.meta.title ?? "Untitled", named: false };
+  projects[id] = p;
+  persistProjects();
+  setState({ projects: projectList() });
+}
+
+/** Removes a project from the list; its images stay in the gallery. */
+export function deleteProject(id: string) {
+  delete projects[id];
+  persistProjects();
+  if (id === state.projectId) setState((s) => ({ projectId: newKey(), session: [], selected: null, composer: emptyComposer(s.composer) }));
+  else setState({ projects: projectList() });
+}
+
+/** Opens a gallery image: in the project that holds it, or in a new project with its ancestors. */
+export async function openGeneration(g: GenerationRecord) {
+  genCache.set(g.id, g);
+  const here = state.session.find((i) => i.gen?.id === g.id);
+  if (here) {
+    setState({ overlay: null });
+    selectItem(here.key);
+    return;
+  }
+  for (const [id, p] of Object.entries(projects)) {
+    const it = p.items.find((i) => i.genId === g.id);
+    if (it) return switchProject(id, it.key);
+  }
+  const chain = [g];
+  for (let pid = g.parent_id; pid && chain.length < 24; ) {
+    try {
+      const r = genCache.get(pid) ?? (await api.generation(pid));
+      genCache.set(r.id, r);
+      chain.unshift(r);
+      pid = r.parent_id;
+    } catch {
+      break;
+    }
+  }
+  const items: SessionItem[] = [];
+  const root = chain[0];
+  const ref = root.references[0];
+  if (ref && root.references.length === 1 && root.mode !== "generate") {
+    try {
+      const r = inputCache.get(ref.input_id) ?? (await api.input(ref.input_id));
+      items.push({ key: newKey(), kind: "input", input: r });
+    } catch {
+      /* original no longer stored */
+    }
+  }
+  items.push(...chain.map((r): SessionItem => ({ key: newKey(), kind: "gen", gen: r })));
+  const selected = items[items.length - 1].key;
+  setState((s) => ({ projectId: newKey(), session: items, selected, overlay: null, composer: composerFor(s.composer, items, selected) }));
+}
+
+/** A generation was deleted: drop it from every project. */
+export function forgetGeneration(id: string) {
+  genCache.delete(id);
+  for (const p of Object.values(projects)) {
+    if (!p.items.some((i) => i.genId === id)) continue;
+    p.items = p.items.filter((i) => i.genId !== id);
+    p.meta = { ...p.meta, cover: lastCover(p.items), count: countOf(p.items) };
+  }
+  persistProjects();
+  setState((s) => {
+    const session = s.session.filter((i) => i.gen?.id !== id);
+    const refs = s.composer.refs.filter((r) => r.source !== `gen:${id}`);
+    return {
+      session,
+      projects: projectList(),
+      selected: session.some((i) => i.key === s.selected) ? s.selected : session[session.length - 1]?.key ?? null,
+      composer: refs.length === s.composer.refs.length ? s.composer : { ...s.composer, refs, mask: null, outpaint: null },
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------------------
 // Actions
 // ---------------------------------------------------------------------------------------
 
-export function addSessionItem(item: SessionItem, select = true) {
-  setState((s) => ({ session: [...s.session, item], selected: select ? item.key : s.selected }));
+/** Makes `ref` the image being edited (image 1); other references stay. */
+function retarget(c: Composer, ref: Ref): Composer {
+  if (c.refs[0]?.source === ref.source) return c;
+  const rest = c.refs.slice(1).filter((r) => r.source !== ref.source);
+  return { ...c, refs: [ref, ...rest], mask: null, outpaint: null, aspect: "auto" };
 }
 
+/** Shows a version; an image also becomes the one the prompt edits. Choosing a version
+ * by hand ends the current Undo/Redo walk. */
+export function selectItem(key: string, keepRedo = false) {
+  setState((s) => {
+    const it = s.session.find((i) => i.key === key);
+    if (!it) return {};
+    const ref = it.gen ? refFromGen(it.gen) : it.input ? refFromInput(it.input) : null;
+    return { selected: key, composer: ref ? retarget(s.composer, ref) : s.composer, ...(keepRedo ? {} : { redo: [] }) };
+  });
+}
+
+const undoItems = (session: SessionItem[]) =>
+  session.map((i) => ({ key: i.key, source: itemSource(i), from: (i.gen?.request?.images?.[0] ?? (i.gen?.parent_id ? `gen:${i.gen.parent_id}` : null)) ?? i.request?.images?.[0] ?? null }));
+
+/** The version Undo goes back to (what the selected one was made from), if any. */
+export function undoKey(s: State): string | null {
+  return s.selected ? undoTarget(undoItems(s.session), s.selected) : null;
+}
+
+/** Back to the version the selected one was made from; the next edit starts from there. */
+export function undoVersion() {
+  const s = getState();
+  const target = undoKey(s);
+  if (!target || !s.selected) return;
+  const redo = [...s.redo, s.selected];
+  selectItem(target, true);
+  setState({ redo });
+}
+
+/** Forward again to the version left with Undo. */
+export function redoVersion() {
+  const s = getState();
+  const key = s.redo[s.redo.length - 1];
+  if (!key) return;
+  const redo = s.redo.slice(0, -1);
+  if (s.session.some((i) => i.key === key)) selectItem(key, true);
+  setState({ redo });
+}
+
+/** New images: into an empty project (or with nothing being edited) they become versions to
+ * work on; while editing they are added as extra references. */
 export function addInputs(records: InputRecord[]) {
   if (!records.length) return;
   setState((s) => {
-    const refs = [...s.composer.refs, ...records.map(refFromInput)].slice(0, 10);
+    const added = records.map(refFromInput);
+    if (s.composer.refs.length && s.session.length) {
+      return { composer: { ...s.composer, refs: [...s.composer.refs, ...added].slice(0, 10), outpaint: null } };
+    }
     const items: SessionItem[] = records.map((r) => ({ key: newKey(), kind: "input", input: r }));
     return {
-      // The first image sets the shape again (a ratio picked for text-to-image would distort it).
-      composer: { ...s.composer, refs, outpaint: null, aspect: s.composer.refs.length ? s.composer.aspect : "auto" },
+      composer: { ...s.composer, refs: [...s.composer.refs, ...added].slice(0, 10), mask: null, outpaint: null, aspect: "auto" },
       session: [...s.session, ...items],
-      selected: items[items.length - 1].key,
+      selected: items[0].key,
     };
   });
   if (getState().composer.refs.length >= 10) toastInfo("Up to 10 reference images are supported.");
 }
 
-export async function submitRequest(req: GenerationRequest, opts: { clearComposer?: boolean } = {}) {
+export async function submitRequest(req: GenerationRequest) {
   try {
+    if (getState().privateMode) req = { ...req, private: true };
     const job = await api.submit(req);
     const item: SessionItem = { key: newKey(), kind: "job", jobId: job.id, request: req };
-    setState((s) => ({
-      jobs: { ...s.jobs, [job.id]: job },
-      session: [...s.session, item],
-      selected: item.key,
-      composer: opts.clearComposer ? { ...s.composer, seed: null } : s.composer,
-    }));
+    setState((s) => ({ jobs: { ...s.jobs, [job.id]: job }, session: [...s.session, item], selected: item.key, redo: [] }));
+    return true;
   } catch (e) {
     toastError(e);
+    return false;
   }
 }
 
 export async function submitComposer() {
   const s = getState();
-  const parent = s.session.find((i) => i.key === s.selected)?.gen?.id ?? null;
+  const target = s.composer.refs[0]?.source;
+  const parent = target?.startsWith("gen:") ? target.slice(4) : null;
   const req = buildRequest(s.composer, parent);
-  if (!req.prompt) {
+  if (!req.prompt && needsPrompt(s.composer)) {
     toastInfo("Describe what to create or change.");
     return;
   }
-  await submitRequest(req, { clearComposer: true });
+  if (await submitRequest(req)) {
+    setState((st) => ({ lastPrompt: req.prompt, composer: { ...st.composer, prompt: st.composer.prompt.trim() === req.prompt ? "" : st.composer.prompt, seed: null } }));
+  }
 }
 
 export async function cancelJob(jobId: string) {
@@ -244,29 +647,11 @@ export async function cancelJob(jobId: string) {
   }
 }
 
-/** Use a result or input as the (only) image to edit. */
-export function editItem(item: SessionItem) {
-  const ref = item.gen ? refFromGen(item.gen) : item.input ? refFromInput(item.input) : null;
-  if (!ref) return;
-  updateComposer({ refs: [ref], mask: null, outpaint: null, mode: "auto", aspect: "auto" });
-  focusPrompt();
-}
-
-/** Append as an additional reference. */
+/** Adds a version as an extra reference (or as the image to edit when there is none). */
 export function addAsReference(item: SessionItem) {
   const ref = item.gen ? refFromGen(item.gen) : item.input ? refFromInput(item.input) : null;
   if (!ref) return;
   setState((s) => ({ composer: { ...s.composer, refs: [...s.composer.refs, ref].slice(0, 10), outpaint: null, aspect: s.composer.refs.length ? s.composer.aspect : "auto" } }));
-  toastInfo(`Added as image ${Math.min(10, getState().composer.refs.length)}`);
-}
-
-/** Open the inpaint / expand editor on an item (it becomes image 1). */
-export function openEditorFor(item: SessionItem, overlay: "inpaint" | "expand") {
-  const s = getState();
-  const first = s.composer.refs[0];
-  const src = item.gen ? `gen:${item.gen.id}` : item.input ? `input:${item.input.id}` : null;
-  if (!first || first.source !== src) editItem(item);
-  setState({ overlay });
 }
 
 export function focusPrompt() {
@@ -274,10 +659,17 @@ export function focusPrompt() {
 }
 
 export function removeSessionItem(key: string) {
-  setState((s) => {
-    const session = s.session.filter((i) => i.key !== key);
-    return { session, selected: s.selected === key ? session[session.length - 1]?.key ?? null : s.selected };
-  });
+  const s = getState();
+  const removed = s.session.find((i) => i.key === key);
+  const session = s.session.filter((i) => i.key !== key);
+  const src = removed ? itemSource(removed) : null;
+  const refs = src ? s.composer.refs.filter((r) => r.source !== src) : s.composer.refs;
+  setState({ session, composer: refs.length === s.composer.refs.length ? s.composer : { ...s.composer, refs, mask: null, outpaint: null } });
+  if (s.selected === key) {
+    const next = session[session.length - 1];
+    if (next) selectItem(next.key);
+    else setState({ selected: null });
+  }
 }
 
 export function selectedItem(s: State): SessionItem | null {

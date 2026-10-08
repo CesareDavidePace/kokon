@@ -1,5 +1,5 @@
 # Milestone 1 — backend foundation, real inference.
-# Starts qls-service (debug build) with isolated test data, which launches sd-server,
+# Starts kokon-service (debug build) with isolated test data, which launches sd-server,
 # then runs text-to-image and an edit, printing truthful progress from the backend.
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\dev\m1-backend-test.ps1
@@ -17,7 +17,7 @@ $port = 39171
 # Test config: real models, isolated output folder and ports.
 @{ outputDir = $out; serverPort = 39170; servicePort = $port } | ConvertTo-Json | Set-Content (Join-Path $env:QLS_CONFIG_DIR 'config.json') -Encoding utf8
 
-$exe = Join-Path $root 'target\debug\qls-service.exe'
+$exe = Join-Path $root 'target\debug\kokon-service.exe'
 if (-not (Test-Path $exe)) { throw "Build first: cargo build -p qls-service" }
 $svc = Start-Process $exe -ArgumentList '--port', $port -PassThru -WindowStyle Hidden
 Start-Sleep 2

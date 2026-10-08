@@ -1,5 +1,5 @@
-# Builds the Windows release: qls-service.exe, qls-mcp.exe, the desktop app and the
-# NSIS installer ("Qwen Local Studio_<version>_x64-setup.exe").
+# Builds the Windows release: kokon-service.exe, kokon-mcp.exe, the desktop app and the
+# NSIS installer ("Kokon_<version>_x64-setup.exe").
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1
 #
@@ -18,12 +18,12 @@ if ($LASTEXITCODE) { throw "Frontend tests failed" }
 Push-Location mcp; npx vitest run; $rc = $LASTEXITCODE; Pop-Location
 if ($rc) { throw "MCP tests failed" }
 
-Write-Host "2/5 qls-service (release)" -ForegroundColor Cyan
+Write-Host "2/5 kokon-service (release)" -ForegroundColor Cyan
 cargo build -p qls-service --release
 if ($LASTEXITCODE) { throw "service build failed" }
-Copy-Item target\release\qls-service.exe src-tauri\binaries\qls-service-x86_64-pc-windows-msvc.exe -Force
+Copy-Item target\release\kokon-service.exe src-tauri\binaries\kokon-service-x86_64-pc-windows-msvc.exe -Force
 
-Write-Host "3/5 qls-mcp.exe" -ForegroundColor Cyan
+Write-Host "3/5 kokon-mcp.exe" -ForegroundColor Cyan
 Push-Location mcp; npm run build:exe; $rc = $LASTEXITCODE; Pop-Location
 if ($rc) { throw "MCP build failed" }
 
@@ -32,12 +32,12 @@ npx tauri build
 if ($LASTEXITCODE) { throw "tauri build failed" }
 
 Write-Host "5/5 Artifacts" -ForegroundColor Cyan
-$exe = Get-Item "target\release\qwen-local-studio.exe"
+$exe = Get-Item "target\release\Kokon.exe"
 $setup = Get-ChildItem "target\release\bundle\nsis\*.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 New-Item -ItemType Directory -Force dist-release | Out-Null
-Copy-Item $exe.FullName "dist-release\Qwen Local Studio.exe" -Force
-Copy-Item $setup.FullName "dist-release\Qwen Local Studio Setup.exe" -Force
-Copy-Item target\release\qls-service.exe dist-release\ -Force
-Copy-Item mcp\build\qls-mcp.exe dist-release\ -Force
+Copy-Item $exe.FullName "dist-release\Kokon.exe" -Force
+Copy-Item $setup.FullName "dist-release\Kokon Setup.exe" -Force
+Copy-Item target\release\kokon-service.exe dist-release\ -Force
+Copy-Item mcp\build\kokon-mcp.exe dist-release\ -Force
 Get-ChildItem dist-release | Format-Table Name, @{n = 'MB'; e = { [math]::Round($_.Length / 1MB, 1) } } -AutoSize
-Write-Host "Installer: $root\dist-release\Qwen Local Studio Setup.exe" -ForegroundColor Green
+Write-Host "Installer: $root\dist-release\Kokon Setup.exe" -ForegroundColor Green

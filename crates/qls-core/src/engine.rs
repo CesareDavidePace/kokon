@@ -88,12 +88,18 @@ pub struct Engine {
     cfg: RwLock<AppConfig>,
     pub server: Arc<ServerManager>,
     pub store: Arc<Store>,
+    /// Private mode: records in memory, files under `private_dir`; wiped by `clear_private`,
+    /// at start and at exit. Never listed in the gallery.
+    pub private_store: Arc<Store>,
+    private_dir: PathBuf,
     jobs: Mutex<HashMap<String, Job>>,
     order: Mutex<VecDeque<String>>,
     active: Mutex<Option<String>>,
     wake: Notify,
     pub events: broadcast::Sender<Event>,
     gpu: Mutex<(Option<Instant>, Option<GpuInfo>)>,
+    /// First-run downloads (setup wizard).
+    pub installer: Arc<crate::installer::Installer>,
     backend_version: Mutex<Option<String>>,
     last_activity: Mutex<Instant>,
 }
@@ -125,17 +131,27 @@ pub fn plan_inputs(cfg: &AppConfig, image_sizes: Vec<Size>, mask: Option<(Size, 
 impl Engine {
     pub fn new(cfg: AppConfig, data_dir: &Path) -> AppResult<Arc<Self>> {
         let store = Arc::new(Store::open(data_dir)?);
+        let private_dir = data_dir.join("private");
+        // Leftovers of a crash or forced exit while private mode was on.
+        let _ = std::fs::remove_dir_all(&private_dir);
+        for sub in ["inputs", "thumbs", "out"] {
+            std::fs::create_dir_all(private_dir.join(sub)).map_err(|e| AppError::io("create the data folder", &private_dir, e))?;
+        }
+        let private_store = Arc::new(Store::open_in_memory(&private_dir)?);
         let (events, _) = broadcast::channel(512);
         Ok(Arc::new(Self {
             cfg: RwLock::new(cfg),
             server: ServerManager::new(data_dir.to_path_buf()),
             store,
+            private_store,
+            private_dir,
             jobs: Mutex::new(HashMap::new()),
             order: Mutex::new(VecDeque::new()),
             active: Mutex::new(None),
             wake: Notify::new(),
             events,
             gpu: Mutex::new((None, None)),
+            installer: crate::installer::Installer::new(),
             backend_version: Mutex::new(None),
             last_activity: Mutex::new(Instant::now()),
         }))
@@ -157,6 +173,43 @@ impl Engine {
         Ok(restart)
     }
 
+    /// The store holding generation `id`: the gallery, or the private-mode store.
+    pub fn gen_store(&self, id: &str) -> &Arc<Store> {
+        if self.store.get_generation(id).is_err() && self.private_store.get_generation(id).is_ok() { &self.private_store } else { &self.store }
+    }
+
+    /// The store holding input `id` (see [`Self::gen_store`]).
+    pub fn input_store(&self, id: &str) -> &Arc<Store> {
+        if self.store.get_input(id).is_err() && self.private_store.get_input(id).is_ok() { &self.private_store } else { &self.store }
+    }
+
+    /// Where a generation's image file may be deleted from: the output folder, or the
+    /// private folder for private results.
+    pub fn output_root(&self, id: &str) -> PathBuf {
+        if Arc::ptr_eq(self.gen_store(id), &self.private_store) { self.private_dir.join("out") } else { self.config().output_dir }
+    }
+
+    /// Ends private mode: forgets every private record and deletes its files.
+    pub fn clear_private(&self) -> AppResult<usize> {
+        let (items, _) = self.private_store.list_generations(&crate::store::ListQuery { limit: Some(500), ..Default::default() })?;
+        self.private_store.clear()?;
+        let mut removed = 0;
+        for sub in ["inputs", "thumbs", "out"] {
+            let dir = self.private_dir.join(sub);
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for e in entries.flatten() {
+                    if std::fs::remove_file(e.path()).is_ok() {
+                        removed += 1;
+                    }
+                }
+            }
+        }
+        if !items.is_empty() {
+            tracing::info!("private mode cleared ({} results, {removed} files)", items.len());
+        }
+        Ok(items.len())
+    }
+
     pub fn touch(&self) {
         *self.last_activity.lock().unwrap() = Instant::now();
     }
@@ -166,7 +219,7 @@ impl Engine {
     }
 
     pub fn has_pending_work(&self) -> bool {
-        self.active.lock().unwrap().is_some() || self.jobs.lock().unwrap().values().any(|j| !j.view.status.is_terminal())
+        self.active.lock().unwrap().is_some() || self.jobs.lock().unwrap().values().any(|j| !j.view.status.is_terminal()) || self.installer.is_running()
     }
 
     pub fn gpu(&self) -> Option<GpuInfo> {
@@ -243,7 +296,9 @@ impl Engine {
     pub fn submit(&self, mut request: GenerationRequest, workspace: Option<PathBuf>) -> AppResult<JobView> {
         self.touch();
         let upscale = request.mode == Mode::Upscale;
-        if request.prompt.trim().is_empty() && !upscale {
+        // Removing a painted area needs no description (the planner writes the prompt).
+        let removal = request.mask.is_some() && request.inpaint_action == planner::InpaintAction::Remove;
+        if request.prompt.trim().is_empty() && !upscale && !removal {
             return Err(AppError::invalid("Describe what to generate or change."));
         }
         if upscale && request.images.is_empty() {
@@ -380,14 +435,15 @@ impl Engine {
         if self.is_cancelled(id) { Err(AppError::new(ErrorCode::Cancelled, "Cancelled.")) } else { Ok(()) }
     }
 
-    /// Loads one image source: "input:<id>", "gen:<id>" or an absolute path.
-    pub fn resolve_source(&self, src: &str, workspace: Option<&Path>) -> AppResult<(LoadedImage, InputRecord)> {
+    /// Loads one image source: "input:<id>", "gen:<id>" or an absolute path. A private job
+    /// keeps its copy of the input in the private store.
+    pub fn resolve_source(&self, src: &str, workspace: Option<&Path>, private: bool) -> AppResult<(LoadedImage, InputRecord)> {
         let (bytes, original_path, name) = if let Some(id) = src.strip_prefix("input:") {
-            let rec = self.store.get_input(id)?;
+            let rec = self.input_store(id).get_input(id)?;
             let b = std::fs::read(&rec.path).map_err(|e| AppError::io("read the stored image", Path::new(&rec.path), e))?;
             (b, rec.original_path.clone(), rec.original_name.clone())
         } else if let Some(id) = src.strip_prefix("gen:") {
-            let rec = self.store.get_generation(id)?;
+            let rec = self.gen_store(id).get_generation(id)?;
             let p = PathBuf::from(&rec.file_path);
             let b = std::fs::read(&p).map_err(|e| AppError::io("read the generated image", &p, e))?;
             (b, Some(rec.file_path.clone()), p.file_name().map(|n| n.to_string_lossy().into_owned()))
@@ -396,7 +452,8 @@ impl Engine {
             let b = std::fs::read(&p).map_err(|e| AppError::io("read the image", &p, e))?;
             (b, Some(p.to_string_lossy().into_owned()), p.file_name().map(|n| n.to_string_lossy().into_owned()))
         };
-        let rec = self.store.put_input(&bytes, name.as_deref(), original_path.as_deref())?;
+        let store = if private { &self.private_store } else { &self.store };
+        let rec = store.put_input(&bytes, name.as_deref(), original_path.as_deref())?;
         let img = imaging::decode_image(&bytes)?;
         Ok((img, rec))
     }
@@ -404,7 +461,7 @@ impl Engine {
     /// Dry run: the plan a request would get (used by the UI to show working sizes).
     pub fn preview_plan(&self, req: &GenerationRequest, sizes: Vec<Size>, mask: Option<(Size, Option<crate::geometry::Rect>, f64)>) -> AppResult<Plan> {
         let cfg = self.config();
-        let vram = self.gpu().map(|g| g.memory_total_mib);
+        let vram = cfg.planning_vram_mib(self.gpu().map(|g| g.memory_total_mib));
         planner::plan(req, &plan_inputs(&cfg, sizes, mask, vram), &cfg.profile().recommended_settings)
     }
 
@@ -429,13 +486,13 @@ impl Engine {
             let mut images = Vec::new();
             let mut metas = Vec::new();
             for s in &req2.images {
-                let (img, rec) = this.resolve_source(s, ws.as_deref())?;
+                let (img, rec) = this.resolve_source(s, ws.as_deref(), req2.private)?;
                 images.push(img);
                 metas.push(rec);
             }
             let mask = match &req2.mask {
                 Some(m) => {
-                    let (img, rec) = this.resolve_source(m, ws.as_deref())?;
+                    let (img, rec) = this.resolve_source(m, ws.as_deref(), req2.private)?;
                     Some((imaging::mask_from_image(&img), rec))
                 }
                 None => None,
@@ -449,7 +506,7 @@ impl Engine {
         // 2. Plan.
         let cfg = self.config();
         let profile = cfg.profile().clone();
-        let vram = self.gpu().map(|g| g.memory_total_mib);
+        let vram = cfg.planning_vram_mib(self.gpu().map(|g| g.memory_total_mib));
         let mask_info = mask.as_ref().map(|(m, _)| (Size::new(m.width(), m.height()), imaging::mask_bbox(m, 16), imaging::mask_coverage(m, 16)));
         let plan_inputs = plan_inputs(&cfg, images.iter().map(|i| i.size()).collect(), mask_info, vram);
         let plan = planner::plan(&request, &plan_inputs, &profile.recommended_settings)?;
@@ -658,7 +715,9 @@ impl Engine {
                 this.save_result(&final_img, &req3, &plan3, seed + i as i64, &inputs3, mask3.as_ref(), icc3.as_deref(), duration_ms, ws.as_deref(), i, pipeline)
             })
             .await?;
-            let _ = self.events.send(Event::Gallery { id: rec.id.clone(), change: "added" });
+            if !request.private {
+                let _ = self.events.send(Event::Gallery { id: rec.id.clone(), change: "added" });
+            }
             records.push(rec);
         }
         self.update(id, |j| {
@@ -674,7 +733,7 @@ impl Engine {
     /// text-to-image results, otherwise a neutral description (an edit instruction such
     /// as "make it darker" would keep pushing the image during the refine).
     fn upscale_prompt(&self, req: &GenerationRequest, quick: bool) -> String {
-        let source = req.images.first().and_then(|s| s.strip_prefix("gen:")).and_then(|g| self.store.get_generation(g).ok());
+        let source = req.images.first().and_then(|s| s.strip_prefix("gen:")).and_then(|g| self.gen_store(g).get_generation(g).ok());
         match source {
             Some(g) if g.mode == "generate" || (quick && !g.prompt.trim().is_empty()) => g.prompt,
             _ if quick => "Upscaled image".into(),
@@ -820,7 +879,8 @@ impl Engine {
         let cfg = self.config();
         let id = new_id();
         let now = chrono::Local::now();
-        let dir = cfg.output_dir.join(now.format("%Y-%m-%d").to_string());
+        let store = if req.private { &self.private_store } else { &self.store };
+        let dir = if req.private { self.private_dir.join("out") } else { cfg.output_dir.join(now.format("%Y-%m-%d").to_string()) };
         std::fs::create_dir_all(&dir).map_err(|e| AppError::io("create the output folder", &dir, e))?;
         let words: Vec<&str> = req.prompt.split_whitespace().take(6).collect();
         let stem = format!("{}-{}-{seed}", now.format("%H%M%S"), paths::sanitize_file_stem(&words.join(" ")));
@@ -907,9 +967,9 @@ impl Engine {
         drop(bytes);
         let thumb = imaging::thumbnail(img, 512);
         if let Ok(j) = imaging::encode_jpeg(&thumb, 85) {
-            let _ = std::fs::write(self.store.thumb_path(&id), j);
+            let _ = std::fs::write(store.thumb_path(&id), j);
         }
-        self.store.insert_generation(&rec)?;
+        store.insert_generation(&rec)?;
         Ok(rec)
     }
 }
@@ -1050,6 +1110,11 @@ mod tests {
         unsafe { std::env::set_var("QLS_CONFIG_DIR", dir.path().join("cfg")) };
         let e = Engine::new(AppConfig::default(), dir.path()).unwrap();
         assert!(e.submit(GenerationRequest { prompt: " ".into(), ..Default::default() }, None).is_err());
+        // Remove needs no prompt; other inpaint actions do.
+        let remove = GenerationRequest { images: vec!["gen:x".into()], mask: Some("input:m".into()), inpaint_action: planner::InpaintAction::Remove, ..Default::default() };
+        assert!(e.submit(GenerationRequest { inpaint_action: planner::InpaintAction::Replace, ..remove.clone() }, None).is_err());
+        let r = e.submit(remove, None).unwrap();
+        e.cancel(&r.id).unwrap();
         let j = e.submit(GenerationRequest { prompt: "a fox".into(), seed: Some(-1), ..Default::default() }, None).unwrap();
         assert_eq!(j.status, JobStatus::Queued);
         assert_eq!(j.seed, None, "negative seed means random");
@@ -1071,6 +1136,32 @@ mod tests {
         assert_eq!(e.cancel_client_jobs("ui"), 1);
         assert_eq!(e.job(&ui.id).unwrap().status, JobStatus::Cancelled);
         assert_eq!(e.job(&mcp.id).unwrap().status, JobStatus::Queued);
+    }
+
+    #[test]
+    fn private_results_stay_out_of_the_gallery() {
+        let dir = tempfile::tempdir().unwrap();
+        let e = Engine::new(AppConfig::default(), dir.path()).unwrap();
+        // A tiny PNG imported in private mode lives in the private store only.
+        let png = imaging::encode_png(&image::RgbaImage::from_pixel(8, 8, image::Rgba([200, 10, 10, 255])), &[], None, false).unwrap();
+        let input = e.private_store.put_input(&png, Some("secret.png"), None).unwrap();
+        assert!(e.store.get_input(&input.id).is_err());
+        assert!(Arc::ptr_eq(e.input_store(&input.id), &e.private_store));
+        assert!(Path::new(&input.path).starts_with(dir.path().join("private")));
+        let (_, rec) = e.resolve_source(&format!("input:{}", input.id), None, true).unwrap();
+        assert_eq!(rec.id, input.id);
+        assert!(e.store.get_input(&input.id).is_err(), "a private job does not copy its input into the gallery");
+        // Ending private mode deletes records and files.
+        assert_eq!(e.clear_private().unwrap(), 0);
+        assert!(e.private_store.get_input(&input.id).is_err());
+        assert!(!Path::new(&input.path).exists());
+        // A new engine wipes leftovers of a previous run.
+        std::fs::write(dir.path().join("private").join("out").join("left.png"), b"x").unwrap();
+        drop(e);
+        let _e = Engine::new(AppConfig::default(), dir.path()).unwrap();
+        assert!(!dir.path().join("private").join("out").join("left.png").exists());
+        let req: GenerationRequest = serde_json::from_str(r#"{"prompt":"x"}"#).unwrap();
+        assert!(!req.private, "off unless asked");
     }
 
     #[test]

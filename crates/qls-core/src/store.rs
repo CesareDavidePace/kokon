@@ -116,7 +116,7 @@ impl GenerationRecord {
                 s.push_str(&format!(", Hires denoising strength: {d}"));
             }
         }
-        s.push_str(&format!(", Mode: {}, Version: Qwen Local Studio {}", self.mode, self.app_version));
+        s.push_str(&format!(", Mode: {}, Version: Kokon {}", self.mode, self.app_version));
         s
     }
 
@@ -126,7 +126,7 @@ impl GenerationRecord {
         vec![
             ("parameters", self.parameters_text()),
             ("qls:generation", serde_json::to_string(&slim).unwrap_or_default()),
-            ("Software", format!("Qwen Local Studio {}", self.app_version)),
+            ("Software", format!("Kokon {}", self.app_version)),
         ]
     }
 
@@ -219,6 +219,11 @@ impl Store {
         .map_err(db_err)?;
         conn.pragma_update(None, "user_version", 1).map_err(db_err)?;
         Ok(Self { conn: Mutex::new(conn), data_dir: data_dir.to_path_buf() })
+    }
+
+    /// Forgets every record (used for the temporary private-mode store).
+    pub fn clear(&self) -> AppResult<()> {
+        self.conn.lock().unwrap().execute_batch("DELETE FROM generations; DELETE FROM inputs;").map_err(db_err)
     }
 
     pub fn thumb_path(&self, id: &str) -> PathBuf {
@@ -374,7 +379,18 @@ impl Store {
             .optional()
             .map_err(db_err)?;
         let json = json.ok_or_else(|| AppError::new(ErrorCode::NotFound, "Unknown input image."))?;
-        serde_json::from_str(&json).map_err(AppError::internal)
+        let mut rec: InputRecord = serde_json::from_str(&json).map_err(AppError::internal)?;
+        // Records keep absolute paths; after the data folder moved (app renamed, user moved
+        // it) the file is found by name in this store's inputs folder.
+        if !Path::new(&rec.path).is_file()
+            && let Some(name) = Path::new(&rec.path).file_name()
+        {
+            let here = self.data_dir.join("inputs").join(name);
+            if here.is_file() {
+                rec.path = here.to_string_lossy().into_owned();
+            }
+        }
+        Ok(rec)
     }
 
     pub fn input_thumb_path(&self, id: &str) -> PathBuf {

@@ -17,13 +17,14 @@ use axum::{
 };
 use futures_util::stream::Stream;
 use qls_core::{
+    catalog,
     config::AppConfig,
     diagnostics,
     engine::{APP_VERSION, JobView},
     error::{AppError, ErrorCode},
     geometry::{ExpansionUnits, Size, aspect_label},
-    imaging, paths,
-    planner::{GenerationRequest, Mode, OutpaintSpec, Quality, UpscaleMethod, UpscaleSpec},
+    imaging, installer, paths,
+    planner::{GenerationRequest, InpaintAction, Mode, OutpaintSpec, Quality, UpscaleMethod, UpscaleSpec},
     store::{GenerationRecord, ListQuery},
 };
 use serde::Deserialize;
@@ -57,6 +58,9 @@ pub fn router(state: Arc<AppState>) -> Router {
     let api = Router::new()
         .route("/status", get(status))
         .route("/setup", get(setup))
+        .route("/setup/hardware", get(setup_hardware))
+        .route("/setup/install", get(install_status).post(install_start))
+        .route("/setup/install/cancel", post(install_cancel))
         .route("/config", get(get_config).put(put_config))
         .route("/backend/start", post(backend_start))
         .route("/backend/stop", post(backend_stop))
@@ -75,6 +79,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/upscale", post(op_upscale))
         .route("/events", get(events))
         .route("/inputs/import", post(import_input))
+        .route("/private/clear", post(private_clear))
         .route("/inputs/{id}", get(get_input))
         .route("/inputs/{id}/image", get(input_image))
         .route("/inputs/{id}/thumb", get(input_thumb))
@@ -158,7 +163,7 @@ fn constant_eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 async fn ping() -> Json<Value> {
-    Json(json!({ "service": "qwen-local-studio", "version": APP_VERSION }))
+    Json(json!({ "service": "kokon", "version": APP_VERSION }))
 }
 
 // ---------------------------------------------------------------------------------------
@@ -197,6 +202,98 @@ async fn setup(State(s): St) -> ApiResult<Json<Value>> {
     let srv_ok = s.engine.server.status().state == qls_core::process::ServerState::Ready;
     let report = tokio::task::spawn_blocking(move || diagnostics::setup_checks(&cfg, Some(srv_ok))).await.map_err(AppError::internal)?;
     Ok(Json(serde_json::to_value(report).unwrap()))
+}
+
+/// What the setup wizard shows: the GPU, the recommended preset and, per preset, which files
+/// are installed in the configured folder and how much is left to download.
+async fn setup_hardware(State(s): St) -> ApiResult<Json<Value>> {
+    let engine = s.engine.clone();
+    let v = tokio::task::spawn_blocking(move || {
+        let cfg = engine.config();
+        let gpu = engine.gpu();
+        let detected = gpu.as_ref().map(|g| g.memory_total_mib);
+        let vram = cfg.planning_vram_mib(detected);
+        let mut sys = sysinfo::System::new();
+        sys.refresh_memory();
+        let dir = cfg.sdcpp_dir.clone();
+        let presets: Vec<Value> = catalog::PRESETS
+            .iter()
+            .map(|p| {
+                let files = catalog::downloads_for(p, true);
+                let (download, disk) = installer::space_needed(&dir, &files);
+                json!({
+                    "id": p.id, "label": p.label, "summary": p.summary, "verified": p.verified, "min_vram_mib": p.min_vram_mib,
+                    "files": installer::preview(&dir, &files), "download_bytes": download, "disk_bytes": disk,
+                })
+            })
+            .collect();
+        json!({
+            "gpu": gpu,
+            "nvidia": gpu.is_some(),
+            "vram_mib": vram,
+            "vram_simulated": cfg.vram_override_mib > 0,
+            "ram_total_mib": sys.total_memory() / (1024 * 1024),
+            "recommended": catalog::recommended_preset(vram).id,
+            "current": cfg.hardware_preset,
+            "presets": presets,
+            "sdcpp_dir": dir,
+            "default_sdcpp_dir": qls_core::config::default_sdcpp_dir(),
+            "free_bytes": installer::free_space(&dir),
+            "issues_url": catalog::ISSUES_URL,
+        })
+    })
+    .await
+    .map_err(AppError::internal)?;
+    Ok(Json(v))
+}
+
+#[derive(Deserialize)]
+struct InstallBody {
+    preset: String,
+    #[serde(default = "yes")]
+    upscaler: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// Starts downloading a preset into the configured folder. When every file is installed the
+/// official profile of that preset becomes active.
+async fn install_start(State(s): St, Json(b): Json<InstallBody>) -> ApiResult<Json<Value>> {
+    let preset = catalog::preset(&b.preset).ok_or_else(|| AppError::invalid(format!("Unknown preset {}.", b.preset)))?;
+    let cfg = s.engine.config();
+    // A running server keeps its DLLs open; the engine zip may need to replace them.
+    let st = s.engine.server.status();
+    if st.owned && st.state != qls_core::process::ServerState::Stopped {
+        if s.engine.has_pending_work() {
+            return Err(AppError::new(ErrorCode::QueueFull, "Wait for the current images to finish, then install.").into());
+        }
+        s.engine.server.stop().await;
+        s.engine.emit_server();
+    }
+    let engine = s.engine.clone();
+    let on_finish = Box::new(move |complete: bool| {
+        if !complete {
+            return;
+        }
+        let mut c = engine.config();
+        c.apply_preset(preset);
+        if let Err(e) = engine.set_config(c) {
+            tracing::error!("could not save the installed preset: {}", e.message);
+        }
+    });
+    s.engine.installer.start(cfg.sdcpp_dir.clone(), preset.id, catalog::downloads_for(preset, b.upscaler), on_finish)?;
+    Ok(Json(serde_json::to_value(s.engine.installer.status()).unwrap()))
+}
+
+async fn install_status(State(s): St) -> Json<Value> {
+    Json(serde_json::to_value(s.engine.installer.status()).unwrap())
+}
+
+async fn install_cancel(State(s): St) -> Json<Value> {
+    s.engine.installer.cancel();
+    Json(serde_json::to_value(s.engine.installer.status()).unwrap())
 }
 
 async fn get_config(State(s): St) -> Json<AppConfig> {
@@ -246,7 +343,7 @@ async fn diagnostics_json(State(s): St) -> ApiResult<Json<Value>> {
         let args = qls_core::process::build_server_args(&cfg, cfg.profile());
         let mut text = String::new();
         use std::fmt::Write;
-        let _ = writeln!(text, "Qwen Local Studio {APP_VERSION} â€” diagnostics ({})", qls_core::store::now_rfc3339());
+        let _ = writeln!(text, "Kokon {APP_VERSION} â€” diagnostics ({})", qls_core::store::now_rfc3339());
         let _ = writeln!(text, "\n[GPU]");
         match &gpus {
             Some(g) => {
@@ -276,6 +373,10 @@ async fn diagnostics_json(State(s): St) -> ApiResult<Json<Value>> {
         }
         let _ = writeln!(text, "\n[Configuration]");
         let _ = writeln!(text, "sdcpp dir: {}", cfg.sdcpp_dir.display());
+        let _ = writeln!(text, "Preset: {}, profile: {}", cfg.hardware_preset, cfg.profile().display_name);
+        if cfg.vram_override_mib > 0 {
+            let _ = writeln!(text, "Simulated VRAM for planning: {} MiB", cfg.vram_override_mib);
+        }
         for (label, p, _) in cfg.profile().files() {
             let _ = writeln!(text, "{label}: {} ({})", p.display(), if p.is_file() { "ok" } else { "MISSING" });
         }
@@ -385,6 +486,8 @@ struct SimpleOp {
     image: Option<String>,
     images: Vec<String>,
     mask: Option<String>,
+    /// Inpaint: `edit` (default), `remove`, `replace` or `add`.
+    action: Option<InpaintAction>,
     width: Option<u32>,
     height: Option<u32>,
     aspect_ratio: Option<String>,
@@ -420,6 +523,7 @@ async fn run_simple(s: Arc<AppState>, mode: Mode, op: SimpleOp, wait: bool) -> A
         mode,
         images,
         mask: op.mask,
+        inpaint_action: op.action.unwrap_or_default(),
         outpaint: (mode == Mode::Outpaint).then_some(OutpaintSpec { left: op.left, right: op.right, top: op.top, bottom: op.bottom, units: op.units.unwrap_or_default() }),
         quality: op.quality.unwrap_or_default(),
         aspect_ratio: op.aspect_ratio,
@@ -477,7 +581,7 @@ async fn plan(State(s): St, Json(b): Json<PlanBody>) -> ApiResult<Json<Value>> {
         }
         let mask = match &b.request.mask {
             Some(m) => {
-                let (img, _) = engine.resolve_source(m, ws.as_deref())?;
+                let (img, _) = engine.resolve_source(m, ws.as_deref(), b.request.private)?;
                 let mm = imaging::mask_from_image(&img);
                 Some((Size::new(mm.width(), mm.height()), imaging::mask_bbox(&mm, 16), imaging::mask_coverage(&mm, 16)))
             }
@@ -493,14 +597,15 @@ async fn plan(State(s): St, Json(b): Json<PlanBody>) -> ApiResult<Json<Value>> {
 
 fn source_size(engine: &qls_core::engine::Engine, src: &str, ws: Option<&Path>) -> Result<Size, AppError> {
     if let Some(id) = src.strip_prefix("input:") {
-        let r = engine.store.get_input(id)?;
+        let r = engine.input_store(id).get_input(id)?;
         return Ok(Size::new(r.width, r.height));
     }
     if let Some(id) = src.strip_prefix("gen:") {
-        let r = engine.store.get_generation(id)?;
+        let r = engine.gen_store(id).get_generation(id)?;
         return Ok(Size::new(r.width, r.height));
     }
-    let (img, _) = engine.resolve_source(src, ws)?;
+    // Only sizes are needed: a file path is read into the private store, which is temporary.
+    let (img, _) = engine.resolve_source(src, ws, true)?;
     Ok(img.size())
 }
 
@@ -518,12 +623,18 @@ async fn events(State(s): St) -> Sse<impl Stream<Item = Result<SseEvent, Infalli
 // Inputs
 // ---------------------------------------------------------------------------------------
 
-async fn upload_input(State(s): St, headers: HeaderMap, body: Bytes) -> ApiResult<Json<Value>> {
+#[derive(Deserialize, Default)]
+struct PrivateQ {
+    #[serde(default)]
+    private: bool,
+}
+
+async fn upload_input(State(s): St, Query(q): Query<PrivateQ>, headers: HeaderMap, body: Bytes) -> ApiResult<Json<Value>> {
     if body.is_empty() {
         return Err(AppError::invalid("The upload was empty.").into());
     }
     let name = headers.get("x-filename").and_then(|v| v.to_str().ok()).map(|n| percent_decode(n).chars().take(200).collect::<String>());
-    let store = s.engine.store.clone();
+    let store = if q.private { s.engine.private_store.clone() } else { s.engine.store.clone() };
     let rec = tokio::task::spawn_blocking(move || store.put_input(&body, name.as_deref(), None)).await.map_err(AppError::internal)??;
     Ok(Json(serde_json::to_value(rec).unwrap()))
 }
@@ -533,8 +644,8 @@ struct PathBody {
     path: String,
 }
 
-async fn import_input(State(s): St, Json(b): Json<PathBody>) -> ApiResult<Json<Value>> {
-    let store = s.engine.store.clone();
+async fn import_input(State(s): St, Query(q): Query<PrivateQ>, Json(b): Json<PathBody>) -> ApiResult<Json<Value>> {
+    let store = if q.private { s.engine.private_store.clone() } else { s.engine.store.clone() };
     let rec = tokio::task::spawn_blocking(move || -> Result<_, AppError> {
         let p = paths::validate_input_image(&b.path, None, &[])?;
         let bytes = std::fs::read(&p).map_err(|e| AppError::io("read the image", &p, e))?;
@@ -547,7 +658,13 @@ async fn import_input(State(s): St, Json(b): Json<PathBody>) -> ApiResult<Json<V
 }
 
 async fn get_input(State(s): St, AxPath(id): AxPath<String>) -> ApiResult<Json<Value>> {
-    Ok(Json(serde_json::to_value(s.engine.store.get_input(&id)?).unwrap()))
+    Ok(Json(serde_json::to_value(s.engine.input_store(&id).get_input(&id)?).unwrap()))
+}
+
+/// Ends private mode: deletes every private input and result.
+async fn private_clear(State(s): St) -> ApiResult<Json<Value>> {
+    let n = s.engine.clear_private()?;
+    Ok(Json(json!({ "cleared": n })))
 }
 
 async fn serve_file(path: &Path, content_type: Option<&str>) -> ApiResult<Response> {
@@ -572,16 +689,18 @@ async fn serve_file(path: &Path, content_type: Option<&str>) -> ApiResult<Respon
 }
 
 async fn input_image(State(s): St, AxPath(id): AxPath<String>) -> ApiResult<Response> {
-    let r = s.engine.store.get_input(&id)?;
+    let store = s.engine.input_store(&id);
+    let r = store.get_input(&id)?;
     if r.format == "heic" {
-        return serve_file(&s.engine.store.input_display_path(&id), Some("image/jpeg")).await;
+        return serve_file(&store.input_display_path(&id), Some("image/jpeg")).await;
     }
     serve_file(Path::new(&r.path), None).await
 }
 
 async fn input_thumb(State(s): St, AxPath(id): AxPath<String>) -> ApiResult<Response> {
-    s.engine.store.get_input(&id)?;
-    serve_file(&s.engine.store.input_thumb_path(&id), Some("image/jpeg")).await
+    let store = s.engine.input_store(&id);
+    store.get_input(&id)?;
+    serve_file(&store.input_thumb_path(&id), Some("image/jpeg")).await
 }
 
 // ---------------------------------------------------------------------------------------
@@ -594,7 +713,7 @@ async fn gallery_list(State(s): St, Query(q): Query<ListQuery>) -> ApiResult<Jso
 }
 
 async fn gallery_get(State(s): St, AxPath(id): AxPath<String>) -> ApiResult<Json<GenerationRecord>> {
-    Ok(Json(s.engine.store.get_generation(&id)?))
+    Ok(Json(s.engine.gen_store(&id).get_generation(&id)?))
 }
 
 #[derive(Deserialize)]
@@ -603,29 +722,31 @@ struct PatchBody {
 }
 
 async fn gallery_patch(State(s): St, AxPath(id): AxPath<String>, Json(b): Json<PatchBody>) -> ApiResult<Json<GenerationRecord>> {
+    let store = s.engine.gen_store(&id);
     if let Some(f) = b.favorite {
-        s.engine.store.set_favorite(&id, f)?;
+        store.set_favorite(&id, f)?;
         let _ = s.engine.events.send(qls_core::engine::Event::Gallery { id: id.clone(), change: "updated" });
     }
-    Ok(Json(s.engine.store.get_generation(&id)?))
+    Ok(Json(store.get_generation(&id)?))
 }
 
 async fn gallery_delete(State(s): St, AxPath(id): AxPath<String>) -> ApiResult<Json<Value>> {
-    let out = s.engine.config().output_dir;
-    s.engine.store.delete_generation(&id, &out)?;
+    let out = s.engine.output_root(&id);
+    s.engine.gen_store(&id).delete_generation(&id, &out)?;
     let _ = s.engine.events.send(qls_core::engine::Event::Gallery { id: id.clone(), change: "deleted" });
     Ok(Json(json!({ "deleted": id })))
 }
 
 async fn gallery_image(State(s): St, AxPath(id): AxPath<String>) -> ApiResult<Response> {
-    let r = s.engine.store.get_generation(&id)?;
+    let r = s.engine.gen_store(&id).get_generation(&id)?;
     serve_file(Path::new(&r.file_path), None).await
 }
 
 async fn gallery_thumb(State(s): St, AxPath(id): AxPath<String>) -> ApiResult<Response> {
-    let p = s.engine.store.thumb_path(&id);
+    let store = s.engine.gen_store(&id);
+    let p = store.thumb_path(&id);
     if !p.is_file() {
-        let r = s.engine.store.get_generation(&id)?;
+        let r = store.get_generation(&id)?;
         return serve_file(Path::new(&r.file_path), None).await;
     }
     serve_file(&p, Some("image/jpeg")).await
@@ -641,7 +762,7 @@ struct ExportBody {
 /// "Save as" from the desktop app (path chosen in the native dialog, which already
 /// confirmed any overwrite). Format follows the extension.
 async fn gallery_export(State(s): St, AxPath(id): AxPath<String>, Json(b): Json<ExportBody>) -> ApiResult<Json<Value>> {
-    let rec = s.engine.store.get_generation(&id)?;
+    let rec = s.engine.gen_store(&id).get_generation(&id)?;
     let saved = tokio::task::spawn_blocking(move || -> Result<PathBuf, AppError> {
         let mut target = paths::normalize(&b.path, None)?;
         let ext = target.extension().map(|e| e.to_string_lossy().to_ascii_lowercase());

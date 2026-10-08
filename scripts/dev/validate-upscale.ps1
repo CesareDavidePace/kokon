@@ -1,11 +1,11 @@
 # Speed & upscaling validation through the real app engine (planner, two-pass refine,
-# ESRGAN enlargement, Upscale action). Starts qls-service (debug build) with isolated
+# ESRGAN enlargement, Upscale action). Starts kokon-service (debug build) with isolated
 # test data and ports, which launches sd-server.
 #
 #   cargo build -p qls-service
 #   powershell -ExecutionPolicy Bypass -File scripts\dev\validate-upscale.ps1 [-Only fast,best,4k,edit,upscale,logo] [-EditImage C:\path\photo.png]
 #
-# Close Qwen Local Studio first (GPU). Takes ~12-15 minutes for everything.
+# Close Kokon first (GPU). Takes ~12-15 minutes for everything.
 # Without -EditImage, a 5120x2880 test photo is made by upscaling the 2K result.
 param([string[]]$Only, [string]$EditImage)
 
@@ -25,7 +25,7 @@ $port = 39181
 # <sdcpp>\models\upscalers), isolated output folder and ports.
 @{ outputDir = $out; serverPort = 39180; servicePort = $port; setupComplete = $true } | ConvertTo-Json | Set-Content (Join-Path $env:QLS_CONFIG_DIR 'config.json') -Encoding utf8
 
-$exe = Join-Path $root 'target\debug\qls-service.exe'
+$exe = Join-Path $root 'target\debug\kokon-service.exe'
 if (-not (Test-Path $exe)) { throw "Build first: cargo build -p qls-service" }
 $svc = Start-Process $exe -ArgumentList '--port', $port -PassThru -WindowStyle Hidden
 Start-Sleep 2

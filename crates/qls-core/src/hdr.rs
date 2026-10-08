@@ -218,7 +218,7 @@ fn mpf(primary_len: u32, gain_len: u32, gain_offset: u32) -> Vec<u8> {
 
 fn primary_xmp(gain_len: usize) -> String {
     format!(
-        r#"<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Qwen Local Studio"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:Container="http://ns.google.com/photos/1.0/container/" xmlns:Item="http://ns.google.com/photos/1.0/container/item/" xmlns:hdrgm="http://ns.adobe.com/hdr-gain-map/1.0/" hdrgm:Version="1.0"><Container:Directory><rdf:Seq><rdf:li rdf:parseType="Resource"><Container:Item Item:Semantic="Primary" Item:Mime="image/jpeg"/></rdf:li><rdf:li rdf:parseType="Resource"><Container:Item Item:Semantic="GainMap" Item:Mime="image/jpeg" Item:Length="{gain_len}"/></rdf:li></rdf:Seq></Container:Directory></rdf:Description></rdf:RDF></x:xmpmeta>"#
+        r#"<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Kokon"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:Container="http://ns.google.com/photos/1.0/container/" xmlns:Item="http://ns.google.com/photos/1.0/container/item/" xmlns:hdrgm="http://ns.adobe.com/hdr-gain-map/1.0/" hdrgm:Version="1.0"><Container:Directory><rdf:Seq><rdf:li rdf:parseType="Resource"><Container:Item Item:Semantic="Primary" Item:Mime="image/jpeg"/></rdf:li><rdf:li rdf:parseType="Resource"><Container:Item Item:Semantic="GainMap" Item:Mime="image/jpeg" Item:Length="{gain_len}"/></rdf:li></rdf:Seq></Container:Directory></rdf:Description></rdf:RDF></x:xmpmeta>"#
     )
 }
 
@@ -240,7 +240,7 @@ fn gain_map_xmp(m: &GainMapMetadata) -> String {
     .into_iter()
     .partition_map_like(m.multichannel);
     format!(
-        r#"<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Qwen Local Studio"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:hdrgm="http://ns.adobe.com/hdr-gain-map/1.0/" hdrgm:Version="1.0" {} hdrgm:HDRCapacityMin="{:.6}" hdrgm:HDRCapacityMax="{:.6}" hdrgm:BaseRenditionIsHDR="False">{}</rdf:Description></rdf:RDF></x:xmpmeta>"#,
+        r#"<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Kokon"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:hdrgm="http://ns.adobe.com/hdr-gain-map/1.0/" hdrgm:Version="1.0" {} hdrgm:HDRCapacityMin="{:.6}" hdrgm:HDRCapacityMax="{:.6}" hdrgm:BaseRenditionIsHDR="False">{}</rdf:Description></rdf:RDF></x:xmpmeta>"#,
         attrs.join(" "),
         m.base_hdr_headroom.max(0.0),
         m.alternate_hdr_headroom,

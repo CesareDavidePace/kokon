@@ -1,3 +1,4 @@
+pub mod catalog;
 pub mod config;
 pub mod diagnostics;
 pub mod engine;
@@ -6,6 +7,7 @@ pub mod geometry;
 pub mod hdr;
 pub mod heif;
 pub mod imaging;
+pub mod installer;
 pub mod paths;
 pub mod pipeline;
 pub mod planner;

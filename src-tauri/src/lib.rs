@@ -1,4 +1,4 @@
-//! Desktop shell. The UI talks to qls-service over loopback HTTP; this shell only
+//! Desktop shell. The UI talks to kokon-service over loopback HTTP; this shell only
 //! ensures the service is running, keeps a "ui" lease alive while the window is open,
 //! and provides native integrations (clipboard images, Explorer).
 
@@ -37,11 +37,15 @@ fn client_id() -> String {
     format!("ui-{}", std::process::id())
 }
 
+/// The service's data folder. Until the service has moved the folder of the app's old name
+/// (QwenLocalStudio, renamed Kokon on 2026-10-08) to KokonData, the old one is read.
 fn data_dir() -> PathBuf {
     if let Ok(p) = std::env::var("QLS_DATA_DIR") {
         return PathBuf::from(p);
     }
-    dirs::data_local_dir().unwrap_or_else(std::env::temp_dir).join("QwenLocalStudio")
+    let base = dirs::data_local_dir().unwrap_or_else(std::env::temp_dir);
+    let (new, old) = (base.join("KokonData"), base.join("QwenLocalStudio"));
+    if !new.exists() && old.is_dir() { old } else { new }
 }
 
 fn http() -> reqwest::blocking::Client {
@@ -64,7 +68,7 @@ fn ping(port: u16) -> bool {
 fn service_exe() -> Option<PathBuf> {
     let me = std::env::current_exe().ok()?;
     let dir = me.parent()?;
-    for name in ["qls-service.exe", "qls-service-x86_64-pc-windows-msvc.exe"] {
+    for name in ["kokon-service.exe", "kokon-service-x86_64-pc-windows-msvc.exe"] {
         let p = dir.join(name);
         if p.is_file() {
             return Some(p);
@@ -74,7 +78,7 @@ fn service_exe() -> Option<PathBuf> {
 }
 
 fn spawn_service() -> Result<(), String> {
-    let exe = service_exe().ok_or("qls-service.exe was not found next to the application.")?;
+    let exe = service_exe().ok_or("kokon-service.exe was not found next to the application.")?;
     let mut cmd = std::process::Command::new(exe);
     cmd.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
     #[cfg(windows)]
@@ -83,7 +87,7 @@ fn spawn_service() -> Result<(), String> {
         // CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP: survives independently of this window.
         cmd.creation_flags(0x0800_0000 | 0x0000_0200);
     }
-    cmd.spawn().map_err(|e| format!("Could not start the Qwen Local Studio service: {e}"))?;
+    cmd.spawn().map_err(|e| format!("Could not start the Kokon service: {e}"))?;
     Ok(())
 }
 
@@ -104,7 +108,7 @@ fn ensure_service(shared: &Shared) -> Result<ServiceInfo, String> {
             return Ok(i);
         }
     }
-    Err("The Qwen Local Studio service did not start. See %LOCALAPPDATA%\\QwenLocalStudio\\logs\\service.log.".into())
+    Err("The Kokon service did not start. See %LOCALAPPDATA%\\KokonData\\logs\\service.log.".into())
 }
 
 fn heartbeat(info: &ServiceInfo) -> bool {
@@ -197,6 +201,18 @@ fn open_folder(app: tauri::AppHandle, path: String) -> Result<(), String> {
     app.opener().open_path(path, None::<&str>).map_err(|e| e.to_string())
 }
 
+/// Opens a download page or the issue tracker in the browser. Only https links to the hosts
+/// the setup wizard uses are allowed.
+#[tauri::command]
+fn open_link(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let allowed = ["https://github.com/", "https://huggingface.co/"];
+    if !allowed.iter().any(|p| url.starts_with(p)) || url.chars().any(|c| c.is_whitespace() || c == '"') {
+        return Err("This link cannot be opened from the app.".into());
+    }
+    app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn data_folder() -> String {
     data_dir().to_string_lossy().into_owned()
@@ -227,9 +243,9 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(shared.clone())
-        .invoke_handler(tauri::generate_handler![connect, copy_image, read_clipboard_image, reveal, open_folder, data_folder])
+        .invoke_handler(tauri::generate_handler![connect, copy_image, read_clipboard_image, reveal, open_folder, open_link, data_folder])
         .build(tauri::generate_context!())
-        .expect("error while building Qwen Local Studio");
+        .expect("error while building Kokon");
     app.run(move |_handle, event| {
         if let RunEvent::Exit = event {
             release(&shared);

@@ -1,8 +1,8 @@
-// Thin client for the local qls-service API. Images are referenced by URL (with the
+// Thin client for the local kokon-service API. Images are referenced by URL (with the
 // token as a query parameter) so the webview streams them directly — no base64 copies.
 
 import type {
-  AppConfig, AppErrorBody, GenerationRecord, GenerationRequest, InputRecord, JobView, Plan, ServiceEvent, SetupReport, StatusResponse,
+  AppConfig, AppErrorBody, GenerationRecord, GenerationRequest, HardwareReport, InputRecord, InstallStatus, JobView, Plan, ServiceEvent, SetupReport, StatusResponse,
 } from "./types";
 
 export class ApiError extends Error {
@@ -13,6 +13,14 @@ export class ApiError extends Error {
 
 let base = "";
 let token = "";
+/** Private mode: uploads and imports go to the service's temporary store. */
+let privateInputs = false;
+
+export function setPrivateInputs(on: boolean) {
+  privateInputs = on;
+}
+
+const privateQuery = () => (privateInputs ? "?private=true" : "");
 
 export function configure(baseUrl: string, tok: string) {
   base = baseUrl;
@@ -44,6 +52,10 @@ const json = (body: unknown) => JSON.stringify(body);
 export const api = {
   status: () => call<StatusResponse>("/status"),
   setup: () => call<SetupReport>("/setup"),
+  hardware: () => call<HardwareReport>("/setup/hardware"),
+  install: (preset: string, upscaler: boolean) => call<InstallStatus>("/setup/install", { method: "POST", body: json({ preset, upscaler }) }),
+  installStatus: () => call<InstallStatus>("/setup/install"),
+  cancelInstall: () => call<InstallStatus>("/setup/install/cancel", { method: "POST" }),
   config: () => call<AppConfig>("/config"),
   saveConfig: (c: AppConfig) => call<{ saved: boolean; backend_restart_needed: boolean }>("/config", { method: "PUT", body: json(c) }),
   startBackend: () => call<{ ready: boolean }>("/backend/start", { method: "POST" }),
@@ -56,8 +68,9 @@ export const api = {
   jobs: () => call<JobView[]>("/jobs"),
   cancel: (id: string) => call<JobView>(`/jobs/${id}/cancel`, { method: "POST" }),
   upload: (bytes: Blob | ArrayBuffer | Uint8Array, name?: string) =>
-    call<InputRecord>("/inputs", { method: "POST", body: bytes as BodyInit, headers: { "Content-Type": "application/octet-stream", ...(name ? { "x-filename": encodeURIComponent(name) } : {}) } }),
-  importPath: (path: string) => call<InputRecord>("/inputs/import", { method: "POST", body: json({ path }) }),
+    call<InputRecord>(`/inputs${privateQuery()}`, { method: "POST", body: bytes as BodyInit, headers: { "Content-Type": "application/octet-stream", ...(name ? { "x-filename": encodeURIComponent(name) } : {}) } }),
+  importPath: (path: string) => call<InputRecord>(`/inputs/import${privateQuery()}`, { method: "POST", body: json({ path }) }),
+  clearPrivate: () => call<{ cleared: number }>("/private/clear", { method: "POST" }),
   input: (id: string) => call<InputRecord>(`/inputs/${id}`),
   gallery: (q: { q?: string; favorites?: boolean; limit?: number; offset?: number; sort?: string }) => {
     const p = new URLSearchParams();
@@ -79,6 +92,9 @@ export const urls = {
   inputThumb: (id: string) => `${base}/inputs/${id}/thumb?token=${token}`,
   gen: (id: string) => `${base}/gallery/${id}/image?token=${token}`,
   genThumb: (id: string) => `${base}/gallery/${id}/thumb?token=${token}`,
+  /** Full image for a "gen:<id>" / "input:<id>" source. */
+  source: (s: string) => (s.startsWith("gen:") ? urls.gen(s.slice(4)) : urls.input(s.slice(6))),
+  sourceThumb: (s: string) => (s.startsWith("gen:") ? urls.genThumb(s.slice(4)) : urls.inputThumb(s.slice(6))),
 };
 
 /** Server-sent events with automatic reconnect. Returns an unsubscribe function. */

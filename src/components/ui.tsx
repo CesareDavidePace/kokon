@@ -86,6 +86,37 @@ export function Switch(props: { on: boolean; onChange: (v: boolean) => void; lab
   return <button className={`switch ${props.on ? "on" : ""}`} role="switch" aria-checked={props.on} aria-label={props.label} onClick={() => props.onChange(!props.on)} />;
 }
 
+/** Text that turns into a field while renaming: Enter or leaving saves, Escape cancels. */
+export function NameField(props: { value: string; onSave: (v: string) => void; onDone: () => void; className?: string }) {
+  const [v, setV] = useState(props.value);
+  const done = useRef(false);
+  const finish = (save: boolean) => {
+    if (done.current) return;
+    done.current = true;
+    if (save && v.trim() !== props.value) props.onSave(v);
+    props.onDone();
+  };
+  return (
+    <input
+      className={`name-field ${props.className ?? ""}`}
+      value={v}
+      autoFocus
+      onFocus={(e) => e.currentTarget.select()}
+      onChange={(e) => setV(e.target.value)}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") finish(true);
+        else if (e.key === "Escape") finish(false);
+      }}
+      onBlur={() => finish(true)}
+      maxLength={120}
+      spellCheck={false}
+      aria-label="Project name"
+    />
+  );
+}
+
 export function IconButton(props: { title: string; onClick?: () => void; children: ReactNode; active?: boolean; disabled?: boolean; small?: boolean }) {
   return (
     <button className={`icon-btn ${props.small ? "sm" : ""} ${props.active ? "active" : ""}`} title={props.title} aria-label={props.title} onClick={props.onClick} disabled={props.disabled}>

@@ -1,8 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Qwen Local Studio",
+  "productName": "Kokon",
+  "mainBinaryName": "Kokon",
   "version": "1.0.0",
-  "identifier": "app.qwenlocalstudio.desktop",
+  "identifier": "app.kokon.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -14,7 +15,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Qwen Local Studio",
+        "title": "Kokon",
         "width": 1320,
         "height": 880,
         "minWidth": 880,
@@ -30,14 +31,16 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "publisher": "Qwen Local Studio",
-    "shortDescription": "Local AI image generation and editing",
-    "longDescription": "Local text-to-image and image editing with Qwen-Image 2.1 via stable-diffusion.cpp. Everything runs on this PC.",
+    "publisher": "Kokon",
+    "shortDescription": "Create and edit images by describing them, on your own GPU",
+    "longDescription": "Kokon creates and edits images from a sentence, privately on your own GPU, with Qwen-Image 2.1 via stable-diffusion.cpp. Everything runs on this PC.",
     "category": "Graphics and Design",
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
-    "externalBin": ["binaries/qls-service", "binaries/qls-mcp"],
+    "externalBin": ["binaries/kokon-service", "binaries/kokon-mcp"],
     "windows": {
       "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
         "installMode": "currentUser",
         "displayLanguageSelector": false
       }

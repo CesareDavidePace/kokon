@@ -1,7 +1,9 @@
-// Mirrors the qls-service JSON contract (crates/qls-core).
+// Mirrors the kokon-service JSON contract (crates/qls-core).
 
 export type Mode = "auto" | "generate" | "edit" | "inpaint" | "outpaint" | "multi_reference" | "upscale";
 export type ResolvedMode = Exclude<Mode, "auto">;
+/** What an inpaint does in the painted area. */
+export type InpaintAction = "edit" | "remove" | "replace" | "add";
 export type Quality = "fast" | "balanced" | "quality";
 export type ResolutionMode = "auto" | "source" | "1k" | "1.5k" | "2k" | "custom";
 export type OutputFormat = "png" | "jpeg" | "webp";
@@ -37,6 +39,7 @@ export interface GenerationRequest {
   mode: Mode;
   images: string[];
   mask?: string | null;
+  inpaint_action?: InpaintAction;
   outpaint?: OutpaintSpec | null;
   quality: Quality;
   resolution: ResolutionMode;
@@ -49,6 +52,8 @@ export interface GenerationRequest {
   client?: string;
   parent_id?: string | null;
   upscale?: UpscaleSpec | null;
+  /** Private mode: kept out of the gallery and the output folder, deleted when it ends. */
+  private?: boolean;
 }
 
 export interface WorkingCanvas { source: Size; content: Size; canvas: Size; content_offset: [number, number]; scale: number }
@@ -56,6 +61,8 @@ export interface RefPlan { index: number; source: Size; canvas: WorkingCanvas }
 
 export interface Plan {
   mode: ResolvedMode;
+  /** Inpaint action actually run (a "remove ..." prompt makes an edit a removal). */
+  inpaint_action?: InpaintAction | null;
   auto_mode: boolean;
   mode_reason: string;
   output: Size;
@@ -215,7 +222,62 @@ export interface AppConfig {
   keepServerRunning: boolean;
   idleUnloadMinutes: number;
   setupComplete: boolean;
+  /** Hardware preset chosen in the setup wizard. */
+  hardwarePreset: string;
+  /** Plan as if the GPU had this much VRAM (MiB); 0 = detected. */
+  vramOverrideMib: number;
   ui: Record<string, unknown>;
+}
+
+export type InstallItemState = "present" | "pending" | "downloading" | "verifying" | "extracting" | "done" | "failed" | "cancelled";
+
+export interface InstallItem {
+  id: string;
+  label: string;
+  kind: "engine" | "model" | "optional";
+  size: number;
+  received: number;
+  state: InstallItemState;
+  error: string | null;
+  hint: string | null;
+  url: string;
+  page: string;
+  path: string;
+}
+
+export interface InstallStatus {
+  running: boolean;
+  complete: boolean;
+  preset: string | null;
+  sdcpp_dir: string | null;
+  items: InstallItem[];
+  bytes_per_sec: number;
+}
+
+export interface HardwarePreset {
+  id: string;
+  label: string;
+  summary: string;
+  verified: boolean;
+  min_vram_mib: number;
+  files: InstallItem[];
+  download_bytes: number;
+  disk_bytes: number;
+}
+
+export interface HardwareReport {
+  gpu: StatusResponse["gpu"];
+  nvidia: boolean;
+  vram_mib: number | null;
+  vram_simulated: boolean;
+  ram_total_mib: number;
+  recommended: string;
+  current: string;
+  presets: HardwarePreset[];
+  sdcpp_dir: string;
+  default_sdcpp_dir: string;
+  free_bytes: number | null;
+  issues_url: string;
 }
 
 export type ServiceEvent =

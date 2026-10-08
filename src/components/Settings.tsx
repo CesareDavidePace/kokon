@@ -1,4 +1,4 @@
-import { Activity, Copy, Cpu, FolderOpen, HardDrive, RefreshCw, RotateCcw, Settings2, X } from "lucide-react";
+import { Activity, Copy, Cpu, Download, FolderOpen, HardDrive, RefreshCw, RotateCcw, Settings2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { api } from "../lib/api";
@@ -9,17 +9,6 @@ import type { AppConfig, Check, ModelProfile, RefineMode, SetupReport, TextEncod
 import { IconButton, Seg, Switch } from "./ui";
 
 type Tab = "general" | "models" | "performance" | "diagnostics";
-
-export function defaultProfilePaths(dir: string, p: ModelProfile): ModelProfile {
-  const m = `${dir.replace(/[\\/]+$/, "")}\\models\\qwen21\\`;
-  return {
-    ...p,
-    diffusionModel: m + "qwen-image-2.1-UC-Q4_K_M.gguf",
-    vae: m + "qwen_image_2.1_vae_bf16.safetensors",
-    textEncoder: m + "Qwen3VL-8B-Instruct-Q4_K_M.gguf",
-    visionProjector: m + "mmproj-Qwen3VL-8B-Instruct-F16.gguf",
-  };
-}
 
 function PathField(props: { label: string; value: string; onChange: (v: string) => void; folder?: boolean; extensions?: string[] }) {
   return (
@@ -187,11 +176,32 @@ export function Settings() {
 
           {tab === "models" && (
             <>
-              <PathField label="stable-diffusion.cpp folder" value={cfg.sdcppDir} folder onChange={(v) => set({ sdcppDir: v })} />
-              <button className="btn" style={{ alignSelf: "flex-start" }} onClick={() => setProfile(defaultProfilePaths(cfg.sdcppDir, profile))}>
-                Use default model paths in this folder
+              <button
+                className="btn"
+                style={{ alignSelf: "flex-start" }}
+                onClick={() => {
+                  if (dirty && !window.confirm("Discard the unsaved changes and open the model setup?")) return;
+                  setState({ overlay: null, needsSetup: true });
+                }}
+              >
+                <Download size={14} /> Set up models…
               </button>
-              <span className="muted">Profile: {profile.displayName}</span>
+              <span className="muted" style={{ marginTop: -10 }}>Downloads the official Qwen-Image 2.1 weights for your graphics card, or switches between the 12, 16, 24 and 32 GB presets.</span>
+              <PathField label="stable-diffusion.cpp folder" value={cfg.sdcppDir} folder onChange={(v) => set({ sdcppDir: v })} />
+              {cfg.profiles.length > 1 ? (
+                <label className="field-row">
+                  <span>Model</span>
+                  <select className="select" value={profile.id} onChange={(e) => set({ activeProfile: e.target.value })}>
+                    {cfg.profiles.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.displayName}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : (
+                <span className="muted">Model: {profile.displayName}</span>
+              )}
               <PathField label="Diffusion model" value={profile.diffusionModel} onChange={(v) => setProfile({ diffusionModel: v })} />
               <PathField label="VAE" value={profile.vae} onChange={(v) => setProfile({ vae: v })} />
               <PathField label="Text encoder (Qwen3-VL)" value={profile.textEncoder} onChange={(v) => setProfile({ textEncoder: v })} />
@@ -297,6 +307,13 @@ export function Settings() {
                 <span>ESRGAN tile size (px, 0 = default 128)</span>
                 <input className="input" type="number" min={0} max={1024} step={64} style={{ width: 90 }} value={cfg.upscaleTileSize} onChange={(e) => set({ upscaleTileSize: Math.max(0, Math.round(Number(e.target.value) || 0)) })} />
               </label>
+              <label className="field-row">
+                <span>Simulated VRAM for testing (MiB, 0 = detect)</span>
+                <input className="input" type="number" min={0} max={196608} step={1024} style={{ width: 100 }} value={cfg.vramOverrideMib} onChange={(e) => set({ vramOverrideMib: Math.max(0, Math.round(Number(e.target.value) || 0)) })} />
+              </label>
+              <span className="muted" style={{ marginTop: -10 }}>
+                Plans image sizes as if the card had this much memory (e.g. 12288 to test a 12 GB card). Combine with the VRAM ballast script in scripts/dev so the memory is really unavailable.
+              </span>
               <label className="field-row">
                 <span>Inference server port</span>
                 <input className="input" type="number" min={1024} max={65535} style={{ width: 100 }} value={cfg.serverPort} onChange={(e) => set({ serverPort: Number(e.target.value) || cfg.serverPort })} />

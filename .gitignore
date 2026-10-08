@@ -9,3 +9,4 @@ node_modules
 /.test-data
 /dist-release
 /src-tauri/gen
+__pycache__/

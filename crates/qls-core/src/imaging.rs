@@ -433,6 +433,163 @@ pub fn paste_back_mask(size: Size, expanded: crate::geometry::Expansion, feather
     })
 }
 
+/// Replaces the pixels where `mask` > 127 by a smooth continuation of the pixels around
+/// them (push-pull: weighted averages down a pyramid, then blended back up). Known pixels
+/// stay exact. Erases content before a removal so the model cannot copy it back.
+pub fn fill_masked(img: &RgbaImage, mask: &GrayImage) -> RgbaImage {
+    assert_eq!(img.dimensions(), mask.dimensions());
+    struct Level {
+        w: usize,
+        h: usize,
+        color: Vec<[f32; 4]>,
+        weight: Vec<f32>,
+    }
+    let (w, h) = (img.width() as usize, img.height() as usize);
+    let mut levels = vec![Level {
+        w,
+        h,
+        color: img.pixels().map(|p| [p[0] as f32, p[1] as f32, p[2] as f32, p[3] as f32]).collect(),
+        weight: mask.pixels().map(|m| if m[0] > 127 { 0.0 } else { 1.0 }).collect(),
+    }];
+    // Push: each coarser pixel is the weighted mean of its (up to) 4 children.
+    while levels.last().map(|l| l.w > 1 || l.h > 1).unwrap() {
+        let cur = levels.last().unwrap();
+        let (nw, nh) = (cur.w.div_ceil(2), cur.h.div_ceil(2));
+        let mut csum = vec![[0f32; 4]; nw * nh];
+        let mut wsum = vec![0f32; nw * nh];
+        for y in 0..cur.h {
+            for x in 0..cur.w {
+                let (i, j) = (y * cur.w + x, (y / 2) * nw + x / 2);
+                let wt = cur.weight[i];
+                for (s, v) in csum[j].iter_mut().zip(cur.color[i]) {
+                    *s += v * wt;
+                }
+                wsum[j] += wt;
+            }
+        }
+        let color = csum.iter().zip(&wsum).map(|(c, &s)| if s > 0.0 { c.map(|v| v / s) } else { [128.0, 128.0, 128.0, 255.0] }).collect();
+        levels.push(Level { w: nw, h: nh, color, weight: wsum.iter().map(|s| s.min(1.0)).collect() });
+    }
+    // Pull: unknown (or partly known) pixels take the bilinearly upsampled coarser level.
+    for l in (0..levels.len() - 1).rev() {
+        let (fine, coarse) = levels.split_at_mut(l + 1);
+        let (f, c) = (&mut fine[l], &coarse[0]);
+        let sample = |x: usize, y: usize| -> [f32; 4] {
+            let fx = ((x as f32 + 0.5) / 2.0 - 0.5).clamp(0.0, (c.w - 1) as f32);
+            let fy = ((y as f32 + 0.5) / 2.0 - 0.5).clamp(0.0, (c.h - 1) as f32);
+            let (x0, y0) = (fx as usize, fy as usize);
+            let (x1, y1) = ((x0 + 1).min(c.w - 1), (y0 + 1).min(c.h - 1));
+            let (tx, ty) = (fx - x0 as f32, fy - y0 as f32);
+            let p = |x: usize, y: usize| c.color[y * c.w + x];
+            let (a, b, d, e) = (p(x0, y0), p(x1, y0), p(x0, y1), p(x1, y1));
+            std::array::from_fn(|k| (a[k] * (1.0 - tx) + b[k] * tx) * (1.0 - ty) + (d[k] * (1.0 - tx) + e[k] * tx) * ty)
+        };
+        for y in 0..f.h {
+            for x in 0..f.w {
+                let i = y * f.w + x;
+                let wt = f.weight[i];
+                if wt < 1.0 {
+                    let up = sample(x, y);
+                    f.color[i] = std::array::from_fn(|k| f.color[i][k] * wt + up[k] * (1.0 - wt));
+                }
+            }
+        }
+    }
+    let base = &levels[0];
+    let mut out = img.clone();
+    for (i, (p, m)) in out.pixels_mut().zip(mask.pixels()).enumerate() {
+        if m[0] > 127 {
+            *p = Rgba(base.color[i].map(|v| v.round().clamp(0.0, 255.0) as u8));
+        }
+    }
+    out
+}
+
+/// Colors for marking an area on a guide image, as named in the prompt.
+const HIGHLIGHTS: [(&str, [u8; 3]); 4] = [("red", [255, 0, 0]), ("green", [0, 230, 0]), ("blue", [0, 80, 255]), ("magenta", [255, 0, 255])];
+
+/// Highlight color for marking the area where `mask` > 127 on `img`: red (the usual choice)
+/// unless the area itself is largely reddish, else the color least present there.
+pub fn pick_highlight(img: &RgbaImage, mask: &GrayImage) -> (&'static str, [u8; 3]) {
+    assert_eq!(img.dimensions(), mask.dimensions());
+    let step = ((img.width() as usize * img.height() as usize) / 200_000).max(1);
+    let mut near = [0usize; HIGHLIGHTS.len()];
+    let mut n = 0usize;
+    for (p, m) in img.pixels().zip(mask.pixels()).step_by(step) {
+        if m[0] <= 127 {
+            continue;
+        }
+        n += 1;
+        for (k, (_, c)) in HIGHLIGHTS.iter().enumerate() {
+            let d: i32 = (0..3).map(|i| (p[i] as i32 - c[i] as i32).pow(2)).sum();
+            if d < 140 * 140 {
+                near[k] += 1;
+            }
+        }
+    }
+    if n == 0 || near[0] * 100 < n * 15 {
+        return HIGHLIGHTS[0];
+    }
+    let k = (0..HIGHLIGHTS.len()).min_by_key(|&k| near[k]).unwrap();
+    HIGHLIGHTS[k]
+}
+
+/// Guide image: `img` with the area where `mask` > 127 tinted with `color` and outlined,
+/// so a prompt can refer to "the area marked in red". Fully opaque.
+pub fn highlight(img: &RgbaImage, mask: &GrayImage, color: [u8; 3]) -> RgbaImage {
+    assert_eq!(img.dimensions(), mask.dimensions());
+    let inside = binarize(mask, 127);
+    let ring = dilate(&inside, (img.width().max(img.height()) / 200).max(2));
+    RgbaImage::from_fn(img.width(), img.height(), |x, y| {
+        let p = img.get_pixel(x, y);
+        if inside.get_pixel(x, y)[0] > 0 {
+            let tint = |i: usize| ((p[i] as u32 + color[i] as u32) / 2) as u8;
+            Rgba([tint(0), tint(1), tint(2), 255])
+        } else if ring.get_pixel(x, y)[0] > 0 {
+            Rgba([color[0], color[1], color[2], 255])
+        } else {
+            Rgba([p[0], p[1], p[2], 255])
+        }
+    })
+}
+
+#[cfg(test)]
+mod fill_tests {
+    use super::*;
+
+    #[test]
+    fn fill_masked_keeps_known_pixels_and_continues_colors() {
+        // Left half blue, right half green, a red square across the boundary.
+        let mut img = RgbaImage::from_fn(64, 32, |x, _| if x < 32 { Rgba([0, 0, 200, 255]) } else { Rgba([0, 200, 0, 255]) });
+        let mut m = GrayImage::new(64, 32);
+        for y in 8..24 {
+            for x in 20..44 {
+                img.put_pixel(x, y, Rgba([255, 0, 0, 255]));
+                m.put_pixel(x, y, Luma([255]));
+            }
+        }
+        let out = fill_masked(&img, &m);
+        for (x, y, p) in out.enumerate_pixels() {
+            if m.get_pixel(x, y)[0] == 0 {
+                assert_eq!(p, img.get_pixel(x, y));
+            } else {
+                assert!(p[0] < 40, "no red left at {x},{y}: {p:?}");
+            }
+        }
+        assert!(out.get_pixel(21, 16)[2] > out.get_pixel(21, 16)[1], "left side continues blue");
+        assert!(out.get_pixel(42, 16)[1] > out.get_pixel(42, 16)[2], "right side continues green");
+    }
+
+    #[test]
+    fn highlight_avoids_the_area_color() {
+        let red = RgbaImage::from_pixel(32, 32, Rgba([230, 20, 20, 255]));
+        let gray = RgbaImage::from_pixel(32, 32, Rgba([120, 120, 120, 255]));
+        let m = GrayImage::from_pixel(32, 32, Luma([255]));
+        assert_eq!(pick_highlight(&gray, &m).0, "red");
+        assert_ne!(pick_highlight(&red, &m).0, "red");
+    }
+}
+
 pub fn thumbnail(img: &RgbaImage, max_side: u32) -> RgbaImage {
     let (w, h) = (img.width(), img.height());
     if w.max(h) <= max_side {

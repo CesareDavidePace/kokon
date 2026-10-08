@@ -68,7 +68,11 @@ export const schemas = {
   inpaint_image: {
     image_path: z.string().min(1),
     mask_path: z.string().min(1).describe("Mask image: white = area to change, black = keep (or opaque strokes on a transparent layer)"),
-    prompt: prompt.describe("What should appear in the masked area"),
+    action: z
+      .enum(["edit", "remove", "replace", "add"])
+      .default("edit")
+      .describe("edit: change the area as the prompt says; remove: erase what is there and fill with background (prompt optional, e.g. 'the bin'); replace: put the prompt's subject in its place; add: add the prompt's subject inside the area"),
+    prompt: z.string().trim().max(8000).default("").describe("The change, or the subject to add/replace with; optional for remove"),
     seed: seed.optional(),
     quality: quality.optional(),
     output_path: outputPath.optional(),
@@ -328,7 +332,12 @@ export const handlers = {
     const img = checkInput(a.image_path, ctx.cwd, r);
     const mask = checkInput(a.mask_path, ctx.cwd, r);
     const out = a.output_path ? checkOutput(a.output_path, ctx.cwd, r) : undefined;
-    return runJob(ctx, { prompt: a.prompt, mode: "inpaint", images: [img], mask, quality: a.quality ?? "balanced", seed: a.seed, output_path: out, advanced: {} }, !!a.include_preview);
+    if (!a.prompt && a.action !== "remove") throw new PathError("prompt must not be empty (only action 'remove' works without one).");
+    return runJob(
+      ctx,
+      { prompt: a.prompt, mode: "inpaint", inpaint_action: a.action, images: [img], mask, quality: a.quality ?? "balanced", seed: a.seed, output_path: out, advanced: {} },
+      !!a.include_preview,
+    );
   },
 
   async upscale_image(a: Args<"upscale_image">, ctx: ToolContext) {

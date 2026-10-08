@@ -1,4 +1,4 @@
-//! qls-service — the headless Qwen Local Studio service.
+//! kokon-service (crate qls-service) — the headless Kokon service.
 //!
 //! Owns the generation engine and the sd-server process, and exposes the stable local API
 //! (`http://127.0.0.1:<port>/api/v1/...`) used by the desktop app, the MCP server and
@@ -108,7 +108,7 @@ async fn main() {
     let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(l) => l,
         Err(e) => {
-            tracing::info!("port {port} busy ({e}); another qls-service is probably running — exiting");
+            tracing::info!("port {port} busy ({e}); another kokon-service is probably running — exiting");
             return;
         }
     };
@@ -123,7 +123,7 @@ async fn main() {
     let token = load_or_create_token(&dir);
     let info = ServiceInfo { port, token: token.clone(), pid: std::process::id(), version: APP_VERSION.into() };
     let _ = std::fs::write(service_info_path(), serde_json::to_string_pretty(&info).unwrap());
-    tracing::info!("qls-service {APP_VERSION} listening on http://{addr} (pid {})", info.pid);
+    tracing::info!("kokon-service {APP_VERSION} listening on http://{addr} (pid {})", info.pid);
 
     let state = Arc::new(AppState {
         engine: engine.clone(),
@@ -147,6 +147,7 @@ async fn main() {
         tracing::error!("http server error: {e}");
     }
 
+    let _ = engine.clear_private();
     // Shutdown: stop sd-server unless the user wants it kept loaded.
     let cfg = engine.config();
     if !cfg.keep_server_running {
@@ -162,7 +163,7 @@ async fn main() {
     {
         let _ = std::fs::remove_file(service_info_path());
     }
-    tracing::info!("qls-service exited");
+    tracing::info!("kokon-service exited");
 }
 
 /// Exits when no client holds a lease, no job is pending, and the grace period passed.
@@ -235,6 +236,8 @@ pub fn client_left(state: &AppState, kind: &str, ui_remaining: bool, remaining: 
         if n > 0 {
             tracing::info!("desktop app closed — cancelled {n} job(s)");
         }
+        // Private mode lasts as long as the window.
+        let _ = state.engine.clear_private();
     }
     if remaining == 0 {
         state.quick_exit.store(true, std::sync::atomic::Ordering::Relaxed);

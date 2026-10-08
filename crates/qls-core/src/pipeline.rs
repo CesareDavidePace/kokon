@@ -9,7 +9,7 @@ use image::{GrayImage, Luma, Rgba, RgbaImage};
 use crate::error::{AppError, AppResult, ErrorCode};
 use crate::geometry::{Rect, Size};
 use crate::imaging::{self, LoadedImage};
-use crate::planner::{Plan, ResolvedMode};
+use crate::planner::{InpaintAction, Plan, ResolvedMode};
 use crate::sdcpp::{Guidance, ImgGenRequest, SampleParams, VaeTilingParams, b64};
 
 /// Server-side facts that shape the request but are not part of the plan.
@@ -109,6 +109,32 @@ pub fn wants_transparency(prompt: &str) -> bool {
         .any(|k| p.contains(k))
 }
 
+/// Inpaint instruction: `<image1>` is the region (blurred out where content is removed),
+/// `<image2>` the same region with the area marked in `color`. The wording follows the
+/// official Qwen-Image 2.1 edit prompt guide (refer to images as `<imageN>`; for removals,
+/// describe what fills the exposed area).
+pub fn inpaint_prompt(action: InpaintAction, prompt: &str, color: &str) -> String {
+    let area = format!("the area marked in {color} in <image2>");
+    let keep = "Keep everything outside the marked area exactly as it is.";
+    let what = action.subject(prompt);
+    match action {
+        InpaintAction::Edit => format!("In <image1>, change only {area}: {what}. Blend the change seamlessly into the surrounding scene. {keep}"),
+        InpaintAction::Remove => {
+            let (target, it) = if what.is_empty() { ("everything that was there".to_string(), "it") } else { (what.clone(), "the removed content") };
+            format!(
+                "In <image1>, {area} has been blurred out to remove {target}. Replace the blurred area with the background that would naturally be behind it, \
+                 continuing the surrounding scene, textures, lighting and perspective, so that no trace, outline or shadow of {it} remains. {keep}"
+            )
+        }
+        InpaintAction::Replace => format!(
+            "In <image1>, replace what is inside {area} with {what}. Match the scene's lighting, perspective, scale and style so it looks naturally part of the image. {keep}"
+        ),
+        InpaintAction::Add => format!(
+            "In <image1>, add {what} inside {area}, fitting it naturally into the scene with matching lighting, perspective, scale and shadows. {keep}"
+        ),
+    }
+}
+
 /// Prompt sent to the model. Transparency requests use the prompt format recommended for
 /// Qwen-Image 2.1 RGBA output; outpainting gets an instruction prefix so short prompts
 /// like "extend left" still describe the task.
@@ -185,27 +211,46 @@ pub fn prepare(plan: &Plan, prompt: &str, seed: i64, images: &[LoadedImage], mas
             let user_mask = mask.ok_or_else(|| AppError::invalid("A mask is required for inpainting."))?;
             let user_mask = imaging::resize_mask(user_mask, src_size.width, src_size.height);
             let region = plan.inpaint_region.unwrap_or(Rect::new(0, 0, src_size.width, src_size.height));
+            let action = plan.inpaint_action.unwrap_or_default();
             let wc = plan.references[0].canvas;
             let crop = imaging::crop(src, region);
-            let canvas = to_canvas(&crop, &wc);
-            let canvas_b64 = png_b64(&canvas)?;
-            drop(canvas);
+            let content = imaging::resize(&crop, wc.content.width, wc.content.height);
+            drop(crop);
 
             // Blend mask (source resolution): soft edges so the patch merges invisibly.
             let mut blend = imaging::crop_mask(&user_mask, region);
+            if action == InpaintAction::Remove {
+                // Removals also take the halo and contact shadow just outside the stroke.
+                blend = imaging::dilate(&blend, ((region.width.max(region.height) as f64) * 0.01).round().max(4.0) as u32);
+            }
             if is_binary(&blend) {
                 let r = ((region.width.max(region.height) as f64) * 0.006).round().max(3.0) as u32;
                 blend = imaging::feather(&imaging::dilate(&blend, r / 2), r);
             }
             // Backend mask (working resolution): binary, grown to cover the soft edge.
-            let m_work = imaging::resize_mask(&blend, wc.content.width, wc.content.height);
+            let m_content = imaging::resize_mask(&blend, wc.content.width, wc.content.height);
             let grow = ((wc.scale * 4.0).round() as u32).clamp(4, 24);
-            let m_work = imaging::backend_mask(&m_work, grow);
+            let m_work = imaging::backend_mask(&m_content, grow);
             let mut m_canvas = GrayImage::from_pixel(wc.canvas.width, wc.canvas.height, Luma([0]));
             image::imageops::replace(&mut m_canvas, &m_work, wc.content_offset.0 as i64, wc.content_offset.1 as i64);
 
-            req.init_image = Some(canvas_b64.clone());
-            req.ref_images.push(canvas_b64);
+            // Image 1: the region; for a removal with the content already blurred away, so
+            // the model rebuilds background instead of copying the object back.
+            let pad = |img: &RgbaImage| imaging::pad_edge(img, wc.canvas, wc.content_offset);
+            let image1 = if action == InpaintAction::Remove { imaging::fill_masked(&content, &m_work) } else { content.clone() };
+            // Image 2 (guide): the area marked in a color named in the prompt. The model gets
+            // no mask otherwise; the latent mask only discards changes outside it.
+            let gc = plan.references.get(1).map(|r| r.canvas).ok_or_else(|| AppError::internal("missing inpaint guide plan"))?;
+            let (color_name, color) = imaging::pick_highlight(&content, &m_content);
+            let guide_mask = imaging::resize_mask(&m_work, gc.content.width, gc.content.height);
+            let guide = imaging::highlight(&imaging::resize(&image1, gc.content.width, gc.content.height), &guide_mask, color);
+            drop(content);
+
+            let image1_b64 = png_b64(&pad(&image1))?;
+            req.init_image = Some(image1_b64.clone());
+            req.ref_images.push(image1_b64);
+            req.ref_images.push(png_b64(&imaging::pad_edge(&guide, gc.canvas, gc.content_offset))?);
+            req.prompt = inpaint_prompt(action, prompt, color_name);
             req.mask_image = Some(gray_png_b64(&m_canvas)?);
             req.strength = plan.strength;
             req.image_preprocess = vec!["target=init,mode=none".into(), "target=mask,mode=none,filter=nearest-exact".into(), "target=ref,mode=none".into()];
@@ -706,6 +751,80 @@ mod tests {
             }
         }
         assert!(changed_inside);
+    }
+
+    fn inpaint_job(prompt: &str, action: InpaintAction) -> (LoadedImage, GrayImage, PreparedJob) {
+        // A white box, painted over.
+        let mut img = photo(900, 700);
+        let mut m = GrayImage::new(900, 700);
+        for y in 300..360 {
+            for x in 400..480 {
+                m.put_pixel(x, y, Luma([255]));
+                img.pixels.put_pixel(x, y, Rgba([255, 255, 255, 255]));
+            }
+        }
+        let mut r = req(prompt);
+        r.mask = Some("input:m".into());
+        r.inpaint_action = action;
+        let inputs = PlanInputs {
+            image_sizes: vec![img.size()],
+            mask: Some((Size::new(900, 700), imaging::mask_bbox(&m, 127), imaging::mask_coverage(&m, 127))),
+            vram_total_mib: Some(16303),
+            ..Default::default()
+        };
+        let p = plan(&r, &inputs, &RecommendedSettings::default()).unwrap();
+        let j = prepare(&p, &r.prompt, 1, std::slice::from_ref(&img), Some(&m), &BackendOptions::default()).unwrap();
+        (img, m, j)
+    }
+
+    #[test]
+    fn inpaint_sends_region_and_marked_guide() {
+        let (_, _, j) = inpaint_job("a red hat", InpaintAction::Add);
+        assert_eq!(j.request.ref_images.len(), 2, "region + guide");
+        let (r1, g) = (decode(&j.request.ref_images[0]), decode(&j.request.ref_images[1]));
+        assert_eq!(r1.dimensions(), (j.request.width, j.request.height));
+        assert_eq!(j.request.init_image.as_ref(), Some(&j.request.ref_images[0]));
+        assert!(g.width() % 32 == 0 && g.height() % 32 == 0);
+        assert!((g.width() as u64 * g.height() as u64) < (r1.width() as u64 * r1.height() as u64) / 2, "guide is small");
+        // The guide carries the highlight color (named in the prompt) where the mask is.
+        let marked = g.pixels().filter(|p| p[0] == 255 && p[1] == 0 && p[2] == 0).count();
+        assert!(marked > 0);
+        assert!(j.request.prompt.contains("<image1>") && j.request.prompt.contains("marked in red in <image2>"));
+        assert!(j.request.prompt.contains("add a red hat inside"), "{}", j.request.prompt);
+    }
+
+    #[test]
+    fn remove_blurs_content_out_of_image_1() {
+        let center = |j: &PreparedJob| {
+            let r1 = decode(&j.request.ref_images[0]);
+            let PostKind::Inpaint { region, .. } = &j.post.kind else { panic!() };
+            let s = r1.width() as f64 / region.width as f64;
+            *r1.get_pixel(((440 - region.x) as f64 * s) as u32, ((330 - region.y) as f64 * s) as u32)
+        };
+        let (_, _, edit) = inpaint_job("make it shiny", InpaintAction::Edit);
+        assert_eq!(center(&edit), Rgba([255, 255, 255, 255]), "edits show the content");
+        // The "remove ..." prompt turns a plain edit into a removal.
+        let (_, _, rm) = inpaint_job("Remove the box.", InpaintAction::Edit);
+        assert!(rm.request.prompt.contains("blurred out to remove the box"), "{}", rm.request.prompt);
+        assert!(center(&rm).0[..3].iter().any(|&c| c < 230), "box erased: {:?}", center(&rm));
+        assert_eq!(rm.request.init_image.as_ref(), Some(&rm.request.ref_images[0]));
+    }
+
+    #[test]
+    fn remove_needs_no_prompt() {
+        let (_, _, j) = inpaint_job("", InpaintAction::Remove);
+        assert!(j.request.prompt.contains("to remove everything that was there"));
+    }
+
+    #[test]
+    fn inpaint_action_subjects() {
+        assert_eq!(InpaintAction::Edit.resolve("please remove the girl"), InpaintAction::Remove);
+        assert_eq!(InpaintAction::Edit.resolve("make it red"), InpaintAction::Edit);
+        assert_eq!(InpaintAction::Add.resolve("remove it"), InpaintAction::Add);
+        assert_eq!(InpaintAction::Remove.subject("Remove the girl."), "the girl");
+        assert_eq!(InpaintAction::Replace.subject("replace it with a dog"), "a dog");
+        assert_eq!(InpaintAction::Add.subject("Add a cat"), "a cat");
+        assert_eq!(InpaintAction::Edit.subject("make it blue"), "make it blue");
     }
 
     #[test]

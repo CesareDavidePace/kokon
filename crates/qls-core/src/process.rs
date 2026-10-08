@@ -706,11 +706,13 @@ mod tests {
     #[test]
     fn default_launch_args() {
         let mut cfg = AppConfig::default();
+        cfg.sdcpp_dir = std::path::PathBuf::from(r"C:\AI\sdcpp");
+        cfg.apply_preset(crate::catalog::preset("16gb").unwrap());
         cfg.upscalers_dir = Some(std::env::temp_dir().join("qls-no-upscalers-here"));
         let a = build_server_args(&cfg, cfg.profile());
         let s = a.join(" ");
         assert!(s.starts_with("--listen-ip 127.0.0.1 --listen-port 39150"));
-        assert!(s.contains(r"--diffusion-model C:\AI\sdcpp\models\qwen21\qwen-image-2.1-UC-Q4_K_M.gguf"));
+        assert!(s.contains(r"--diffusion-model C:\AI\sdcpp\models\qwen21\qwen-image-2.1-Q4_K_M.gguf"));
         assert!(s.contains(r"--vae C:\AI\sdcpp\models\qwen21\qwen_image_2.1_vae_bf16.safetensors"));
         assert!(s.contains(r"--llm C:\AI\sdcpp\models\qwen21\Qwen3VL-8B-Instruct-Q4_K_M.gguf"));
         assert!(s.contains(r"--llm_vision C:\AI\sdcpp\models\qwen21\mmproj-Qwen3VL-8B-Instruct-F16.gguf"));

@@ -1,11 +1,10 @@
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { Images, Loader2, Settings, SquarePen, X } from "lucide-react";
+import { EyeOff, Loader2, PanelLeft, Redo2, Settings, SquarePen, Undo2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, configure } from "./lib/api";
-import { emptyComposer } from "./lib/logic";
 import { native } from "./lib/native";
 import {
-  addInputs, dismissToast, getState, refreshStatus, setState, startEvents, submitComposer, toastError, toastInfo, useStore,
+  addInputs, dismissToast, getState, newProject, redoVersion, refreshStatus, selectItem, setPrivateMode, setState, startEvents, submitComposer, toastError, toastInfo, undoKey, undoVersion, useStore,
 } from "./lib/store";
 import { Composer, importPaths } from "./components/Composer";
 import { ExpandEditor } from "./components/ExpandEditor";
@@ -13,7 +12,8 @@ import { Gallery } from "./components/Gallery";
 import { InpaintEditor } from "./components/InpaintEditor";
 import { Settings as SettingsDialog } from "./components/Settings";
 import { Setup } from "./components/Setup";
-import { HistoryRail, Stage } from "./components/Stage";
+import { ProjectTitle, Sidebar } from "./components/Sidebar";
+import { Stage } from "./components/Stage";
 import { IconButton } from "./components/ui";
 
 const IMAGE_EXT = /\.(png|jpe?g|webp|bmp|gif|tiff?|heic|heif)$/i;
@@ -61,6 +61,37 @@ function StatusIndicator() {
   );
 }
 
+/** Undo / Redo between versions: back to the image the current one was made from. */
+function HistoryButtons() {
+  const canUndo = useStore((s) => undoKey(s) !== null);
+  const canRedo = useStore((s) => s.redo.length > 0);
+  if (!canUndo && !canRedo) return null;
+  return (
+    <>
+      <IconButton title="Undo: back to the previous version (Ctrl+Z)" onClick={undoVersion} disabled={!canUndo}>
+        <Undo2 size={18} />
+      </IconButton>
+      <IconButton title="Redo (Ctrl+Y)" onClick={redoVersion} disabled={!canRedo}>
+        <Redo2 size={18} />
+      </IconButton>
+    </>
+  );
+}
+
+function PrivateToggle() {
+  const on = useStore((s) => s.privateMode);
+  const toggle = () => setPrivateMode(!on, () => native.confirm("Turn off private mode? The images made in private mode will be deleted.", "Private mode"));
+  return on ? (
+    <button className="private-pill" onClick={toggle} title="Private mode is on: images are not saved and are deleted when you turn it off or close the app. Click to turn it off.">
+      <EyeOff size={15} /> Private
+    </button>
+  ) : (
+    <IconButton title="Private mode: nothing is saved to the gallery or your Pictures folder" onClick={toggle}>
+      <EyeOff size={18} />
+    </IconButton>
+  );
+}
+
 function Toasts() {
   const toasts = useStore((s) => s.toasts);
   const [open, setOpen] = useState<string | null>(null);
@@ -102,6 +133,8 @@ async function uploadBlobs(files: File[]) {
 export default function App() {
   const overlay = useStore((s) => s.overlay);
   const needsSetup = useStore((s) => s.needsSetup);
+  const sidebar = useStore((s) => s.sidebar);
+  const editing = useStore((s) => s.composer.refs.length > 0 && s.session.length > 0);
   const [boot, setBoot] = useState<"connecting" | "ok" | string>("connecting");
   const [dragging, setDragging] = useState(false);
 
@@ -183,11 +216,23 @@ export default function App() {
         return;
       }
       if (typing) return;
+      // Undo / Redo between versions (the brush editor has its own while it is open).
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (e.shiftKey) redoVersion();
+        else undoVersion();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        redoVersion();
+        return;
+      }
       if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown") {
         const i = s.session.findIndex((x) => x.key === s.selected);
         const d = e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 1;
         const n = s.session[Math.max(0, Math.min(s.session.length - 1, i + d))];
-        if (n) setState({ selected: n.key });
+        if (n) selectItem(n.key);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -214,43 +259,40 @@ export default function App() {
 
   return (
     <div className="app">
-      <div className="topbar">
-        <div className="brand">
-          <StatusIndicator />
+      {sidebar && !needsSetup && <Sidebar />}
+      <div className="workspace">
+        <div className="topbar">
+          <div className="brand">
+            {!sidebar && !needsSetup && (
+              <>
+                <IconButton title="Show sidebar" onClick={() => setState({ sidebar: true })}>
+                  <PanelLeft size={18} />
+                </IconButton>
+                <IconButton title="New image" onClick={newProject}>
+                  <SquarePen size={18} />
+                </IconButton>
+              </>
+            )}
+            {overlay === "gallery" ? <span className="project-title">All images</span> : !needsSetup && <ProjectTitle />}
+          </div>
+          <div className="toolbar">
+            {!needsSetup && <HistoryButtons />}
+            {!needsSetup && <PrivateToggle />}
+            <StatusIndicator />
+            <IconButton title="Settings" onClick={() => setState({ overlay: "settings" })}>
+              <Settings size={18} />
+            </IconButton>
+          </div>
         </div>
-        <div className="toolbar">
-          <IconButton
-            title="New"
-            onClick={() => {
-              const c = getState().composer;
-              setState({ composer: emptyComposer(c), selected: null });
-            }}
-          >
-            <SquarePen size={18} />
-          </IconButton>
-          <IconButton title="Gallery" active={overlay === "gallery"} onClick={() => setState({ overlay: overlay === "gallery" ? null : "gallery" })}>
-            <Images size={18} />
-          </IconButton>
-          <IconButton title="Settings" onClick={() => setState({ overlay: "settings" })}>
-            <Settings size={18} />
-          </IconButton>
+        <div className="main">
+          {needsSetup ? <Setup /> : <Stage />}
+          {overlay === "gallery" && <Gallery />}
+          {overlay === "inpaint" && <InpaintEditor />}
+          {overlay === "expand" && <ExpandEditor />}
+          {dragging && <div className="drop-hint">{editing ? "Drop to add as a reference image" : "Drop an image to start editing it"}</div>}
         </div>
+        {!needsSetup && overlay !== "inpaint" && overlay !== "expand" && overlay !== "gallery" && <Composer />}
       </div>
-      <div className="main">
-        {needsSetup ? (
-          <Setup />
-        ) : (
-          <>
-            <Stage />
-            <HistoryRail />
-          </>
-        )}
-        {overlay === "gallery" && <Gallery />}
-        {overlay === "inpaint" && <InpaintEditor />}
-        {overlay === "expand" && <ExpandEditor />}
-        {dragging && <div className="drop-hint">Drop images to add them</div>}
-      </div>
-      {!needsSetup && overlay !== "inpaint" && overlay !== "expand" && overlay !== "gallery" && <Composer />}
       {overlay === "settings" && <SettingsDialog />}
       <Toasts />
     </div>

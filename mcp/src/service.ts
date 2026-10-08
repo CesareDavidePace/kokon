@@ -1,4 +1,4 @@
-// Client for the local qls-service. Finds it via service.json, starts it if needed
+// Client for the local kokon-service. Finds it via service.json, starts it if needed
 // (the service in turn starts/reuses sd-server), and holds an "mcp" lease while alive.
 
 import { spawn } from "node:child_process";
@@ -24,7 +24,12 @@ export class ServiceError extends Error {
 }
 
 export function dataDir(): string {
-  return process.env.QLS_DATA_DIR ?? path.join(process.env.LOCALAPPDATA ?? path.join(process.env.USERPROFILE ?? "C:\\", "AppData", "Local"), "QwenLocalStudio");
+  if (process.env.QLS_DATA_DIR) return process.env.QLS_DATA_DIR;
+  const base = process.env.LOCALAPPDATA ?? path.join(process.env.USERPROFILE ?? "C:\\", "AppData", "Local");
+  // The service moves the folder of the app's old name (QwenLocalStudio) to KokonData on its
+  // first start; until then the old one is read.
+  const [next, old] = [path.join(base, "KokonData"), path.join(base, "QwenLocalStudio")];
+  return !fs.existsSync(next) && fs.existsSync(old) ? old : next;
 }
 
 function readInfo(): ServiceInfo | null {
@@ -48,12 +53,12 @@ export function findServiceExe(): string | null {
   const local = process.env.LOCALAPPDATA ?? "";
   const candidates = [
     process.env.QLS_SERVICE_EXE,
-    path.join(path.dirname(process.execPath), "qls-service.exe"),
-    path.join(local, "Qwen Local Studio", "qls-service.exe"),
-    path.join(process.env.ProgramFiles ?? "C:\\Program Files", "Qwen Local Studio", "qls-service.exe"),
+    path.join(path.dirname(process.execPath), "kokon-service.exe"),
+    path.join(local, "Kokon", "kokon-service.exe"),
+    path.join(process.env.ProgramFiles ?? "C:\\Program Files", "Kokon", "kokon-service.exe"),
     // Development checkout (mcp/build -> target/...)
-    path.resolve(__dirname, "..", "..", "target", "release", "qls-service.exe"),
-    path.resolve(__dirname, "..", "..", "target", "debug", "qls-service.exe"),
+    path.resolve(__dirname, "..", "..", "target", "release", "kokon-service.exe"),
+    path.resolve(__dirname, "..", "..", "target", "debug", "kokon-service.exe"),
   ];
   for (const c of candidates) {
     if (c && fs.existsSync(c)) return c;
@@ -83,9 +88,9 @@ export class ServiceClient {
     const exe = findServiceExe();
     if (!exe) {
       throw new ServiceError(
-        "Qwen Local Studio is not installed (qls-service.exe not found).",
+        "Kokon is not installed (kokon-service.exe not found).",
         "not_installed",
-        "Install Qwen Local Studio, or set QLS_SERVICE_EXE to the path of qls-service.exe.",
+        "Install Kokon, or set QLS_SERVICE_EXE to the path of kokon-service.exe.",
       );
     }
     // Detached: the service outlives this MCP process and exits on its own when idle.
@@ -97,7 +102,7 @@ export class ServiceClient {
       const i = readInfo();
       if (i && (await ping(i.port))) return i;
     }
-    throw new ServiceError("The Qwen Local Studio service did not start.", "service_unavailable", `See ${path.join(dataDir(), "logs", "service.log")}`);
+    throw new ServiceError("The Kokon service did not start.", "service_unavailable", `See ${path.join(dataDir(), "logs", "service.log")}`);
   }
 
   private startHeartbeat() {
@@ -137,7 +142,7 @@ export class ServiceClient {
         this.info = null;
         return this.call(method, route, body, false);
       }
-      throw new ServiceError("The Qwen Local Studio service is not reachable.", "service_unavailable", undefined, String(e));
+      throw new ServiceError("The Kokon service is not reachable.", "service_unavailable", undefined, String(e));
     }
     const text = await res.text();
     const data = text ? JSON.parse(text) : null;

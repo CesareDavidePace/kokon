@@ -1,4 +1,4 @@
-// End-to-end over stdio with the official MCP client. Starts qls-service on demand
+// End-to-end over stdio with the official MCP client. Starts kokon-service on demand
 // (no generation, so no GPU work) using an isolated data/config folder and ports.
 import fs from "node:fs";
 import os from "node:os";
@@ -13,7 +13,7 @@ const env = {
   ...process.env,
   QLS_DATA_DIR: path.join(tmp, "data"),
   QLS_CONFIG_DIR: path.join(tmp, "config"),
-  QLS_SERVICE_EXE: path.join(root, "target", "debug", "qls-service.exe"),
+  QLS_SERVICE_EXE: path.join(root, "target", "debug", "kokon-service.exe"),
 } as Record<string, string>;
 delete env.CLAUDE_PROJECT_DIR;
 fs.mkdirSync(env.QLS_CONFIG_DIR, { recursive: true });
@@ -28,7 +28,7 @@ let client: Client;
 beforeAll(async () => {
   client = new Client({ name: "qls-test", version: "1.0.0" });
   const exe = process.env.QLS_MCP_EXE;
-  await client.connect(new StdioClientTransport({ command: exe ?? process.execPath, args: exe ? [] : [path.join(root, "mcp", "build", "qls-mcp.cjs")], env, cwd: proj, stderr: "pipe" }));
+  await client.connect(new StdioClientTransport({ command: exe ?? process.execPath, args: exe ? [] : [path.join(root, "mcp", "build", "kokon-mcp.cjs")], env, cwd: proj, stderr: "pipe" }));
 }, 30_000);
 
 afterAll(async () => {
@@ -42,9 +42,9 @@ afterAll(async () => {
 });
 
 describe("MCP protocol", () => {
-  it("lists the seven tools with schemas", async () => {
+  it("lists the eight tools with schemas", async () => {
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual(["edit_image", "edit_images", "generate_image", "get_generator_status", "get_image_info", "inpaint_image", "outpaint_image"]);
+    expect(tools.map((t) => t.name).sort()).toEqual(["edit_image", "edit_images", "generate_image", "get_generator_status", "get_image_info", "inpaint_image", "outpaint_image", "upscale_image"]);
     const gen = tools.find((t) => t.name === "generate_image")!;
     expect(gen.inputSchema.required).toEqual(["prompt"]);
   });

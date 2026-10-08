@@ -1,8 +1,8 @@
 [package]
-name = "qwen-local-studio"
+name = "kokon"
 version.workspace = true
 edition.workspace = true
-description = "Qwen Local Studio"
+description = "Kokon"
 
 [lib]
 name = "qls_app"

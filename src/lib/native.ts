@@ -17,6 +17,8 @@ export const native = {
   reveal: (path: string) => invoke<void>("reveal", { path }),
   openFolder: (path: string) => invoke<void>("open_folder", { path }),
   dataFolder: () => invoke<string>("data_folder"),
+  /** https links to github.com / huggingface.co only. */
+  openLink: (url: string) => invoke<void>("open_link", { url }),
   pickImages: async (): Promise<string[]> => {
     const r = await open({ multiple: true, directory: false, filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "bmp", "gif", "tif", "tiff", "heic", "heif"] }] });
     if (!r) return [];

@@ -55,6 +55,47 @@ impl ResolvedMode {
     }
 }
 
+/// What an inpaint does in the painted area. Each action wraps the prompt in an instruction
+/// that points the model at the area (marked on a second reference image, see pipeline).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum InpaintAction {
+    /// The prompt describes the change.
+    #[default]
+    Edit,
+    /// Erase the painted content and fill with background; the prompt (what to remove) is optional.
+    Remove,
+    /// Put what the prompt describes in place of the painted content.
+    Replace,
+    /// Add what the prompt describes inside the painted area.
+    Add,
+}
+
+static REMOVE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)^\s*(?:please\s+)?(?:remove|erase|delete|get rid of|take out|clear away|clean up)\b\s*").unwrap());
+
+impl InpaintAction {
+    /// The action actually run: an Edit whose prompt asks to remove something is a Remove.
+    pub fn resolve(self, prompt: &str) -> Self {
+        if self == Self::Edit && REMOVE_RE.is_match(prompt) { Self::Remove } else { self }
+    }
+
+    /// The prompt without the action's own verb ("Remove the girl" → "the girl").
+    pub fn subject(self, prompt: &str) -> String {
+        static ADD_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^\s*(?:please\s+)?(?:add|put|place|insert)\b\s*").unwrap());
+        static REPLACE_RE: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"(?i)^\s*(?:please\s+)?(?:replace(?:\s+(?:it|this|that|them))?\s+with|change(?:\s+(?:it|this|that))?\s+(?:in)?to|with)\b\s*").unwrap());
+        let p = prompt.trim();
+        let s = match self {
+            Self::Edit => p.into(),
+            Self::Remove => REMOVE_RE.replace(p, "").into_owned(),
+            Self::Add => ADD_RE.replace(p, "").into_owned(),
+            Self::Replace => REPLACE_RE.replace(p, "").into_owned(),
+        };
+        s.trim().trim_end_matches(['.', '!']).trim().to_string()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum UpscaleMethod {
@@ -182,6 +223,9 @@ pub struct GenerationRequest {
     pub images: Vec<String>,
     #[serde(default)]
     pub mask: Option<String>,
+    /// What to do in the masked area (inpaint only).
+    #[serde(default)]
+    pub inpaint_action: InpaintAction,
     #[serde(default)]
     pub outpaint: Option<OutpaintSpec>,
     #[serde(default)]
@@ -210,6 +254,10 @@ pub struct GenerationRequest {
     /// Target for `mode: upscale`.
     #[serde(default)]
     pub upscale: Option<UpscaleSpec>,
+    /// Private mode: inputs and results go to a temporary store (not the gallery or the
+    /// output folder) that is deleted when private mode ends or the service exits.
+    #[serde(default)]
+    pub private: bool,
 }
 
 // ---------------------------------------------------------------------------------------
@@ -254,6 +302,9 @@ pub struct Plan {
     pub outpaint: Option<OutpaintPlan>,
     /// Region of the source sent to the model for inpainting.
     pub inpaint_region: Option<Rect>,
+    /// Resolved inpaint action (see [`InpaintAction::resolve`]).
+    #[serde(default)]
+    pub inpaint_action: Option<InpaintAction>,
     pub quality: Quality,
     pub resolution: ResolutionMode,
     pub aspect_label: String,
@@ -464,6 +515,10 @@ pub fn token_budget(vram_total_mib: Option<u64>) -> u64 {
 
 pub const PIXELS_PER_TOKEN: u64 = 256; // 8x VAE downscale, 2x2 patches
 
+/// Area of the inpaint guide reference (the region with the painted area marked), as a
+/// share of the working canvas: enough to locate the area, cheap in tokens.
+pub const INPAINT_GUIDE_AREA: f64 = 0.25;
+
 /// Seconds per sampling step, from RTX 5070 Ti measurements at CFG 6 (two model passes per
 /// step): 1 MP ≈ 2.0 s (1.63 s with SageAttention), 2048x1152 ≈ 5.6 s (3.8 s with
 /// SageAttention). CFG 1 runs one pass, so half of that (to re-measure).
@@ -603,9 +658,6 @@ fn ref_canvas(src: Size, max_canvas_area: u64, rec: &RecommendedSettings) -> Wor
 
 /// Produces the generation plan. `rec` comes from the active model profile.
 pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSettings) -> Result<Plan, AppError> {
-    if req.prompt.trim().is_empty() && req.mode != Mode::Upscale {
-        return Err(AppError::invalid("Describe what to generate or change."));
-    }
     if req.prompt.len() > 8000 {
         return Err(AppError::invalid("The prompt is too long (8000 characters max)."));
     }
@@ -613,6 +665,12 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
         return Err(AppError::invalid(format!("Use at most {} reference images.", rec.max_references)));
     }
     let (mode, auto_mode, mode_reason) = detect_mode(req, inputs)?;
+    let inpaint_action = (mode == ResolvedMode::Inpaint).then(|| req.inpaint_action.resolve(&req.prompt));
+    // Upscales and removals need no description.
+    let prompt_optional = mode == ResolvedMode::Upscale || inpaint_action == Some(InpaintAction::Remove);
+    if req.prompt.trim().is_empty() && !prompt_optional {
+        return Err(AppError::invalid("Describe what to generate or change."));
+    }
     let default_cfg = if mode == ResolvedMode::Generate { rec.cfg } else { rec.cfg_edit };
     let cfg = req.advanced.cfg.unwrap_or(default_cfg).clamp(0.0, 30.0);
     let mut notes = Vec::new();
@@ -629,9 +687,9 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
     let refine = adv.refine.unwrap_or(inputs.refine);
     let mut upscale = None;
 
-    // Shared: cap an area by the VRAM budget given n reference images of similar size.
-    let mut cap_for_refs = |wanted: u64, n_refs: usize, notes: &mut Vec<String>| -> u64 {
-        let allowed = budget_area / (1 + n_refs as u64);
+    // Shared: cap an area by the VRAM budget given references totalling `n_refs` times it.
+    let mut cap_for_refs = |wanted: u64, n_refs: f64, notes: &mut Vec<String>| -> u64 {
+        let allowed = (budget_area as f64 / (1.0 + n_refs)) as u64;
         if wanted > allowed {
             optimized = true;
             notes.push("Resolution reduced to fit available VRAM.".into());
@@ -682,7 +740,7 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
                 }
                 let src = Size::new(w, h);
                 // Above the VRAM budget: render smaller, then enlarge to the exact size.
-                let area = cap_for_refs(src.area(), 0, &mut notes);
+                let area = cap_for_refs(src.area(), 0.0, &mut notes);
                 working = plan_working_canvas(src, &CanvasLimits { min_side: 64, ..limits(area, rec) });
                 output = src;
             } else {
@@ -696,7 +754,7 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
                     })
                     .unwrap_or((1.0, "1:1".into()));
                 let wanted = tier_area.unwrap_or(rec.area_balanced);
-                let area = cap_for_refs(wanted, 0, &mut notes);
+                let area = cap_for_refs(wanted, 0.0, &mut notes);
                 let size = size_for_aspect(aspect, area, rec);
                 working = plan_working_canvas(size, &limits(size.area(), rec));
                 output = size;
@@ -779,8 +837,10 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
                 ((bbox.width as f64 * sx).ceil() as u32).max(1),
                 ((bbox.height as f64 * sy).ceil() as u32).max(1),
             );
-            let area = cap_for_refs(tier_area.unwrap_or(src.area()), 1, &mut notes);
-            let min_ctx = ((area as f64).sqrt() * 0.75) as u32;
+            // References: the region itself, plus a smaller copy with the area marked.
+            let area = cap_for_refs(tier_area.unwrap_or(src.area()), 1.0 + INPAINT_GUIDE_AREA, &mut notes);
+            // At least the working size of context around the mask, so the model sees the scene.
+            let min_ctx = (area as f64).sqrt() as u32;
             let region = geometry::inpaint_region(src, bbox, min_ctx, 0.55);
             let l = CanvasLimits { upscale_to_area: Some(area), max_upscale: 4.0, ..limits(area, rec) };
             working = plan_working_canvas(region.size(), &l);
@@ -790,6 +850,8 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
             inpaint_region = Some(region);
             output = src;
             references.push(RefPlan { index: 0, source: region.size(), canvas: working });
+            let guide_area = (working.canvas.area() as f64 * INPAINT_GUIDE_AREA) as u64;
+            references.push(RefPlan { index: 0, source: region.size(), canvas: ref_canvas(region.size(), guide_area, rec) });
             strength = Some(adv.strength.unwrap_or(1.0).clamp(0.05, 1.0));
         }
         ResolvedMode::Outpaint => {
@@ -805,7 +867,7 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
                 ResolutionMode::Source | ResolutionMode::Custom => final_area,
                 _ => tier_area.unwrap().min(final_area.max(256 * 256)),
             };
-            let area = cap_for_refs(wanted, 1, &mut notes);
+            let area = cap_for_refs(wanted, 1.0, &mut notes);
             let p = plan_outpaint(src, exp, &limits(area, rec), 32).map_err(AppError::invalid)?;
             working = p.working;
             output = p.final_size;
@@ -884,6 +946,7 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
         references,
         outpaint,
         inpaint_region,
+        inpaint_action,
         quality: req.quality,
         resolution: req.resolution,
         notes,

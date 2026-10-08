@@ -1,26 +1,46 @@
 import {
-  Brush, Copy, Download, Expand, FolderOpen, Heart, ImagePlus, Info, Loader2, MousePointerClick, Pencil, RotateCcw, Shuffle, Square, X, ClipboardPaste, ZoomIn,
+  Brush, ClipboardPaste, Combine, Copy, Download, Ellipsis, Expand, FolderOpen, Heart, Info, Loader2, MousePointerClick, Pencil, RotateCcw, Shuffle, Square, TextCursorInput, Trash2, Wand2, X, ZoomIn,
 } from "lucide-react";
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { api, urls } from "../lib/api";
 import {
-  compareBase, formatDuration, jobFraction, jobLabel, MAX_UPSCALE_AREA, MAX_UPSCALE_SIDE, MODE_LABEL, pipelineSummary, remainingSeconds, sizeForWidth, upscaleRequest, upscalerLabel, upscaleTargets,
-  variationRequest,
+  compareBase, composerFromRecord, formatDuration, jobFraction, jobLabel, MAX_UPSCALE_AREA, MAX_UPSCALE_SIDE, MODE_LABEL, pipelineSummary, remainingSeconds, sizeForWidth, upscaleRequest, upscalerLabel,
+  upscaleTargets, variationRequest, versionLabels,
 } from "../lib/logic";
 import { native } from "../lib/native";
 import {
-  addAsReference, cancelJob, editItem, openEditorFor, removeSessionItem, selectedItem, setState, submitRequest, toastError, toastInfo, useStore, type SessionItem,
+  cancelJob, focusPrompt, getState, itemSource, removeSessionItem, selectedItem, selectItem, setState, submitRequest, toastError, toastInfo, useStore, type SessionItem,
 } from "../lib/store";
-import type { GenerationRecord, JobView, Size, UpscaleMethod } from "../lib/types";
+import type { GenerationRecord, JobView, Mode, Size, UpscaleMethod } from "../lib/types";
 import { CompareBar, CompareFrame } from "./Compare";
 import { IconButton, Popover, Seg, useFit } from "./ui";
 import { FullscreenButton, ZoomImage } from "./Viewer";
+
+export const MODE_ICON: Record<Mode, React.ReactNode> = {
+  auto: <Wand2 size={11} />,
+  generate: <Wand2 size={11} />,
+  edit: <Pencil size={11} />,
+  multi_reference: <Combine size={11} />,
+  inpaint: <Brush size={11} />,
+  outpaint: <Expand size={11} />,
+  upscale: <ZoomIn size={11} />,
+};
+
+const MODE_DOING: Record<Mode, string> = {
+  auto: "Working",
+  generate: "Creating",
+  edit: "Editing",
+  multi_reference: "Combining images",
+  inpaint: "Inpainting",
+  outpaint: "Expanding",
+  upscale: "Upscaling",
+};
 
 function Empty() {
   return (
     <div className="empty">
       <h1>What should we make?</h1>
-      <p>Describe an image, or bring one to edit.</p>
+      <p>Describe a new image below, or bring one in to edit it.</p>
       <div className="hint">
         <span>
           <MousePointerClick size={14} /> Drop images here
@@ -33,21 +53,33 @@ function Empty() {
   );
 }
 
-function Pending({ job, aspect }: { job: JobView; aspect: number }) {
-  const { ref, box } = useFit(aspect);
+/** A version in progress: the image it starts from, dimmed, with live progress on top. */
+function Pending({ job, item, labels }: { job: JobView; item: SessionItem; labels: Record<string, string> }) {
+  const o = job.plan?.output;
+  const { ref, box } = useFit(o ? o.width / o.height : 1);
+  const session = useStore((s) => s.session);
   const frac = jobFraction(job);
   const remain = remainingSeconds(job);
   const canCancel = !["done", "failed", "cancelled"].includes(job.status);
+  const src = item.request?.mode === "generate" ? undefined : item.request?.images?.[0];
+  const from = src ? session.find((i) => itemSource(i) === src) : undefined;
+  const mode = job.plan?.mode;
+  // "v3 · Editing v2", "v1 · Creating"
+  const title = [labels[item.key], mode && `${MODE_DOING[mode]}${from && mode !== "multi_reference" ? ` ${labels[from.key]}` : ""}`].filter(Boolean).join(" · ");
+  // The source keeps its own shape inside an expansion; elsewhere it fills the frame.
+  const outpaint = item.request?.outpaint;
   return (
     <div className="stage-frame" ref={ref}>
       <div className="pending" style={{ width: box.w, height: box.h }}>
+        {src && !outpaint && <img className="pending-src" src={urls.source(src)} alt="" draggable={false} />}
         <div className="pending-info">
-          <span style={{ color: "var(--text)", fontWeight: 500 }}>{jobLabel(job)}</span>
+          <span className="pending-title">{title}</span>
           <div className={`progress ${frac === null ? "indeterminate" : ""}`}>
             <i style={frac !== null ? { width: `${Math.round(frac * 100)}%` } : undefined} />
           </div>
-          <span className="muted">
-            {job.plan ? `${MODE_LABEL[job.plan.mode]} · ${job.plan.output.width}×${job.plan.output.height}` : ""}
+          <span>
+            {jobLabel(job)}
+            {o ? ` · ${o.width}×${o.height}` : ""}
             {remain !== null ? ` · ${formatDuration(remain)} left` : ""}
           </span>
           {job.notes.length > 0 && <span className="notes">{job.notes.join(" ")}</span>}
@@ -182,7 +214,7 @@ function UpscaleMenu(props: { source: string; size: Size; original?: Size | null
 function UpscaleButton(props: { source: string; size: Size; original?: Size | null; parentId?: string | null }) {
   return (
     <Popover
-      placement="top-start"
+      placement="top-end"
       trigger={(open, toggle) => (
         <IconButton title="Upscale" onClick={toggle} active={open}>
           <ZoomIn size={17} />
@@ -194,31 +226,68 @@ function UpscaleButton(props: { source: string; size: Size; original?: Size | nu
   );
 }
 
+function MoreMenu({ item, path }: { item: SessionItem; path: string | null }) {
+  const g = item.gen;
+  return (
+    <Popover
+      placement="top-end"
+      trigger={(open, toggle) => (
+        <IconButton title="More" onClick={toggle} active={open}>
+          <Ellipsis size={17} />
+        </IconButton>
+      )}
+    >
+      {(close) => (
+        <>
+          {g && (
+            <button
+              className="opt"
+              onClick={() => {
+                close();
+                const c = getState().composer;
+                setState({ composer: { ...composerFromRecord(g, c), mode: "auto" } });
+                focusPrompt();
+              }}
+            >
+              <span className="check">
+                <TextCursorInput size={15} />
+              </span>
+              <span>Reuse prompt and settings</span>
+            </button>
+          )}
+          {path && (
+            <button className="opt" onClick={() => (close(), native.reveal(path).catch(toastError))}>
+              <span className="check">
+                <FolderOpen size={15} />
+              </span>
+              <span>Show in Explorer</span>
+            </button>
+          )}
+          <button className="opt" onClick={() => (close(), removeSessionItem(item.key))}>
+            <span className="check">
+              <Trash2 size={15} />
+            </span>
+            <span>Remove from project</span>
+          </button>
+        </>
+      )}
+    </Popover>
+  );
+}
+
 function GenActions({ item, g }: { item: SessionItem; g: GenerationRecord }) {
   const original = g.references[0] && g.mode !== "generate" && g.mode !== "upscale" ? { width: g.references[0].width, height: g.references[0].height } : null;
   const [fav, setFav] = useState(g.favorite);
   return (
     <div className="actions">
-      <IconButton title="Edit" onClick={() => editItem(item)}>
-        <Pencil size={17} />
-      </IconButton>
       <IconButton
-        title="Create variation"
+        title="Variation (same prompt, new seed)"
         onClick={() => {
           const r = variationRequest(g);
           if (r) submitRequest(r);
         }}
       >
         <Shuffle size={17} />
-      </IconButton>
-      <IconButton title="Use as reference" onClick={() => addAsReference(item)}>
-        <ImagePlus size={17} />
-      </IconButton>
-      <IconButton title="Inpaint" onClick={() => openEditorFor(item, "inpaint")}>
-        <Brush size={17} />
-      </IconButton>
-      <IconButton title="Expand" onClick={() => openEditorFor(item, "expand")}>
-        <Expand size={17} />
       </IconButton>
       <UpscaleButton source={`gen:${g.id}`} size={{ width: g.width, height: g.height }} original={original} parentId={g.id} />
       <span className="sep" />
@@ -265,9 +334,6 @@ function GenActions({ item, g }: { item: SessionItem; g: GenerationRecord }) {
       >
         <Copy size={17} />
       </IconButton>
-      <IconButton title="Show in Explorer" onClick={() => native.reveal(g.file_path).catch(toastError)}>
-        <FolderOpen size={17} />
-      </IconButton>
       <Popover
         placement="top-end"
         trigger={(open, toggle) => (
@@ -278,30 +344,18 @@ function GenActions({ item, g }: { item: SessionItem; g: GenerationRecord }) {
       >
         {() => <InfoPanel g={g} />}
       </Popover>
+      <MoreMenu item={item} path={g.file_path} />
     </div>
   );
 }
 
 function InputActions({ item }: { item: SessionItem }) {
+  const input = item.input!;
   return (
     <div className="actions">
-      <IconButton title="Edit" onClick={() => editItem(item)}>
-        <Pencil size={17} />
-      </IconButton>
-      <IconButton title="Use as reference" onClick={() => addAsReference(item)}>
-        <ImagePlus size={17} />
-      </IconButton>
-      <IconButton title="Inpaint" onClick={() => openEditorFor(item, "inpaint")}>
-        <Brush size={17} />
-      </IconButton>
-      <IconButton title="Expand" onClick={() => openEditorFor(item, "expand")}>
-        <Expand size={17} />
-      </IconButton>
-      {item.input && <UpscaleButton source={`input:${item.input.id}`} size={{ width: item.input.width, height: item.input.height }} />}
+      <UpscaleButton source={`input:${input.id}`} size={{ width: input.width, height: input.height }} />
       <span className="sep" />
-      <IconButton title="Remove from session" onClick={() => removeSessionItem(item.key)}>
-        <X size={17} />
-      </IconButton>
+      <MoreMenu item={item} path={input.original_path ?? input.path} />
     </div>
   );
 }
@@ -314,92 +368,165 @@ function PlainFrame({ src, alt, w, h }: { src: string; alt: string; w: number; h
   return (
     <div className="stage-frame" ref={ref}>
       <div className="image-box" style={{ width: bw, height: bw * (h / w) }}>
-        <img className="stage-img fill" src={src} alt={alt} draggable={false} onDoubleClick={() => setState({ overlay: null })} />
+        <img className="stage-img fill" src={src} alt={alt} draggable={false} />
         <FullscreenButton hint="Click to zoom to 100 %" content={<ZoomImage src={src} alt={alt} />} />
       </div>
     </div>
   );
 }
 
+/** One line under the image: which version this is, what made it, and what you can do with it. */
+function StageBar({ item, label }: { item: SessionItem; label: string }) {
+  const g = item.gen;
+  const base = g ? compareBase(g) : null;
+  const w = g?.width ?? item.input!.width;
+  const h = g?.height ?? item.input!.height;
+  const name = item.input?.original_name ? safeDecode(item.input.original_name) : "Imported image";
+  return (
+    <div className="stage-bar">
+      <div className="stage-meta">
+        <span className="ver">{label}</span>
+        {g && <span className="mode">{MODE_LABEL[g.mode]}</span>}
+        <span className="stage-prompt" title={g?.prompt ?? name}>
+          {g ? g.prompt || (g.mode === "upscale" ? `${g.references[0]?.width ?? "?"}×${g.references[0]?.height ?? "?"} → ${w}×${h}` : "") : name}
+        </span>
+        <span className="dims">
+          {w}×{h}
+        </span>
+      </div>
+      {base && <CompareBar />}
+      {g ? <GenActions key={`actions-${g.id}`} item={item} g={g} /> : <InputActions item={item} />}
+    </div>
+  );
+}
+
+function safeDecode(s: string) {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+
+/** The project's versions in order: Original → v1 → v2 … The image the prompt edits carries a pencil. */
+function Timeline({ labels }: { labels: Record<string, string> }) {
+  const session = useStore((s) => s.session);
+  const selected = useStore((s) => s.selected);
+  const jobs = useStore((s) => s.jobs);
+  const target = useStore((s) => s.composer.refs[0]?.source);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    boxRef.current?.querySelector(".frame.sel")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [selected, session.length]);
+
+  if (!session.length) return null;
+  return (
+    <div className="timeline" ref={boxRef} aria-label="Versions">
+      {session.map((it, i) => {
+        const job = it.jobId ? jobs[it.jobId] : undefined;
+        const src = itemSource(it);
+        const pending = it.kind === "job";
+        const failed = pending && job && ["failed", "cancelled"].includes(job.status);
+        const frac = pending && job ? jobFraction(job) : null;
+        const mode: Mode | undefined = it.gen?.mode ?? job?.plan?.mode;
+        const from = it.gen?.parent_id ? session.find((x) => x.gen?.id === it.gen!.parent_id) : undefined;
+        const pendingSrc = pending && it.request?.mode !== "generate" ? it.request?.images?.[0] : undefined;
+        const prompt = it.gen?.prompt || it.request?.prompt || "";
+        const tip = [labels[it.key], mode ? MODE_LABEL[mode] : it.input ? "Imported" : "", from && session[i - 1] !== from ? `from ${labels[from.key]}` : "", prompt ? `— ${prompt}` : ""].filter(Boolean).join(" ");
+        return (
+          <Fragment key={it.key}>
+            {i > 0 && <span className="link" />}
+            <button className={`frame ${selected === it.key ? "sel" : ""}`} onClick={() => selectItem(it.key)} title={tip}>
+              <span className="frame-img">
+                {src && <img src={urls.sourceThumb(src)} alt="" draggable={false} />}
+                {pendingSrc && <img className="dim" src={urls.sourceThumb(pendingSrc)} alt="" draggable={false} />}
+                {pending && !failed && (
+                  <span className="frame-state">
+                    {frac !== null ? <Ring frac={frac} /> : <Loader2 className="spin" size={16} />}
+                  </span>
+                )}
+                {failed && (
+                  <span className="frame-state">
+                    <X size={16} />
+                  </span>
+                )}
+                {src && src === target && (
+                  <span className="frame-badge" title="The prompt edits this image">
+                    <Pencil size={10} />
+                  </span>
+                )}
+              </span>
+              <span className="frame-label">
+                {mode && MODE_ICON[mode]}
+                {labels[it.key]}
+              </span>
+            </button>
+          </Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
+function Ring({ frac }: { frac: number }) {
+  const r = 8;
+  const c = 2 * Math.PI * r;
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden>
+      <circle cx="10" cy="10" r={r} fill="none" stroke="currentColor" strokeOpacity="0.25" strokeWidth="2.5" />
+      <circle cx="10" cy="10" r={r} fill="none" stroke="currentColor" strokeWidth="2.5" strokeDasharray={c} strokeDashoffset={c * (1 - frac)} strokeLinecap="round" transform="rotate(-90 10 10)" />
+    </svg>
+  );
+}
+
 export function Stage() {
   const item = useStore(selectedItem);
+  const session = useStore((s) => s.session);
   const job = useStore((s) => (item?.jobId ? s.jobs[item.jobId] : undefined));
+  const labels = useMemo(() => versionLabels(session), [session]);
 
   if (!item) {
     return (
       <div className="stage">
         <Empty />
+        <Timeline labels={labels} />
       </div>
     );
   }
-  if (item.kind === "job" && job) {
-    if (job.status === "failed" || job.status === "cancelled") {
-      return (
-        <div className="stage">
-          <Failed job={job} item={item} />
-        </div>
-      );
-    }
-    const o = job.plan?.output;
-    return (
-      <div className="stage">
-        <Pending job={job} aspect={o ? o.width / o.height : 1} />
-        <div className="stage-caption">
-          <span className="prompt">{job.prompt}</span>
-        </div>
-      </div>
-    );
-  }
+
+  let view: React.ReactNode;
   if (item.kind === "job") {
-    return (
-      <div className="stage">
+    view = !job ? (
+      <div className="stage-frame">
         <Loader2 className="spin" size={22} />
       </div>
+    ) : job.status === "failed" || job.status === "cancelled" ? (
+      <Failed job={job} item={item} />
+    ) : (
+      <Pending job={job} item={item} labels={labels} />
+    );
+  } else {
+    const src = item.gen ? urls.gen(item.gen.id) : urls.input(item.input!.id);
+    const w = item.gen?.width ?? item.input!.width;
+    const h = item.gen?.height ?? item.input!.height;
+    const base = item.gen ? compareBase(item.gen) : null;
+    view = (
+      <>
+        {item.gen && base ? (
+          <CompareFrame key={`compare-${item.gen.id}`} g={item.gen} base={base} />
+        ) : (
+          <PlainFrame key={src} src={src} alt={item.gen?.prompt ?? item.input?.original_name ?? ""} w={w} h={h} />
+        )}
+        <StageBar item={item} label={labels[item.key]} />
+      </>
     );
   }
-  const src = item.gen ? urls.gen(item.gen.id) : urls.input(item.input!.id);
-  const w = item.gen?.width ?? item.input!.width;
-  const h = item.gen?.height ?? item.input!.height;
-  const base = item.gen ? compareBase(item.gen) : null;
+
   return (
     <div className="stage">
-      {item.gen && base ? (
-        <CompareFrame key={`compare-${item.gen.id}`} g={item.gen} base={base} />
-      ) : (
-        <PlainFrame key={src} src={src} alt={item.gen?.prompt ?? item.input?.original_name ?? ""} w={w} h={h} />
-      )}
-      {base && <CompareBar />}
-      <div className="stage-caption">
-        {item.gen ? <span className="prompt" title={item.gen.prompt}>{item.gen.prompt}</span> : <span>{item.input?.original_name ? decodeURIComponent(item.input.original_name) : "Image"}</span>}
-        <span>
-          {w}×{h}
-        </span>
-      </div>
-      {item.gen ? <GenActions key={`actions-${item.gen.id}`} item={item} g={item.gen} /> : <InputActions item={item} />}
-    </div>
-  );
-}
-
-export function HistoryRail() {
-  const session = useStore((s) => s.session);
-  const selected = useStore((s) => s.selected);
-  const jobs = useStore((s) => s.jobs);
-  if (!session.length) return null;
-  return (
-    <div className="rail" aria-label="Session history">
-      {session.map((it) => {
-        const job = it.jobId ? jobs[it.jobId] : undefined;
-        const pending = it.kind === "job";
-        return (
-          <button key={it.key} className={`thumb ${selected === it.key ? "sel" : ""}`} onClick={() => setState({ selected: it.key })} title={it.gen?.prompt ?? (job ? jobLabel(job) : "Image")}>
-            {it.gen && <img src={urls.genThumb(it.gen.id)} alt="" draggable={false} />}
-            {it.input && <img src={urls.inputThumb(it.input.id)} alt="" draggable={false} />}
-            {pending && job && !["failed", "cancelled"].includes(job.status) && <Loader2 className="spin" size={18} />}
-            {pending && job && ["failed", "cancelled"].includes(job.status) && <X size={18} />}
-            {it.input && <span className="tag">in</span>}
-          </button>
-        );
-      })}
+      {view}
+      <Timeline labels={labels} />
     </div>
   );
 }

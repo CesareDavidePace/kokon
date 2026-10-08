@@ -77,8 +77,23 @@ function FullscreenShell({ children, hint, onClose }: { children: ReactNode; hin
     return () => window.removeEventListener("keydown", down, true);
   }, [onClose]);
 
+  // React events from a portal still bubble to its React parents: without this, a press
+  // anywhere here reaches the stage image underneath (which captures the pointer for the
+  // slider / press-to-compare) and the buttons in full screen never get their click.
+  const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   return (
-    <div className="viewer" role="dialog" aria-label="Full screen">
+    <div
+      className="viewer"
+      role="dialog"
+      aria-label="Full screen"
+      onPointerDown={stop}
+      onPointerMove={stop}
+      onPointerUp={stop}
+      onPointerCancel={stop}
+      onClick={stop}
+      onDoubleClick={stop}
+      onContextMenu={stop}
+    >
       {children}
       <div className="viewer-bar">
         <span className="viewer-hint">{hint ? `${hint} · ` : ""}Esc to exit</span>

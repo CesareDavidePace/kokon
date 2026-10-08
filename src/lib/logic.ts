@@ -1,6 +1,6 @@
 // Pure UI logic (unit-tested in logic.test.ts).
 
-import type { Advanced, GenerationRecord, GenerationRequest, InputRecord, JobView, Mode, OutpaintSpec, Plan, Quality, ResolutionMode, Size, UpscaleMethod } from "./types";
+import type { Advanced, GenerationRecord, GenerationRequest, InpaintAction, InputRecord, InstallItem, JobView, Mode, OutpaintSpec, Plan, Quality, ResolutionMode, Size, UpscaleMethod } from "./types";
 
 export interface Ref {
   key: string;
@@ -19,6 +19,8 @@ export interface Composer {
   refs: Ref[];
   /** Mask painted on refs[0] (input id of the mask PNG). */
   mask: { inputId: string; refKey: string } | null;
+  /** What to do in the painted area. */
+  inpaintAction: InpaintAction;
   outpaint: OutpaintSpec | null;
   mode: Mode;
   aspect: string;
@@ -35,6 +37,7 @@ export const emptyComposer = (prefs?: Partial<Composer>): Composer => ({
   negative: "",
   refs: [],
   mask: null,
+  inpaintAction: "edit",
   outpaint: null,
   mode: "auto",
   aspect: prefs?.aspect ?? "auto",
@@ -85,6 +88,7 @@ export function buildRequest(c: Composer, parentId?: string | null): GenerationR
     mode: c.mode,
     images: c.mode === "generate" ? [] : c.refs.map((r) => r.source),
     mask: maskValid ? `input:${c.mask!.inputId}` : null,
+    ...(maskValid ? { inpaint_action: c.inpaintAction } : {}),
     outpaint: hasOutpaint(c.outpaint) ? c.outpaint : null,
     quality: c.quality,
     resolution: c.resolution,
@@ -97,6 +101,12 @@ export function buildRequest(c: Composer, parentId?: string | null): GenerationR
     client: "ui",
     parent_id: parentId ?? null,
   };
+}
+
+/** False only for a removal in a painted area, which needs no description. */
+export function needsPrompt(c: Composer): boolean {
+  const maskValid = c.mask && c.refs[0] && c.mask.refKey === c.refs[0].key;
+  return !(maskValid && c.inpaintAction === "remove");
 }
 
 /** Advanced fields that change how the model samples. They last for the session only: a value
@@ -137,6 +147,7 @@ export function composerFromRecord(g: GenerationRecord, base: Composer): Compose
     negative: g.negative_prompt ?? "",
     refs,
     mask: g.mask_input_id && refs[0] ? { inputId: g.mask_input_id, refKey: refs[0].key } : null,
+    inpaintAction: req?.inpaint_action ?? "edit",
     outpaint: g.outpaint ? { ...g.outpaint, units: "pixels" } : null,
     // Upscales are started from the image toolbar, not the composer.
     mode: req?.mode && req.mode !== "upscale" ? req.mode : "auto",
@@ -168,6 +179,31 @@ export const MODE_LABEL: Record<Mode, string> = {
   multi_reference: "Combine",
   upscale: "Upscale",
 };
+
+/** Version names within a project: imported images are "Original" ("Original 2", ...), and
+ * results and pending jobs are numbered v1, v2... in project order. */
+export function versionLabels(items: { key: string; kind: "gen" | "input" | "job" }[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  let v = 0;
+  let inputs = 0;
+  for (const it of items) {
+    if (it.kind === "input") {
+      inputs++;
+      out[it.key] = inputs === 1 ? "Original" : `Original ${inputs}`;
+    } else out[it.key] = `v${++v}`;
+  }
+  return out;
+}
+
+/** "1m ago"-style age for the project list. */
+export function timeAgo(ms: number, now = Date.now()): string {
+  const s = Math.max(0, (now - ms) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  if (s < 86400 * 7) return `${Math.floor(s / 86400)}d ago`;
+  return new Date(ms).toLocaleDateString();
+}
 
 /** Short truthful status text for a job. */
 export function jobLabel(j: JobView): string {
@@ -314,6 +350,93 @@ export function formatDuration(s: number): string {
   const m = Math.floor(s / 60);
   const r = Math.round(s % 60);
   return r ? `${m}m ${r}s` : `${m}m`;
+}
+
+/** Undo target for version `key`: the version it was made from (`from` is that image's
+ * "gen:<id>"/"input:<id>"), or the version before it when that one is not in the project. */
+export function undoTarget(items: { key: string; source: string | null; from: string | null }[], key: string): string | null {
+  const i = items.findIndex((x) => x.key === key);
+  if (i < 0) return null;
+  const from = items[i].from;
+  const parent = from ? items.find((x) => x.source === from && x.key !== key) : undefined;
+  if (parent) return parent.key;
+  return i > 0 ? items[i - 1].key : null;
+}
+
+/** 1.2 GB, 340 MB, 12 KB (decimal units, like download sizes on Hugging Face and GitHub). */
+export function formatBytes(n: number): string {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(n >= 1e10 ? 0 : 1)} GB`;
+  if (n >= 1e6) return `${Math.round(n / 1e6)} MB`;
+  return `${Math.max(0, Math.round(n / 1e3))} KB`;
+}
+
+/** Overall download progress over the files that were not installed already. */
+export function installProgress(items: InstallItem[]): { received: number; total: number; frac: number } {
+  const todo = items.filter((i) => i.state !== "present");
+  const total = todo.reduce((a, i) => a + i.size, 0);
+  const received = todo.reduce((a, i) => a + Math.min(i.received, i.size), 0);
+  return { received, total, frac: total ? received / total : 1 };
+}
+
+/** One line under a file in the setup wizard. */
+export function installItemText(i: InstallItem, bytesPerSec: number): string {
+  switch (i.state) {
+    case "present":
+    case "done":
+      return `Installed · ${formatBytes(i.size)}`;
+    case "pending":
+      return `To download · ${formatBytes(i.size - i.received)}`;
+    case "downloading": {
+      const rate = bytesPerSec > 0 ? ` · ${formatBytes(bytesPerSec)}/s` : "";
+      const left = bytesPerSec > 0 ? ` · ${formatDuration((i.size - i.received) / bytesPerSec)} left` : "";
+      return `${formatBytes(i.received)} of ${formatBytes(i.size)}${rate}${left}`;
+    }
+    case "verifying":
+      return "Checking the file…";
+    case "extracting":
+      return "Extracting…";
+    case "cancelled":
+      return i.received ? `Paused at ${formatBytes(i.received)}; continues where it stopped` : "Cancelled";
+    case "failed":
+      return i.error ?? "Failed";
+  }
+}
+
+/** Right-hand status of a file in the setup list. */
+export function installItemShort(i: InstallItem): string {
+  switch (i.state) {
+    case "present":
+    case "done":
+      return "Installed";
+    case "downloading":
+      return `${Math.floor((i.received / i.size) * 100)}%`;
+    case "verifying":
+      return "Checking";
+    case "extracting":
+      return "Extracting";
+    case "failed":
+      return "Failed";
+    case "cancelled":
+      return i.received ? `Paused · ${formatBytes(i.size - i.received)} left` : formatBytes(i.size);
+    case "pending":
+      return formatBytes(i.size - i.received);
+  }
+}
+
+/** What the installer is doing right now, for the progress panel. */
+export function installStep(items: InstallItem[]): string | null {
+  const it = items.find((i) => i.state === "downloading" || i.state === "verifying" || i.state === "extracting");
+  if (!it) return null;
+  if (it.state === "verifying") return `Checking ${it.label}`;
+  if (it.state === "extracting") return `Unpacking ${it.label}`;
+  return `Downloading ${it.label}`;
+}
+
+/** "about 2 min left" once the speed is known. */
+export function installTimeLeft(remaining: number, bytesPerSec: number): string | null {
+  if (bytesPerSec < 100e3 || remaining <= 0) return null;
+  const s = remaining / bytesPerSec;
+  return s < 60 ? "less than a minute left" : `about ${Math.ceil(s / 60)} min left`;
 }
 
 export const ASPECTS = ["auto", "1:1", "4:3", "3:4", "16:9", "9:16", "custom"] as const;

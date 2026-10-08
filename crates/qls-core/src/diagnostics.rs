@@ -169,7 +169,7 @@ mod tests {
     fn checks_flag_missing_files() {
         let mut cfg = AppConfig::default();
         cfg.sdcpp_dir = std::env::temp_dir().join("qls-does-not-exist");
-        cfg.profiles = vec![crate::config::ModelProfile::qwen_image_21_q4(&cfg.sdcpp_dir)];
+        cfg.profiles = vec![crate::config::ModelProfile::official(&cfg.sdcpp_dir, cfg.preset())];
         let r = setup_checks(&cfg, None);
         assert!(!r.ready);
         assert!(r.checks.iter().any(|c| c.id == "server_exe" && !c.ok));

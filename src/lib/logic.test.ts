@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  activeOverrides, buildRequest, compareBase, diffPixels, emptyComposer, expansionPixels, expansionPreset, jobFraction, jobLabel, moveRef, persistentAdvanced, pipelineSummary,
-  planPipeline, remainingSeconds, sizeForWidth, upscaleRequest, upscaleTargets, type Ref,
+  activeOverrides, buildRequest, compareBase, diffPixels, emptyComposer, expansionPixels, expansionPreset, jobFraction, jobLabel, moveRef, needsPrompt, persistentAdvanced, pipelineSummary,
+  planPipeline, remainingSeconds, sizeForWidth, timeAgo, upscaleRequest, upscaleTargets, versionLabels, type Ref,
+  formatBytes, installItemShort, installItemText, installProgress, installStep, installTimeLeft, undoTarget,
 } from "./logic";
-import type { GenerationRecord, JobView, Plan } from "./types";
+import type { GenerationRecord, InstallItem, JobView, Plan } from "./types";
 
 const ref = (n: number): Ref => ({ key: `k${n}`, source: `input:${n}`, width: 100, height: 100, name: `r${n}` });
 
@@ -59,6 +60,15 @@ describe("buildRequest", () => {
     expect(buildRequest(c).mask).toBe("input:m");
     const moved = { ...c, refs: [ref(2), ref(1)] };
     expect(buildRequest(moved).mask).toBeNull();
+  });
+  it("sends the inpaint action with a valid mask only; removal needs no prompt", () => {
+    const c = { ...emptyComposer(), prompt: "", refs: [ref(1)], mask: { inputId: "m", refKey: "k1" }, inpaintAction: "remove" as const };
+    expect(buildRequest(c).inpaint_action).toBe("remove");
+    expect(needsPrompt(c)).toBe(false);
+    expect(needsPrompt({ ...c, inpaintAction: "add" })).toBe(true);
+    const moved = { ...c, refs: [ref(2), ref(1)] };
+    expect("inpaint_action" in buildRequest(moved)).toBe(false);
+    expect(needsPrompt(moved)).toBe(true);
   });
   it("custom resolution sends dimensions", () => {
     const c = { ...emptyComposer(), prompt: "x", resolution: "custom" as const, customWidth: 1280, customHeight: 720 };
@@ -179,5 +189,78 @@ describe("before / after comparison", () => {
     expect(out[4]).toBe(out[5]); // small change below the threshold: grey
     expect(out[8]).toBeGreaterThan(out[9]); // big change: red
     expect(out[12]).toBeGreaterThan(out[13]); // not covered by the source (expanded): red
+  });
+});
+
+describe("project versions", () => {
+  it("names imports Original and numbers results and pending jobs", () => {
+    const items = [
+      { key: "a", kind: "input" as const },
+      { key: "b", kind: "gen" as const },
+      { key: "c", kind: "job" as const },
+      { key: "d", kind: "input" as const },
+      { key: "e", kind: "gen" as const },
+    ];
+    expect(versionLabels(items)).toEqual({ a: "Original", b: "v1", c: "v2", d: "Original 2", e: "v3" });
+  });
+
+  it("formats project age", () => {
+    const now = 1_000_000_000_000;
+    expect(timeAgo(now - 5_000, now)).toBe("just now");
+    expect(timeAgo(now - 5 * 60_000, now)).toBe("5m ago");
+    expect(timeAgo(now - 3 * 3_600_000, now)).toBe("3h ago");
+    expect(timeAgo(now - 2 * 86_400_000, now)).toBe("2d ago");
+  });
+});
+
+describe("setup wizard", () => {
+  const item = (p: Partial<InstallItem>): InstallItem => ({
+    id: "x", label: "X", kind: "model", size: 4_199_565_024, received: 0, state: "pending", error: null, hint: null, url: "", page: "", path: "", ...p,
+  });
+  it("formats sizes like download pages", () => {
+    expect(formatBytes(4_199_565_024)).toBe("4.2 GB");
+    expect(formatBytes(14_230_275_808)).toBe("14 GB");
+    expect(formatBytes(66_961_958)).toBe("67 MB");
+    expect(formatBytes(512)).toBe("1 KB");
+  });
+  it("counts progress only over files still to install", () => {
+    const p = installProgress([item({ state: "present", received: 100, size: 100 }), item({ size: 200, received: 50, state: "downloading" })]);
+    expect(p).toEqual({ received: 50, total: 200, frac: 0.25 });
+    expect(installProgress([item({ state: "present" })]).frac).toBe(1);
+  });
+  it("summarizes the progress panel", () => {
+    expect(installItemShort(item({ state: "downloading", received: 2_099_782_512 }))).toBe("50%");
+    expect(installItemShort(item({ state: "cancelled", received: 4_000_000_000 }))).toBe("Paused · 200 MB left");
+    expect(installItemShort(item({ state: "present" }))).toBe("Installed");
+    expect(installStep([item({ state: "done" }), item({ label: "VAE", state: "verifying" })])).toBe("Checking VAE");
+    expect(installStep([item({ state: "pending" })])).toBeNull();
+    expect(installTimeLeft(12e9, 100e6)).toBe("about 2 min left");
+    expect(installTimeLeft(1e9, 100e6)).toBe("less than a minute left");
+    expect(installTimeLeft(1e9, 0)).toBeNull();
+  });
+  it("describes each file state", () => {
+    expect(installItemText(item({ state: "downloading", received: 1e9 }), 50e6)).toBe("1.0 GB of 4.2 GB · 50 MB/s · 1m 4s left");
+    expect(installItemText(item({}), 0)).toBe("To download · 4.2 GB");
+    expect(installItemText(item({ state: "failed", error: "HTTP 404" }), 0)).toBe("HTTP 404");
+    expect(installItemText(item({ state: "cancelled", received: 2e9 }), 0)).toContain("continues where it stopped");
+  });
+});
+
+describe("undo between versions", () => {
+  const items = [
+    { key: "orig", source: "input:a", from: null },
+    { key: "v1", source: "gen:1", from: "input:a" },
+    { key: "v2", source: "gen:2", from: "gen:1" },
+    { key: "v3", source: "gen:3", from: "input:a" }, // a second edit of the original
+    { key: "t2i", source: "gen:4", from: null },
+  ];
+  it("goes back to the image a version was made from", () => {
+    expect(undoTarget(items, "v2")).toBe("v1");
+    expect(undoTarget(items, "v3")).toBe("orig");
+  });
+  it("falls back to the previous version, and stops at the first", () => {
+    expect(undoTarget(items, "t2i")).toBe("v3");
+    expect(undoTarget(items, "orig")).toBeNull();
+    expect(undoTarget(items, "missing")).toBeNull();
   });
 });

@@ -1,4 +1,4 @@
-// qls-mcp — MCP server (stdio) for Qwen Local Studio. Uses the same local service and
+// kokon-mcp — MCP server (stdio) for Kokon. Uses the same local service and
 // generation engine as the desktop app. Works when the app is closed: the service and
 // the inference server are started on demand. Everything stays on 127.0.0.1.
 
@@ -32,7 +32,8 @@ const DESCRIPTIONS: Record<keyof typeof schemas, { title: string; description: s
   },
   inpaint_image: {
     title: "Inpaint image",
-    description: "Regenerate only the masked area of an image (mask: white = change, black = keep). Pixels outside the mask are preserved exactly.",
+    description:
+      "Change only the masked area of an image (mask: white = change, black = keep): edit it, remove what is there, replace it, or add something inside it. The model is shown the area marked on a copy of the image; pixels outside the mask are preserved exactly.",
   },
   upscale_image: {
     title: "Upscale image",
@@ -41,7 +42,7 @@ const DESCRIPTIONS: Record<keyof typeof schemas, { title: string; description: s
   },
   get_image_info: {
     title: "Image info",
-    description: "Width, height, aspect ratio, file type and, for images made by Qwen Local Studio, the generation metadata (prompt, seed, model, steps...).",
+    description: "Width, height, aspect ratio, file type and, for images made by Kokon, the generation metadata (prompt, seed, model, steps...).",
   },
   get_generator_status: {
     title: "Generator status",
@@ -50,7 +51,7 @@ const DESCRIPTIONS: Record<keyof typeof schemas, { title: string; description: s
 };
 
 const client = new ServiceClient();
-const server = new McpServer({ name: "qwen-local-studio", version: VERSION }, { capabilities: { tools: {} } });
+const server = new McpServer({ name: "kokon", version: VERSION }, { capabilities: { tools: {} } });
 
 function toMcp(r: ToolResult) {
   const content: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[] = [{ type: "text", text: r.text }];
@@ -95,7 +96,7 @@ for (const name of Object.keys(schemas) as (keyof typeof schemas)[]) {
 
 async function main() {
   if (process.argv.includes("--version")) {
-    process.stdout.write(`qls-mcp ${VERSION}\n`);
+    process.stdout.write(`kokon-mcp ${VERSION}\n`);
     return;
   }
   const transport = new StdioServerTransport();
@@ -110,6 +111,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  process.stderr.write(`qls-mcp failed: ${e instanceof Error ? e.stack : String(e)}\n`);
+  process.stderr.write(`kokon-mcp failed: ${e instanceof Error ? e.stack : String(e)}\n`);
   process.exit(1);
 });

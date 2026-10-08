@@ -1,11 +1,11 @@
 {
-  "name": "qls-mcp",
+  "name": "kokon-mcp",
   "version": "1.0.0",
   "private": true,
-  "description": "MCP server for Qwen Local Studio (local image generation)",
+  "description": "MCP server for Kokon (local image generation and editing)",
   "type": "module",
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=cjs --outfile=build/qls-mcp.cjs",
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=cjs --outfile=build/kokon-mcp.cjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "build:exe": "node scripts/build-exe.mjs"

@@ -1,5 +1,5 @@
 //! Persistent configuration and model profiles. Stored as JSON in
-//! `%APPDATA%\Qwen Local Studio\config.json`; every field has a default so older or
+//! `%APPDATA%\Kokon\config.json`; every field has a default so older or
 //! partial files keep loading.
 
 use std::path::{Path, PathBuf};
@@ -8,8 +8,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, ErrorCode};
 
-pub const APP_NAME: &str = "Qwen Local Studio";
-pub const DEFAULT_SDCPP_DIR: &str = r"C:\AI\sdcpp";
+pub const APP_NAME: &str = "Kokon";
+/// Folder names before the app was renamed Kokon (2026-10-08); moved on first start.
+const LEGACY_CONFIG_DIR: &str = "Qwen Local Studio";
+const LEGACY_DATA_DIR: &str = "QwenLocalStudio";
+/// Distinct from the installer's program folder `%LOCALAPPDATA%\Kokon`, so uninstalling
+/// never touches the gallery or the models.
+pub const DATA_DIR_NAME: &str = "KokonData";
 pub const DEFAULT_SERVER_PORT: u16 = 39150;
 pub const DEFAULT_SERVICE_PORT: u16 = 39151;
 /// ESRGAN models offered in Settings: (file stem, label, download URL). Chosen by visual A/B on
@@ -21,7 +26,9 @@ pub const UPSCALER_CHOICES: &[(&str, &str, &str)] = &[
 pub const DEFAULT_UPSCALER: &str = UPSCALER_CHOICES[0].0;
 /// Default before schema 2; configs still on it are moved to [`DEFAULT_UPSCALER`].
 const OLD_DEFAULT_UPSCALER: &str = "RealESRGAN_x4plus";
-const SCHEMA_VERSION: u32 = 4;
+const SCHEMA_VERSION: u32 = 5;
+/// Profile id of the official Qwen-Image 2.1 weights (the default since schema 5).
+pub const OFFICIAL_PROFILE_ID: &str = "qwen-image-2.1";
 
 /// Where to download `name`, if it is one of [`UPSCALER_CHOICES`].
 pub fn upscaler_download_url(name: &str) -> Option<&'static str> {
@@ -152,20 +159,23 @@ pub struct ModelProfile {
 
 impl Default for ModelProfile {
     fn default() -> Self {
-        Self::qwen_image_21_q4(Path::new(DEFAULT_SDCPP_DIR))
+        Self::official(&default_sdcpp_dir(), crate::catalog::preset(crate::catalog::DEFAULT_PRESET).unwrap())
     }
 }
 
 impl ModelProfile {
-    pub fn qwen_image_21_q4(sdcpp_dir: &Path) -> Self {
-        let m = sdcpp_dir.join("models").join("qwen21");
+    /// The official Qwen-Image 2.1 weights a hardware preset downloads (Unsloth GGUF of
+    /// Qwen/Qwen-Image-2.1, Qwen's own Qwen3-VL GGUF, the 2.1 VAE).
+    pub fn official(sdcpp_dir: &Path, preset: &crate::catalog::Preset) -> Self {
+        use crate::catalog::{VAE, VISION_PROJECTOR};
+        let quant = preset.diffusion.dest.rsplit('-').next().unwrap_or("").trim_end_matches(".gguf");
         Self {
-            id: "qwen-image-2.1-uc-q4km".into(),
-            display_name: "Qwen Image 2.1 UC Q4_K_M".into(),
-            diffusion_model: m.join("qwen-image-2.1-UC-Q4_K_M.gguf"),
-            vae: m.join("qwen_image_2.1_vae_bf16.safetensors"),
-            text_encoder: m.join("Qwen3VL-8B-Instruct-Q4_K_M.gguf"),
-            vision_projector: Some(m.join("mmproj-Qwen3VL-8B-Instruct-F16.gguf")),
+            id: OFFICIAL_PROFILE_ID.into(),
+            display_name: format!("Qwen-Image 2.1 {quant} (official)"),
+            diffusion_model: preset.diffusion.path(sdcpp_dir),
+            vae: VAE.path(sdcpp_dir),
+            text_encoder: preset.text_encoder.path(sdcpp_dir),
+            vision_projector: Some(VISION_PROJECTOR.path(sdcpp_dir)),
             backend_args: vec![],
             recommended_settings: RecommendedSettings::default(),
             capabilities: ProfileCapabilities::default(),
@@ -236,17 +246,22 @@ pub struct AppConfig {
     /// many idle minutes. 0 disables.
     pub idle_unload_minutes: u32,
     pub setup_complete: bool,
+    /// Hardware preset chosen in the setup wizard (`catalog::PRESETS`).
+    pub hardware_preset: String,
+    /// Plan as if the GPU had this much VRAM (MiB); 0 = use the detected size. For testing
+    /// smaller cards on a larger one, together with a VRAM ballast (scripts/dev).
+    pub vram_override_mib: u64,
     /// Opaque UI preferences (last quality, resolution mode, aspect...).
     pub ui: serde_json::Value,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
-        let sdcpp = PathBuf::from(DEFAULT_SDCPP_DIR);
+        let sdcpp = default_sdcpp_dir();
         Self {
             schema_version: SCHEMA_VERSION,
-            profiles: vec![ModelProfile::qwen_image_21_q4(&sdcpp)],
-            active_profile: "qwen-image-2.1-uc-q4km".into(),
+            profiles: vec![ModelProfile::official(&sdcpp, crate::catalog::preset(crate::catalog::DEFAULT_PRESET).unwrap())],
+            active_profile: OFFICIAL_PROFILE_ID.into(),
             sdcpp_dir: sdcpp,
             server_port: DEFAULT_SERVER_PORT,
             service_port: DEFAULT_SERVICE_PORT,
@@ -267,6 +282,8 @@ impl Default for AppConfig {
             keep_server_running: false,
             idle_unload_minutes: 15,
             setup_complete: false,
+            hardware_preset: crate::catalog::DEFAULT_PRESET.into(),
+            vram_override_mib: 0,
             ui: serde_json::json!({}),
         }
     }
@@ -279,21 +296,67 @@ pub fn default_output_dir() -> PathBuf {
         .join(APP_NAME)
 }
 
-/// `%APPDATA%\Qwen Local Studio` (roaming) — configuration.
+/// Where the setup wizard installs stable-diffusion.cpp and the models on a new install:
+/// `%LOCALAPPDATA%\KokonData\sdcpp`.
+pub fn default_sdcpp_dir() -> PathBuf {
+    data_dir().join("sdcpp")
+}
+
+/// `%APPDATA%\Kokon` (roaming) — configuration.
 pub fn config_dir() -> PathBuf {
     if let Ok(p) = std::env::var("QLS_CONFIG_DIR") {
         return PathBuf::from(p);
     }
-    dirs::config_dir().unwrap_or_else(std::env::temp_dir).join(APP_NAME)
+    migrate_dir(&dirs::config_dir().unwrap_or_else(std::env::temp_dir), LEGACY_CONFIG_DIR, APP_NAME)
 }
 
-/// `%LOCALAPPDATA%\QwenLocalStudio` — gallery database, inputs, thumbnails, logs.
-/// Deliberately distinct from the installer's `%LOCALAPPDATA%\Qwen Local Studio`.
+/// `%LOCALAPPDATA%\KokonData` — gallery database, inputs, thumbnails, logs, models
+/// installed by the setup screen.
 pub fn data_dir() -> PathBuf {
     if let Ok(p) = std::env::var("QLS_DATA_DIR") {
         return PathBuf::from(p);
     }
-    dirs::data_local_dir().unwrap_or_else(std::env::temp_dir).join("QwenLocalStudio")
+    migrate_dir(&dirs::data_local_dir().unwrap_or_else(std::env::temp_dir), LEGACY_DATA_DIR, DATA_DIR_NAME)
+}
+
+/// The data folder of the app's previous name (for relocating stored paths).
+fn legacy_data_dir() -> PathBuf {
+    dirs::data_local_dir().unwrap_or_else(std::env::temp_dir).join(LEGACY_DATA_DIR)
+}
+
+/// `base\new`, moving `base\old` there first if only the old folder exists (a rename on the
+/// same drive). If the move fails, e.g. while a service of the old version still holds its
+/// files, the old folder stays in use and the move is retried on the next start.
+pub fn migrate_dir(base: &Path, old: &str, new: &str) -> PathBuf {
+    let new_path = base.join(new);
+    let old_path = base.join(old);
+    // Unit tests must never move the real folders of this PC (tests call it with temp dirs).
+    if cfg!(test) && !base.starts_with(std::env::temp_dir()) {
+        return new_path;
+    }
+    if new_path.exists() || !old_path.is_dir() {
+        return new_path;
+    }
+    match std::fs::rename(&old_path, &new_path) {
+        Ok(()) => {
+            tracing::info!("moved {} to {}", old_path.display(), new_path.display());
+            new_path
+        }
+        Err(e) => {
+            tracing::warn!("could not move {} to {} ({e}); using the old folder", old_path.display(), new_path.display());
+            old_path
+        }
+    }
+}
+
+/// `p` inside the old data folder after that folder was moved: the same path in the new one.
+fn relocate(p: &mut PathBuf, old: &Path, new: &Path) {
+    if old.exists() || old == new {
+        return;
+    }
+    if let Ok(rest) = p.strip_prefix(old) {
+        *p = new.join(rest);
+    }
 }
 
 impl AppConfig {
@@ -311,7 +374,13 @@ impl AppConfig {
             Ok(s) => match serde_json::from_str::<AppConfig>(s.trim_start_matches('\u{feff}')) {
                 Ok(mut c) => {
                     if c.profiles.is_empty() {
-                        c.profiles.push(ModelProfile::qwen_image_21_q4(&c.sdcpp_dir));
+                        c.profiles.push(ModelProfile::official(&c.sdcpp_dir, c.preset()));
+                        c.active_profile = OFFICIAL_PROFILE_ID.into();
+                    }
+                    // A file without profiles got the default one, built for the default
+                    // folder and preset: build it for the configured folder and preset.
+                    if c.profiles.len() == 1 && c.profiles[0] == ModelProfile::default() {
+                        c.profiles[0] = ModelProfile::official(&c.sdcpp_dir, c.preset());
                     }
                     if c.schema_version < 2 && c.upscaler_model.trim() == OLD_DEFAULT_UPSCALER {
                         c.upscaler_model = DEFAULT_UPSCALER.into();
@@ -353,6 +422,16 @@ impl AppConfig {
                             }
                         }
                     }
+                    // Paths into the data folder of the app's old name (models installed by the
+                    // setup screen) follow the folder to its new name.
+                    if std::env::var("QLS_DATA_DIR").is_err() {
+                        c.relocate_paths(&legacy_data_dir(), &data_dir());
+                    }
+                    if c.schema_version < 5 && !c.profiles.iter().any(|p| p.id == OFFICIAL_PROFILE_ID) {
+                        // The official weights become available as a profile; the active one
+                        // stays until the user downloads them (setup wizard) or switches.
+                        c.profiles.push(ModelProfile::official(&c.sdcpp_dir, c.preset()));
+                    }
                     c.schema_version = c.schema_version.max(SCHEMA_VERSION);
                     c
                 }
@@ -384,6 +463,46 @@ impl AppConfig {
 
     pub fn profile(&self) -> &ModelProfile {
         self.profiles.iter().find(|p| p.id == self.active_profile).unwrap_or(&self.profiles[0])
+    }
+
+    pub fn relocate_paths(&mut self, old: &Path, new: &Path) {
+        relocate(&mut self.sdcpp_dir, old, new);
+        if let Some(d) = self.upscalers_dir.as_mut() {
+            relocate(d, old, new);
+        }
+        for p in &mut self.profiles {
+            for f in [&mut p.diffusion_model, &mut p.vae, &mut p.text_encoder] {
+                relocate(f, old, new);
+            }
+            if let Some(v) = p.vision_projector.as_mut() {
+                relocate(v, old, new);
+            }
+        }
+    }
+
+    pub fn preset(&self) -> &'static crate::catalog::Preset {
+        crate::catalog::preset(&self.hardware_preset).unwrap_or_else(|| crate::catalog::preset(crate::catalog::DEFAULT_PRESET).unwrap())
+    }
+
+    /// Switches to the official weights of `preset` (replacing an older official profile)
+    /// and its runtime settings. Used when the setup wizard finishes.
+    pub fn apply_preset(&mut self, preset: &crate::catalog::Preset) {
+        let mut profile = ModelProfile::official(&self.sdcpp_dir, preset);
+        if let Some(old) = self.profiles.iter().find(|p| p.id == OFFICIAL_PROFILE_ID) {
+            // Keep presets the user tuned on the official profile.
+            profile.recommended_settings = old.recommended_settings.clone();
+            profile.backend_args = old.backend_args.clone();
+        }
+        self.profiles.retain(|p| p.id != OFFICIAL_PROFILE_ID);
+        self.profiles.insert(0, profile);
+        self.active_profile = OFFICIAL_PROFILE_ID.into();
+        self.hardware_preset = preset.id.into();
+        self.text_encoder_placement = preset.text_encoder_placement;
+    }
+
+    /// VRAM the planner should assume: the override when set, otherwise the detected size.
+    pub fn planning_vram_mib(&self, detected: Option<u64>) -> Option<u64> {
+        if self.vram_override_mib > 0 { Some(self.vram_override_mib) } else { detected }
     }
 
     pub fn server_exe(&self) -> PathBuf {
@@ -427,6 +546,9 @@ impl AppConfig {
         if self.profiles.is_empty() {
             return Err(AppError::new(ErrorCode::InvalidConfig, "No model profile configured."));
         }
+        if self.vram_override_mib != 0 && !(4096..=196_608).contains(&self.vram_override_mib) {
+            return Err(AppError::new(ErrorCode::InvalidConfig, "Simulated VRAM must be between 4096 and 196608 MiB (or 0 to detect it)."));
+        }
         Ok(())
     }
 }
@@ -439,8 +561,12 @@ mod tests {
     fn defaults_match_spec() {
         let c = AppConfig::default();
         let p = c.profile();
-        assert_eq!(p.display_name, "Qwen Image 2.1 UC Q4_K_M");
-        assert!(p.diffusion_model.ends_with("qwen-image-2.1-UC-Q4_K_M.gguf"));
+        assert_eq!(p.id, OFFICIAL_PROFILE_ID);
+        assert_eq!(p.display_name, "Qwen-Image 2.1 Q4_K_M (official)");
+        assert!(p.diffusion_model.ends_with("qwen-image-2.1-Q4_K_M.gguf"));
+        assert!(p.diffusion_model.starts_with(default_sdcpp_dir()));
+        assert_eq!(c.hardware_preset, "16gb");
+        assert_eq!(c.planning_vram_mib(Some(16303)), Some(16303));
         assert_eq!(c.device, "cuda0");
         assert_eq!(c.vram_reserve_gib, 1.0);
         assert!(c.flash_attention);
@@ -449,7 +575,67 @@ mod tests {
         assert_eq!(p.files().len(), 4);
         assert_eq!(c.refine_mode, RefineMode::Fast);
         assert_eq!(c.upscaler_model, "4x-UltraSharp");
-        assert_eq!(c.upscalers_dir(), PathBuf::from(r"C:\AI\sdcpp\models\upscalers"));
+        assert_eq!(c.upscalers_dir(), default_sdcpp_dir().join("models").join("upscalers"));
+    }
+
+    #[test]
+    fn official_profile_is_added_but_not_forced() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("config.json");
+        let old = r#"{"schemaVersion":4,"sdcppDir":"D:\\sd","activeProfile":"uc","profiles":[{"id":"uc","displayName":"UC","diffusionModel":"D:\\sd\\uc.gguf"}]}"#;
+        std::fs::write(&p, old).unwrap();
+        let c = AppConfig::load_from(&p);
+        assert_eq!(c.active_profile, "uc", "the user's choice stays active");
+        let off = c.profiles.iter().find(|p| p.id == OFFICIAL_PROFILE_ID).unwrap();
+        assert_eq!(off.diffusion_model, PathBuf::from(r"D:\sd\models\qwen21\qwen-image-2.1-Q4_K_M.gguf"));
+        // Saved again, nothing is added twice.
+        c.save_to(&p).unwrap();
+        assert_eq!(AppConfig::load_from(&p).profiles.len(), 2);
+        // A file without profiles uses its own folder and preset.
+        std::fs::write(&p, r#"{"sdcppDir":"D:\\sd","hardwarePreset":"24gb"}"#).unwrap();
+        let c = AppConfig::load_from(&p);
+        assert_eq!(c.profile().diffusion_model, PathBuf::from(r"D:\sd\models\qwen21\qwen-image-2.1-Q8_0.gguf"));
+    }
+
+    #[test]
+    fn old_folders_move_to_the_new_name() {
+        let base = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(base.path().join("QwenLocalStudio").join("inputs")).unwrap();
+        std::fs::write(base.path().join("QwenLocalStudio").join("gallery.db"), b"db").unwrap();
+        let d = migrate_dir(base.path(), "QwenLocalStudio", "KokonData");
+        assert_eq!(d, base.path().join("KokonData"));
+        assert!(d.join("gallery.db").is_file() && !base.path().join("QwenLocalStudio").exists());
+        // Once moved, nothing happens again; a fresh install just gets the new name.
+        assert_eq!(migrate_dir(base.path(), "QwenLocalStudio", "KokonData"), d);
+        assert_eq!(migrate_dir(base.path(), "Missing", "New"), base.path().join("New"));
+        // Model paths inside the moved folder follow it; others stay.
+        let (old, new) = (base.path().join("QwenLocalStudio"), d.clone());
+        let mut c = AppConfig::default();
+        c.sdcpp_dir = old.join("sdcpp");
+        c.apply_preset(crate::catalog::preset("16gb").unwrap());
+        c.profiles.push(ModelProfile { id: "mine".into(), diffusion_model: PathBuf::from(r"C:\AI\sdcpp\x.gguf"), ..ModelProfile::default() });
+        c.relocate_paths(&old, &new);
+        assert_eq!(c.sdcpp_dir, new.join("sdcpp"));
+        assert!(c.profile().diffusion_model.starts_with(new.join("sdcpp")));
+        assert_eq!(c.profiles[1].diffusion_model, PathBuf::from(r"C:\AI\sdcpp\x.gguf"));
+    }
+
+    #[test]
+    fn presets_switch_weights_and_keep_tuning() {
+        let mut c = AppConfig::default();
+        c.profiles[0].recommended_settings.steps_fast = 12;
+        c.apply_preset(crate::catalog::preset("32gb").unwrap());
+        let p = c.profile();
+        assert!(p.diffusion_model.ends_with("qwen-image-2.1-Q8_0.gguf"));
+        assert!(p.text_encoder.ends_with("Qwen3VL-8B-Instruct-Q8_0.gguf"));
+        assert_eq!(p.display_name, "Qwen-Image 2.1 Q8_0 (official)");
+        assert_eq!(p.recommended_settings.steps_fast, 12);
+        assert_eq!((c.hardware_preset.as_str(), c.profiles.len()), ("32gb", 1));
+        c.vram_override_mib = 12_288;
+        assert_eq!(c.planning_vram_mib(Some(16303)), Some(12_288));
+        assert!(c.validate().is_ok());
+        c.vram_override_mib = 100;
+        assert!(c.validate().is_err());
     }
 
     #[test]

@@ -1,9 +1,8 @@
 import { ArrowLeft, Heart, Loader2, Search, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, urls } from "../lib/api";
-import { composerFromRecord, newKey } from "../lib/logic";
 import { native } from "../lib/native";
-import { getState, setState, toastError, useStore } from "../lib/store";
+import { forgetGeneration, openGeneration, setState, toastError, useStore } from "../lib/store";
 import type { GenerationRecord } from "../lib/types";
 import { IconButton, Seg } from "./ui";
 
@@ -46,17 +45,7 @@ export function Gallery() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const reopen = (g: GenerationRecord) => {
-    const s = getState();
-    const existing = s.session.find((i) => i.gen?.id === g.id);
-    const item = existing ?? { key: newKey(), kind: "gen" as const, gen: g };
-    setState({
-      session: existing ? s.session : [...s.session, item],
-      selected: item.key,
-      composer: composerFromRecord(g, s.composer),
-      overlay: null,
-    });
-  };
+  const reopen = (g: GenerationRecord) => openGeneration(g).catch(toastError);
 
   const toggleFav = async (g: GenerationRecord) => {
     try {
@@ -72,7 +61,7 @@ export function Gallery() {
       await api.deleteGeneration(g.id);
       setItems((list) => list.filter((x) => x.id !== g.id));
       setTotal((t) => t - 1);
-      setState((s) => ({ session: s.session.filter((i) => i.gen?.id !== g.id) }));
+      forgetGeneration(g.id);
     } catch (e) {
       toastError(e);
     }

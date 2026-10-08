@@ -11,3 +11,4 @@ node_modules
 /src-tauri/gen
 __pycache__/
 /docs/media/raw
+/docs/media/*.mp4

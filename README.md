@@ -36,12 +36,18 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/GabrieleLozupone/kokon/releases/latest">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/Download%20for%20Windows-F7F6F2?style=for-the-badge&logo=windows&logoColor=0D0D0D">
-      <img src="https://img.shields.io/badge/Download%20for%20Windows-0D0D0D?style=for-the-badge&logo=windows&logoColor=white" alt="Download for Windows" height="44">
-    </picture>
-  </a>
+  <a href="https://github.com/GabrieleLozupone/kokon/releases/latest"><picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/download-windows-dark.svg">
+    <img src="assets/readme/download-windows-light.svg" alt="Download for Windows" height="52">
+  </picture></a>
+  <a href="#roadmap"><picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/download-macos-dark.svg">
+    <img src="assets/readme/download-macos-light.svg" alt="macOS (Apple Silicon): coming soon" height="52">
+  </picture></a>
+  <a href="#roadmap"><picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/download-linux-dark.svg">
+    <img src="assets/readme/download-linux-light.svg" alt="Linux: coming soon" height="52">
+  </picture></a>
   <br>
   <sub>Free and open source · about 12 GB of models downloaded on first run · nothing leaves your PC</sub>
 </p>

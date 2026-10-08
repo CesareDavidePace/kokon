@@ -410,17 +410,6 @@ with a plain resize instead.
 </details>
 
 <details>
-<summary><b>I used Qwen Local Studio before</b></summary>
-<br>
-
-That is Kokon's old name. On its first start Kokon moves your settings, gallery and installed
-models from `%APPDATA%\Qwen Local Studio` and `%LOCALAPPDATA%\QwenLocalStudio` to the new
-folders. Images you already saved stay where they are. If you registered the MCP server,
-register it again under its new name with the [command above](#use-it-from-your-ai-agent).
-
-</details>
-
-<details>
 <summary><b>How do I uninstall it?</b></summary>
 <br>
 

@@ -33,8 +33,8 @@ Kokon.exe (Tauri 2 + React)      kokon-mcp.exe (MCP, stdio)      scripts
 | `src-tauri`, `src/` | Desktop shell (Rust) and UI (React + TypeScript) |
 | `mcp/` | MCP server (TypeScript, official SDK) |
 
-Internal names (`qls-core`, `qls-service`, `QLS_*` environment variables) date from the project's
-earlier name, Qwen Local Studio, and are kept on purpose.
+Internal names (`qls-core`, `qls-service`, `QLS_*` environment variables) come from the working title used
+during development (Qwen Local Studio) and are kept on purpose.
 
 ## Verified backend facts (stable-diffusion.cpp commit `3f8527a`)
 

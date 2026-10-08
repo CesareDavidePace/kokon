@@ -163,7 +163,7 @@ Other weights, such as fine-tunes, can be selected in Settings → Models.
 | Any result | **Upscale** to 2×, 4K, the source size or a custom width | Quick (seconds) or Detailed (about a minute) |
 
 <p align="center">
-  <img src="docs/media/screenshot-app.png" alt="The Kokon window with a result and the before/after slider" width="860">
+  <img src="docs/media/screenshot-app.png" alt="The Kokon window: a living room staged in four edits, with its versions, the compare views and the prompt box" width="860">
 </p>
 
 Every result can be edited again, varied, used as a reference, upscaled, saved, copied or

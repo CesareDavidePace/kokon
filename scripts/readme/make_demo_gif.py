@@ -30,9 +30,10 @@ RECORDINGS = {
     ],
 }
 # docs/media/demo.mp4: the "pasta" recording zoomed onto the app window (same timing),
-# with black margins around it that are cropped away.
+# with black margins around it that are cropped away; then padded in the app's background
+# colour so the UI does not touch the edges of GitHub's video player.
 RECORDINGS["demo"] = RECORDINGS["pasta"]
-CROPS = {"demo": "crop=1304:994:460:78,"}
+CROPS = {"demo": "crop=1304:994:460:78,pad=1464:1134:80:70:color=0x161616,"}
 NAME = sys.argv[3] if len(sys.argv) > 3 else "demo"
 SEGMENTS, CROP = RECORDINGS[NAME], CROPS.get(NAME, "")
 

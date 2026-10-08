@@ -31,7 +31,7 @@
   <a href="docs/engineering-notes.md">How it works</a>
 </p>
 
-https://github.com/user-attachments/assets/dda8d4a4-8b7e-45ef-b2a8-65dfd23ef686
+https://github.com/user-attachments/assets/ceaf29e5-ee36-4727-bf95-db98e14b654d
 
 <p align="center">
   <a href="https://github.com/GabrieleLozupone/kokon/releases/latest"><picture>

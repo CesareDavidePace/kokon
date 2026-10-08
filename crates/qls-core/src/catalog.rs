@@ -12,7 +12,7 @@ use serde::Serialize;
 use crate::config::TextEncoderPlacement;
 
 /// Where users report broken download links. Set before publishing the repository.
-pub const ISSUES_URL: &str = "https://github.com/OWNER/kokon/issues/new";
+pub const ISSUES_URL: &str = "https://github.com/GabrieleLozupone/kokon/issues/new";
 
 /// Folder under the stable-diffusion.cpp folder that holds the Qwen weights.
 pub const MODEL_SUBDIR: &str = r"models\qwen21";

@@ -1,4 +1,3 @@
-<!-- Replace OWNER with the GitHub user or org before publishing (also in crates/qls-core/src/catalog.rs ISSUES_URL). -->
 
 <p align="center">
   <picture>
@@ -14,13 +13,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/OWNER/kokon/releases/latest"><img src="https://img.shields.io/github/v/release/OWNER/kokon?style=flat-square&color=6b6b6b&labelColor=333&label=release" alt="Latest release"></a>
-  <a href="https://github.com/OWNER/kokon/releases"><img src="https://img.shields.io/github/downloads/OWNER/kokon/total?style=flat-square&color=6b6b6b&labelColor=333" alt="Downloads"></a>
+  <a href="https://github.com/GabrieleLozupone/kokon/releases/latest"><img src="https://img.shields.io/github/v/release/GabrieleLozupone/kokon?style=flat-square&color=6b6b6b&labelColor=333&label=release" alt="Latest release"></a>
+  <a href="https://github.com/GabrieleLozupone/kokon/releases"><img src="https://img.shields.io/github/downloads/GabrieleLozupone/kokon/total?style=flat-square&color=6b6b6b&labelColor=333" alt="Downloads"></a>
   <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-6b6b6b?labelColor=333&style=flat-square&logo=windows&logoColor=white" alt="Windows 10 and 11">
   <img src="https://img.shields.io/badge/NVIDIA-12%20GB%2B-6b6b6b?labelColor=333&style=flat-square&logo=nvidia&logoColor=76B900" alt="NVIDIA, 12 GB or more">
   <a href="#use-it-from-your-ai-agent"><img src="https://img.shields.io/badge/MCP-server%20included-6b6b6b?labelColor=333&style=flat-square" alt="MCP server included"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/OWNER/kokon?style=flat-square&color=6b6b6b&labelColor=333" alt="License"></a>
-  <a href="https://github.com/OWNER/kokon/stargazers"><img src="https://img.shields.io/github/stars/OWNER/kokon?style=flat-square&color=6b6b6b&labelColor=333" alt="Stars"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/GabrieleLozupone/kokon?style=flat-square&color=6b6b6b&labelColor=333" alt="License"></a>
+  <a href="https://github.com/GabrieleLozupone/kokon/stargazers"><img src="https://img.shields.io/github/stars/GabrieleLozupone/kokon?style=flat-square&color=6b6b6b&labelColor=333" alt="Stars"></a>
 </p>
 
 <p align="center">
@@ -37,7 +36,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/OWNER/kokon/releases/latest">
+  <a href="https://github.com/GabrieleLozupone/kokon/releases/latest">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/Download%20for%20Windows-F7F6F2?style=for-the-badge&logo=windows&logoColor=0D0D0D">
       <img src="https://img.shields.io/badge/Download%20for%20Windows-0D0D0D?style=for-the-badge&logo=windows&logoColor=white" alt="Download for Windows" height="44">
@@ -101,7 +100,7 @@ Every result below came from one sentence in Kokon, with default settings.
 
 ## Install
 
-**1. Download** `Kokon Setup.exe` from the [latest release](https://github.com/OWNER/kokon/releases/latest) and run it. It installs for your user only, so you don't need administrator rights.
+**1. Download** `Kokon Setup.exe` from the [latest release](https://github.com/GabrieleLozupone/kokon/releases/latest) and run it. It installs for your user only, so you don't need administrator rights.
 
 **2. Set up models.** On first launch Kokon shows your GPU, VRAM and RAM, recommends a preset
 and downloads everything it needs. The download resumes if it is interrupted and every file
@@ -436,7 +435,7 @@ folder. To free the model space too, delete `%LOCALAPPDATA%\KokonData`.
 
 If a download fails, the setup screen shows the file's download page and target folder so you
 can fetch it by hand. For anything else, please
-[open an issue](https://github.com/OWNER/kokon/issues/new) with your GPU, driver version and
+[open an issue](https://github.com/GabrieleLozupone/kokon/issues/new) with your GPU, driver version and
 the log from `%LOCALAPPDATA%\KokonData\logs`.
 
 </details>
@@ -454,7 +453,7 @@ the log from `%LOCALAPPDATA%\KokonData\logs`.
 - [ ] Plugins for Krita, GIMP and Photoshop through the local API
 - [ ] macOS and Linux
 
-Have an idea? [Start a discussion](https://github.com/OWNER/kokon/discussions) or 👍 an existing one.
+Have an idea? [Start a discussion](https://github.com/GabrieleLozupone/kokon/discussions) or 👍 an existing one.
 
 ## Build from source
 
@@ -502,7 +501,7 @@ for a module map and the backend facts each default is based on.
 ## Contributing
 
 Bug reports, translations, example prompts and pull requests are all welcome. Issues tagged
-[good first issue](https://github.com/OWNER/kokon/labels/good%20first%20issue) are a good
+[good first issue](https://github.com/GabrieleLozupone/kokon/labels/good%20first%20issue) are a good
 place to start. Please run the tests above before opening a pull request.
 
 ## Responsible use

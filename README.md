@@ -54,7 +54,7 @@
   <tr>
     <td width="33%" valign="top">
       <h3>✍️ Just describe it</h3>
-      “Remove the people in the background.” “Make it golden hour.” Kokon picks the mode, the
+      “Remove all the people from the beach.” “Make it golden hour.” Kokon picks the mode, the
       resolution and the memory settings for you. There are no sliders to learn.
     </td>
     <td width="33%" valign="top">
@@ -94,9 +94,9 @@ Every result below came from one sentence in Kokon, with default settings.
 
 | | |
 | :---: | :---: |
-| <img src="docs/media/examples/remove.jpg" alt="Remove people from the background"><br>**Remove** · *“Remove the people in the background”* | <img src="docs/media/examples/replace.jpg" alt="Replace an object"><br>**Replace** · *“Replace the red car with a blue vintage bicycle”* |
+| <img src="docs/media/examples/remove.jpg" alt="Remove people from a beach"><br>**Remove** · *“Remove all the people from the beach”* | <img src="docs/media/examples/replace.jpg" alt="Replace an object"><br>**Replace** · *“Replace the orange car with a blue vintage Vespa scooter”* |
 | <img src="docs/media/examples/relight.jpg" alt="Relight a scene"><br>**Relight** · *“Make it golden hour, warm low sunlight”* | <img src="docs/media/examples/restyle.jpg" alt="Restyle a photo"><br>**Restyle** · *“Turn it into a watercolor illustration”* |
-| <img src="docs/media/examples/text.jpg" alt="Change text in a photo"><br>**Text** · *“Change the shop sign to say ‘OPEN LATE’”* | <img src="docs/media/examples/expand.jpg" alt="Expand a photo"><br>**Expand** · *“Expand to 16:9, continue the beach”* |
+| <img src="docs/media/examples/text.jpg" alt="Change text in a photo"><br>**Text** · *“Change the neon sign to say ‘OPEN LATE’”* | <img src="docs/media/examples/expand.jpg" alt="Expand a photo"><br>**Expand** · *“Expand to 16:9, continue the beach”* |
 
 ## Install
 

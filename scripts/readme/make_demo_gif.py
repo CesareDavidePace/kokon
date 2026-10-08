@@ -1,6 +1,6 @@
-"""Builds docs/media/demo.gif from a raw screen recording of the app.
+"""Builds docs/media/demo.gif (or an .mp4 with the same cut) from a screen recording of the app.
 
-Usage: python scripts/readme/make_demo_gif.py <recording.mp4> <out.gif> [pasta|mug]
+Usage: python scripts/readme/make_demo_gif.py <recording.mp4> <out.gif> [demo|pasta|mug] [width] [fps]
 Interaction plays sped up; each generation wait is squeezed to ~1.2 s with a label
 showing how long it really took. Segment times are per recording (found from the
 brightness of the image area: waits are dimmed and flicker with the progress bar).
@@ -9,6 +9,8 @@ import subprocess, sys
 
 SRC, OUT = sys.argv[1], sys.argv[2]
 WIDTH, FPS, WAIT_S, HOLD_S = 900, 10, 1.0, 3.0
+WIDTH = int(sys.argv[4]) if len(sys.argv) > 4 else WIDTH
+FPS = int(sys.argv[5]) if len(sys.argv) > 5 else FPS
 FONT = "C\\:/Windows/Fonts/segoeuib.ttf"
 # (start, end, speed) for interaction, or (start, end, "wait")
 RECORDINGS = {
@@ -27,11 +29,16 @@ RECORDINGS = {
         (228, 268, "wait"), (268, 279, 3.0), (279, 320, "wait"), (320, 325.1, 2.0),  # ends on the full title
     ],
 }
-SEGMENTS = RECORDINGS[sys.argv[3] if len(sys.argv) > 3 else "pasta"]
+# docs/media/demo.mp4: the "pasta" recording zoomed onto the app window (same timing),
+# with black margins around it that are cropped away.
+RECORDINGS["demo"] = RECORDINGS["pasta"]
+CROPS = {"demo": "crop=1304:994:460:78,"}
+NAME = sys.argv[3] if len(sys.argv) > 3 else "demo"
+SEGMENTS, CROP = RECORDINGS[NAME], CROPS.get(NAME, "")
 
 parts, labels = [], []
 for i, (a, b, sp) in enumerate(SEGMENTS):
-    f = f"[0:v]trim={a}:{b},setpts=PTS-STARTPTS"
+    f = f"[0:v]{CROP}trim={a}:{b},setpts=PTS-STARTPTS"
     if sp == "wait":
         f += f",setpts=PTS*{WAIT_S / (b - a):.5f}"
         f += (f",drawtext=fontfile='{FONT}':text='sped up · {round(b - a)} s':fontsize=44:fontcolor=white"
@@ -42,7 +49,12 @@ for i, (a, b, sp) in enumerate(SEGMENTS):
         f += f",tpad=stop_mode=clone:stop_duration={HOLD_S}"
     parts.append(f + f",fps={FPS}[s{i}]")
     labels.append(f"[s{i}]")
-graph = ";".join(parts) + f";{''.join(labels)}concat=n={len(labels)}:v=1:a=0,scale={WIDTH}:-1:flags=lanczos,split[x][y];" \
-        "[x]palettegen=max_colors=192:stats_mode=diff[p];[y][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle"
-subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", SRC, "-filter_complex", graph, "-loop", "0", OUT], check=True)
+joined = ";".join(parts) + f";{''.join(labels)}concat=n={len(labels)}:v=1:a=0,scale={WIDTH}:-2:flags=lanczos"
+if OUT.endswith(".mp4"):  # the same cut as a small H.264 video, for GitHub's video player
+    args = ["-filter_complex", joined, "-an", "-c:v", "libx264", "-crf", "22", "-preset", "slow",
+            "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
+else:
+    args = ["-filter_complex", joined + ",split[x][y];[x]palettegen=max_colors=192:stats_mode=diff[p];"
+            "[y][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle", "-loop", "0"]
+subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", SRC, *args, OUT], check=True)
 print("ok", OUT)

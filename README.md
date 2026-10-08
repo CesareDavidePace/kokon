@@ -31,9 +31,7 @@
   <a href="docs/engineering-notes.md">How it works</a>
 </p>
 
-<p align="center">
-  <img src="docs/media/demo.gif" alt="Kokon demo: create the Colosseum, rebuild it out of pasta, combine it into a kitchen scene, expand it and add a title" width="860">
-</p>
+https://github.com/user-attachments/assets/dda8d4a4-8b7e-45ef-b2a8-65dfd23ef686
 
 <p align="center">
   <a href="https://github.com/GabrieleLozupone/kokon/releases/latest"><picture>

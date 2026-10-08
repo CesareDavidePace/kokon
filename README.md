@@ -96,7 +96,7 @@ Every result below came from one sentence in Kokon, with default settings.
 | :---: | :---: |
 | <img src="docs/media/examples/remove.jpg" alt="Remove people from a beach"><br>**Remove** · *“Remove all the people from the beach”* | <img src="docs/media/examples/replace.jpg" alt="Replace an object"><br>**Replace** · *“Replace the orange car with a blue vintage Vespa scooter”* |
 | <img src="docs/media/examples/relight.jpg" alt="Relight a scene"><br>**Relight** · *“Make it golden hour, warm low sunlight”* | <img src="docs/media/examples/restyle.jpg" alt="Restyle a photo"><br>**Restyle** · *“Turn it into a watercolor illustration”* |
-| <img src="docs/media/examples/text.jpg" alt="Change text in a photo"><br>**Text** · *“Change the neon sign to say ‘OPEN LATE’”* | <img src="docs/media/examples/expand.jpg" alt="Expand a photo"><br>**Expand** · *“Expand to 16:9, continue the beach”* |
+| <img src="docs/media/examples/text.jpg" alt="Change text in a photo"><br>**Text** · *“Change the neon sign to say ‘OPEN LATE’”* | <img src="docs/media/examples/expand.jpg" alt="Expand a photo"><br>**Expand** · Expand → 16:9 · *“continue the beach”* |
 
 ## Install
 

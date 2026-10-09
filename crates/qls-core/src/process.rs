@@ -43,20 +43,29 @@ pub fn build_server_args(cfg: &AppConfig, profile: &ModelProfile) -> Vec<String>
         // Unified memory: "system RAM" is the GPU's memory too, so a CPU copy only costs.
         placement = TextEncoderPlacement::Gpu;
     }
+    if metal && placement == TextEncoderPlacement::Gpu {
+        // Weights stay on the Metal device as zero-copy mappings of the model files (needs
+        // the params on their compute device). Without `--auto-fit off` auto-fit may put the
+        // text encoder in "RAM": on a Mac a second, staged copy in the same memory.
+        a.extend(["--backend".into(), dev.clone(), "--auto-fit".into(), "off".into()]);
+    }
     match placement {
         TextEncoderPlacement::Ram => {
             // Weights in RAM, compute on the GPU. Explicit --params-backend disables
             // auto-fit, so DiT/VAE weights live on their compute device.
             a.extend(["--backend".into(), dev.clone(), "--params-backend".into(), "te=cpu".into()]);
         }
+        TextEncoderPlacement::Gpu if metal => {}
         TextEncoderPlacement::Gpu => a.extend(["--backend".into(), dev.clone()]),
         TextEncoderPlacement::Cpu => a.extend(["--backend".into(), format!("diffusion={dev},vae={dev},te=cpu")]),
         TextEncoderPlacement::Auto => a.extend(["--backend".into(), format!("diffusion={dev},vae={dev}"), "--auto-fit".into(), "on".into()]),
         TextEncoderPlacement::Disk => a.extend(["--backend".into(), dev.clone(), "--params-backend".into(), "disk".into()]),
     }
     if metal {
-        // Weights mapped from the files instead of copied (fixed for Metal upstream in #2037,
-        // part of the pinned build): about 10 GB less peak memory on Apple Silicon.
+        // Weights mapped from the files instead of copied (Metal support upstream in #2037,
+        // part of the pinned build). ggml keeps Metal buffers wired while in use (residency
+        // sets, 3 min keep-alive), so macOS cannot page them out: what does not fit under
+        // Metal's working-set limit must be released instead (Disk placement, 16 GB Macs).
         a.push("--mmap".into());
     }
     if cfg.flash_attention {
@@ -851,7 +860,7 @@ mod tests {
         let mut cfg = AppConfig::default();
         cfg.gpu_backend = crate::config::GpuBackend::Metal;
         let s = build_server_args(&cfg, cfg.profile()).join(" ");
-        assert!(s.contains("--backend metal --mmap --fa"), "RAM placement runs everything on the GPU: {s}");
+        assert!(s.contains("--backend metal --auto-fit off --mmap --fa"), "RAM placement runs everything on the GPU: {s}");
         assert!(!s.contains("--params-backend") && !s.contains("--sage-attn"));
         assert!(s.contains("--mmap") && s.contains("--eager-load"));
         cfg.text_encoder_placement = TextEncoderPlacement::Disk;

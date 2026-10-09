@@ -53,8 +53,42 @@ pass. Kokon uses CFG 1, which is one pass per step.
 | **Unified memory** | 24 GB (Fast/Balanced, up to ~1.5K) | 32 GB+ (Quality 2K); 48 GB+ gets the 8-bit model |
 | **Disk** | 15 GB free | 25 GB on the internal SSD |
 
-16 GB Macs can run it only in the lightest setup: weights streamed from disk, 1 MP, much
-slower. It should be offered as "not supported, try at your own risk" rather than blocked.
+16 GB Macs can run it only in the lightest setup: 1 MP, with each model's weights loaded when
+it runs and released afterwards. That costs only a few seconds per image; the GPU compute is
+what makes it slow. It should be offered as "not supported, try at your own risk" rather than
+blocked.
+
+### Why macOS paging does not help here (verified in the source, 2026-10-09)
+
+macOS compresses and swaps idle memory, and with `--mmap` model files are file-backed pages
+it can drop and re-read. That is why ~10 GB LLMs run well on 16 GB Macs. GPU memory is
+different:
+
+- ggml's Metal backend puts every buffer, mapped files included, in a residency set and keeps
+  it **wired** for 3 minutes after the last GPU use (ggml `ggml-metal-device.m`, heartbeat
+  thread). macOS cannot evict, compress or swap wired pages.
+- Metal's working-set limit (`recommendedMaxWorkingSetSize`, about 11–12 GiB on 16 GB,
+  about 17–18 GiB on 24 GB) is the real ceiling. 10.7 GB of weights, plus several GB of
+  activations at 1 MP, plus about 1 GB of prefix cache does not fit under it on 16 GB.
+- `--params-backend disk` releases each model's weights after it runs, so the text encoder
+  (6.2 GB) is gone during sampling. It disables the zero-copy mapping
+  (`ModelManager::can_mmap_storage` needs `ResidencyMode::ParamBackend`), but the reload
+  reads from the file cache or the SSD in seconds.
+- qwen-image-studio (same engine build, M5 16 GB) saw 4.3 GB of swap and slower steps with
+  everything resident; disk mode peaked at 10–12 GB.
+- Raising the limit with `sudo sysctl iogpu.wired_limit_mb` is undocumented, resets on
+  reboot, and has caused kernel panics on a 24 GB M4 Pro. Not recommended.
+
+Launch flags chosen:
+
+- **16 GB:** `--backend metal --params-backend disk --mmap --fa`, no `--eager-load`.
+- **24 GB and up:** `--backend metal --auto-fit off --mmap --fa`. All weights stay on the GPU
+  as zero-copy mappings; `--auto-fit off` stops auto-fit from staging the text encoder in
+  "RAM", which on a Mac is a second copy in the same memory.
+
+The Neural Engine and the ray-tracing cores are not used by any of these runtimes. The
+per-GPU-core "neural accelerators" exist only from M5 (Metal 4 tensor API, which ggml
+enables only on M5). What matters is GPU cores and memory bandwidth.
 
 ### Memory math
 
@@ -71,13 +105,17 @@ VAE 0.25 GB ≈ 10.7 GB.
 
 ### Expected speed
 
-These are **estimates, not measured**. They scale the M5 result by GPU size and are for
-1 MP, 20 steps, CFG 1.
+These are **estimates, not measured**, for 1 MP, 20 steps, CFG 1. They are derived from the
+M5 16 GB measurement (about 38 s per model pass at 1024², with the same engine build) and
+llama.cpp compute ratios. Our test machines: M2 Pro 16 GB (19-core GPU, 200 GB/s) about
+15–25 s per step, 6–9 min per image; M4 Pro 24 GB (20-core, 273 GB/s) about 12–18 s per
+step, 4.5–6.5 min. The 16-core M4 Pro is close to the M2 Pro. Benchmark both before setting
+the Mac presets' time hints.
 
 | Chip class | GPU cores | Bandwidth | Per image (rough) |
 | --- | --- | --- | --- |
 | M1–M5 (base) | 7–10 | 68–153 GB/s | 10–15 min |
-| Pro | 14–20 | 150–273 GB/s | 4–6 min |
+| Pro | 14–20 | 150–273 GB/s | 4.5–9 min |
 | Max | 30–40 | 300–546 GB/s | 2–3 min |
 | Ultra | 48–80 | ~800 GB/s | 1–2 min |
 

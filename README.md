@@ -21,7 +21,7 @@
   <img src="https://img.shields.io/badge/NVIDIA-12%20GB%2B%20VRAM-6b6b6b?labelColor=333&style=flat-square&logo=nvidia&logoColor=76B900" alt="NVIDIA, 12 GB of VRAM or more">
   <img src="https://img.shields.io/badge/AMD-12%20GB%2B%20VRAM%20(beta)-6b6b6b?labelColor=333&style=flat-square&logo=amd&logoColor=white" alt="AMD, 12 GB of VRAM or more, beta">
   <img src="https://img.shields.io/badge/Intel%20Arc-12%20GB%2B%20VRAM%20(beta)-6b6b6b?labelColor=333&style=flat-square&logo=intel&logoColor=white" alt="Intel Arc, 12 GB of VRAM or more, beta">
-  <img src="https://img.shields.io/badge/Apple%20Silicon-16%20GB%2B%20unified%20memory%20(beta)-6b6b6b?labelColor=333&style=flat-square&logo=apple&logoColor=white" alt="Apple Silicon, 16 GB of unified memory or more, beta">
+  <img src="https://img.shields.io/badge/Apple%20Silicon-32%20GB%20recommended%20(beta)-6b6b6b?labelColor=333&style=flat-square&logo=apple&logoColor=white" alt="Apple Silicon, 32 GB of unified memory recommended, beta">
   <br>
   <a href="#use-it-from-your-ai-agent"><img src="https://img.shields.io/badge/MCP-server%20included-6b6b6b?labelColor=333&style=flat-square" alt="MCP server included"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/GabrieleLozupone/kokon?style=flat-square&color=6b6b6b&labelColor=333" alt="License"></a>
@@ -150,11 +150,11 @@ whole thing takes a few minutes, and the setup screen shows what Kokon can do wh
 
 | | Minimum | Recommended |
 | --- | --- | --- |
-| **Chip** | Apple M1 or newer (Intel Macs are not supported) | M-series Pro, Max or Ultra |
+| **Chip** | Apple M1 or newer (Intel Macs are not supported) | M-series Pro, Max or Ultra (the GPU cores set the speed) |
 | **macOS** | 26 Tahoe | latest |
-| **Unified memory** | 16 GB (lightest mode, about 1 megapixel) | 24 GB or more; 32 GB+ for native 2K |
+| **Unified memory** | 16 GB: works, but slowly (lightest mode, about 1 megapixel) | 32 GB or more (also gets native 2K) |
 | **Disk** | 15 GB free | 25 GB free |
-| **Time per image** | Minutes: a 512×512 image took about 2 minutes on a 16 GB M2 Pro | Faster on Pro/Max chips with more memory |
+| **Time per image** | About 10 minutes for 1024×1024 on a 16 GB M2 Pro; Fast renders at 768×768 and enlarges, which is quicker | Faster on Max/Ultra chips with more memory; Turbo (the default) needs 8 steps instead of 20 |
 
 Kokon measures your machine's speed with the first image and shows realistic time estimates
 from then on.
@@ -183,7 +183,7 @@ preset later from Settings → Models → **Set up models…**
 | 32 GB+ | Qwen-Image 2.1 Q8_0 | Qwen3-VL 8B Q8_0 (8.7 GB) | ~19 GB | not yet |
 
 Every preset also gets stable-diffusion.cpp (the CUDA 12 build on NVIDIA, the Vulkan build on AMD and Intel, the Metal build on a Mac), the Qwen-Image 2.1 VAE, the
-Qwen3-VL vision projector and, optionally, the 4x-UltraSharp upscaler. The sources are the
+Qwen3-VL vision projector, the 8-step Qwen-Image 2.1 Turbo model and, optionally, the 4x-UltraSharp upscaler. The sources are the
 official [Qwen-Image 2.1](https://huggingface.co/Qwen/Qwen-Image-2.1) weights through
 [unsloth/Qwen-Image-2.1-GGUF](https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF),
 [Qwen/Qwen3-VL-8B-Instruct-GGUF](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF) and
@@ -218,8 +218,9 @@ opened in Explorer or Finder. A few things make that loop fast:
   Undo returns to the version the current one came from, and nothing is ever deleted.
 - **Gallery**: every image keeps its full recipe (prompt, seed, settings, pipeline) and reopens
   with one click. The recipe is also embedded in the PNG.
-- **Quality presets**: Fast, Balanced, Quality (native 2K) and Ultra (native 2K with the
-  official 40 steps), so you never need to tune steps or guidance.
+- **Quality presets**: **Turbo** (the default: ~1 MP in 8 steps with Qwen's official
+  distilled model, about twice as fast), Fast, Balanced, Quality (native 2K) and Ultra (native 2K
+  with the official 40 steps), so you never need to tune steps or guidance.
 
 ## How it works
 
@@ -427,7 +428,8 @@ been verified on a real AMD or Intel card yet; integrated graphics are not suppo
 [open an issue](https://github.com/GabrieleLozupone/kokon/issues) with your card and how it went.
 
 Mac: yes, in beta, on Apple Silicon (M1 or newer) with macOS 26. It runs on a 16 GB Mac in a
-lighter mode; 24 GB or more is recommended. See the [requirements](#requirements) and
+lighter mode, but slowly (about 10 minutes per 1-megapixel image on an M2 Pro); 32 GB or more
+and a Pro, Max or Ultra chip are recommended. See the [requirements](#requirements) and
 [docs/platforms.md](docs/platforms.md).
 
 </details>
@@ -448,7 +450,9 @@ Kokon is designed for. Smaller cards may come with lighter models in the future.
 Kokon's code is open source (see [License](#license)). The models have their own licenses:
 Qwen-Image 2.1 is released under the Qwen license (see the
 [model page](https://huggingface.co/Qwen/Qwen-Image-2.1)), and the optional 4x-UltraSharp
-upscaler is CC BY-NC-SA 4.0, which means non-commercial use only. Check each license for your
+upscaler is CC BY-NC-SA 4.0, which means non-commercial use only. Qwen-Image 2.1 Turbo
+([model page](https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo)) has the same license as
+Qwen-Image 2.1. Check each license for your
 use case.
 
 </details>

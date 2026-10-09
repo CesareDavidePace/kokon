@@ -4,6 +4,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -86,6 +87,9 @@ pub enum Event {
 
 pub struct Engine {
     cfg: RwLock<AppConfig>,
+    /// The server should run the Turbo model (the last job's choice; Turbo is the default),
+    /// so starting it ahead of a job loads the model that job will most likely need.
+    prefer_turbo: AtomicBool,
     pub server: Arc<ServerManager>,
     pub store: Arc<Store>,
     /// Private mode: records in memory, files under `private_dir`; wiped by `clear_private`,
@@ -129,6 +133,8 @@ pub fn plan_inputs(cfg: &AppConfig, image_sizes: Vec<Size>, mask: Option<(Size, 
         sage_attention: cfg.uses_sage_attention(),
         speed_factor: None,
         hide_uncalibrated: !crate::speed::trust_uncalibrated(cfg),
+        unified_memory: false,
+        turbo_available: cfg.turbo_model().is_some(),
     }
 }
 
@@ -159,6 +165,7 @@ impl Engine {
             installer: crate::installer::Installer::new(),
             backend_version: Mutex::new(None),
             last_activity: Mutex::new(Instant::now()),
+            prefer_turbo: AtomicBool::new(true),
         }))
     }
 
@@ -464,6 +471,16 @@ impl Engine {
         Ok((img, rec))
     }
 
+    /// The configuration to start the server with: the Turbo model when the last job used it
+    /// (or no job ran yet) and it is installed, otherwise the active profile's model.
+    pub fn server_config(&self) -> AppConfig {
+        self.server_config_for(&self.config(), self.prefer_turbo.load(Ordering::Relaxed))
+    }
+
+    fn server_config_for(&self, cfg: &AppConfig, turbo: bool) -> AppConfig {
+        turbo.then(|| cfg.with_turbo()).flatten().unwrap_or_else(|| cfg.clone())
+    }
+
     /// How this machine's measured speed compares with the time model (None: not measured).
     fn speed_factor(&self, cfg: &AppConfig) -> Option<f32> {
         self.speed.get(&crate::speed::machine_key(cfg, self.gpu().as_ref())).map(|c| c.factor)
@@ -475,6 +492,7 @@ impl Engine {
         let vram = cfg.planning_vram_mib(self.gpu().map(|g| g.planning_mib()));
         let mut inputs = plan_inputs(&cfg, sizes, mask, vram);
         inputs.speed_factor = self.speed_factor(&cfg);
+        inputs.unified_memory = self.gpu().is_some_and(|g| g.unified);
         planner::plan(req, &inputs, &cfg.profile().recommended_settings)
     }
 
@@ -523,6 +541,7 @@ impl Engine {
         let mask_info = mask.as_ref().map(|(m, _)| (Size::new(m.width(), m.height()), imaging::mask_bbox(m, 16), imaging::mask_coverage(m, 16)));
         let mut plan_inputs = plan_inputs(&cfg, images.iter().map(|i| i.size()).collect(), mask_info, vram);
         plan_inputs.speed_factor = self.speed_factor(&cfg);
+        plan_inputs.unified_memory = self.gpu().is_some_and(|g| g.unified);
         let plan = planner::plan(&request, &plan_inputs, &profile.recommended_settings)?;
         let seed = request.seed.unwrap_or_else(random_seed);
         let mut request = request;
@@ -537,12 +556,16 @@ impl Engine {
 
         // 3. Backend.
         // A job that also starts the server is not a fair speed sample (startup, first load).
+        // Turbo runs on its own diffusion model: switching restarts the server with the other one.
+        self.prefer_turbo.store(plan.turbo, Ordering::Relaxed);
+        let run_cfg = self.server_config_for(&cfg, plan.turbo);
+        let model_loaded = self.server.capabilities().is_some_and(|c| c.model_matches(&run_cfg.profile().diffusion_model));
         let mut cold_start = false;
-        if self.server.status().state != ServerState::Ready || self.server.owned_alive() == Some(false) {
+        if self.server.status().state != ServerState::Ready || self.server.owned_alive() == Some(false) || !model_loaded {
             cold_start = true;
             self.update(id, |j| j.view.status = JobStatus::StartingBackend);
             self.emit_server();
-            let r = self.server.ensure_ready(&cfg).await;
+            let r = self.server.ensure_ready(&run_cfg).await;
             self.emit_server();
             r?;
         }
@@ -635,7 +658,7 @@ impl Engine {
                     }
                 }
                 if self.is_cancelled(id) {
-                    return self.cancel_running(id, &client, &accepted.id, &cfg).await;
+                    return self.cancel_running(id, &client, &accepted.id, &self.server_config()).await;
                 }
                 if last_poll.elapsed() >= Duration::from_millis(500) {
                     last_poll = Instant::now();

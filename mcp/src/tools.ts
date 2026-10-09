@@ -6,8 +6,8 @@ import { allowedRoots, checkInput, checkOutput, PathError } from "./paths.js";
 import { ServiceClient, ServiceError } from "./service.js";
 
 const quality = z
-  .enum(["fast", "balanced", "quality", "ultra"])
-  .describe("fast = ~1 MP, 20 steps; balanced = ~1.5K, 20 steps (the default); quality = native 2K, 20 steps (slower; edits share 2K with their references); ultra = native 2K, 40 steps (slowest)");
+  .enum(["turbo", "fast", "balanced", "quality", "ultra"])
+  .describe("turbo = ~1 MP in 8 steps with Qwen's distilled Turbo model (the default, fastest; runs as balanced if the Turbo model is not installed); fast = ~1 MP, 20 steps; balanced = ~1.5K, 20 steps; quality = native 2K, 20 steps (slower; edits share 2K with their references); ultra = native 2K, 40 steps (slowest)");
 const seed = z.number().int().min(-1).max(2_147_483_647).describe("Seed for reproducible results; omit or -1 for random");
 const dim = z.number().int().min(64).max(4096);
 const aspect = z
@@ -264,7 +264,7 @@ export const handlers = {
         height: a.height,
         resolution: a.width ? "custom" : "auto",
         aspect_ratio: a.aspect_ratio,
-        quality: a.quality ?? "balanced",
+        quality: a.quality ?? "turbo",
         seed: a.seed,
         output_path: out,
         advanced: {},
@@ -279,7 +279,7 @@ export const handlers = {
     const out = a.output_path ? checkOutput(a.output_path, ctx.cwd, r) : undefined;
     return runJob(
       ctx,
-      { prompt: a.prompt, negative_prompt: a.negative_prompt, mode: "edit", images: [img], quality: a.quality ?? "balanced", seed: a.seed, preserve_dimensions: a.preserve_dimensions ?? true, output_path: out, advanced: {} },
+      { prompt: a.prompt, negative_prompt: a.negative_prompt, mode: "edit", images: [img], quality: a.quality ?? "turbo", seed: a.seed, preserve_dimensions: a.preserve_dimensions ?? true, output_path: out, advanced: {} },
       !!a.include_preview,
     );
   },
@@ -299,7 +299,7 @@ export const handlers = {
         height: a.height,
         resolution: a.width ? "custom" : "auto",
         aspect_ratio: a.aspect_ratio,
-        quality: a.quality ?? "balanced",
+        quality: a.quality ?? "turbo",
         seed: a.seed,
         output_path: out,
         advanced: {},
@@ -320,7 +320,7 @@ export const handlers = {
         mode: "outpaint",
         images: [img],
         outpaint: { left: a.left, right: a.right, top: a.top, bottom: a.bottom, units: a.units },
-        quality: a.quality ?? "balanced",
+        quality: a.quality ?? "turbo",
         seed: a.seed,
         output_path: out,
         advanced: {},
@@ -337,7 +337,7 @@ export const handlers = {
     if (!a.prompt && a.action !== "remove") throw new PathError("prompt must not be empty (only action 'remove' works without one).");
     return runJob(
       ctx,
-      { prompt: a.prompt, mode: "inpaint", inpaint_action: a.action, images: [img], mask, quality: a.quality ?? "balanced", seed: a.seed, output_path: out, advanced: {} },
+      { prompt: a.prompt, mode: "inpaint", inpaint_action: a.action, images: [img], mask, quality: a.quality ?? "turbo", seed: a.seed, output_path: out, advanced: {} },
       !!a.include_preview,
     );
   },

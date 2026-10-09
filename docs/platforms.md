@@ -8,7 +8,7 @@ so model behaviour is identical everywhere; only speed and memory differ.
 | --- | --- | --- |
 | Windows + NVIDIA | CUDA 12 build | ✅ verified (RTX 5070 Ti 16 GB, RTX 5070 12 GB) |
 | Windows + AMD / Intel | Vulkan build (30 MB, uses the driver's Vulkan runtime) | 🟡 beta: works on NVIDIA (RTX 5070 Ti, 2K/20 steps, slower than CUDA); AMD / Intel to verify |
-| macOS + Apple Silicon | Metal build (universal binary, shaders embedded) | 🟡 beta: runs on an M2 Pro 16 GB (512² in ~2 min, lightest mode); `.dmg` build script ready, first packaged build pending |
+| macOS + Apple Silicon | Metal build (universal binary, shaders embedded) | 🟡 beta: packaged 0.9.0 runs on an M2 Pro 16 GB (1024² in ~10 min, 512² in ~2 min, lightest mode) |
 | Windows + AMD via ROCm | ROCm build | ✗ not planned: open crashes (#2008), DLL conflicts (#2012), black images with k-quants (#1385) |
 | Linux | Vulkan / CUDA builds exist | later |
 
@@ -50,12 +50,18 @@ pass. Kokon uses CFG 1, which is one pass per step.
 | --- | --- | --- |
 | **Chip** | Apple M1 or newer (Intel Macs: no) | M-series Pro / Max / Ultra |
 | **macOS** | 26 Tahoe (the engine binary's minimum) | latest |
-| **Unified memory** | 16 GB (lightest mode, ~1 MP; verified on an M2 Pro) | 24 GB+ (everything stays loaded); 32 GB+ for Quality 2K; 48 GB+ gets the 8-bit model |
+| **Unified memory** | 16 GB: works, but slowly (lightest mode, ~1 MP, ~10 min on an M2 Pro) | 32 GB+ (everything stays loaded, Quality 2K); 48 GB+ gets the 8-bit model |
 | **Disk** | 15 GB free | 25 GB on the internal SSD |
 
 16 GB Macs run in the lightest setup: 1 MP, with each model's weights loaded when it runs and
 released afterwards. That costs only a few seconds per image; the GPU compute is what makes it
-slow (a 512² image took ~2 min on the M2 Pro). The setup screen says so before downloading.
+slow (on the M2 Pro 16 GB with the packaged 0.9.0: 512² ~2 min, 1024² ~10 min). The setup
+screen says so before downloading, and recommends 32 GB and a Pro/Max/Ultra chip.
+
+**Fast on a Mac renders smaller** (2026-10-09): on unified memory, Fast at Auto resolution
+renders at most 768² (`planner::UNIFIED_FAST_AREA`) and the upscaler model enlarges the result
+to the size Fast renders on a PC (1 MP). Sampling cost grows faster than the area, so this is
+well under half the sampling time. Balanced, Quality, Ultra and explicit sizes are unchanged.
 
 ### Why macOS paging does not help here (verified in the source, 2026-10-09)
 
@@ -156,3 +162,18 @@ so nobody with a base chip is surprised.
 6. Testing: runs on the M2 Pro 16 GB (device name `mtl0` fixed from that run); an M4 Pro 24 GB
    run is planned. Originally: needs a real Apple Silicon Mac with 24 GB+ (GitHub's runners have 7 GB: build
    only). Without one, ship as "beta, untested".
+
+### Speed roadmap for Macs
+
+1. ✅ **Turbo**: Qwen's official 8-step model, now the default quality; the largest gain on
+   every platform. See the Turbo notes in `docs/engineering-notes.md`. Mac speed not measured yet.
+2. ✅ Honest requirements: 16 GB works but slowly; 32 GB+ and a Pro/Max/Ultra chip recommended.
+3. ✅ Fast renders at 768² on Macs and enlarges (above).
+4. **Later: an MLX engine.** Apple's MLX framework (through [mflux](https://github.com/filipstrand/mflux))
+   may be faster than ggml's Metal backend; a community 4-bit MLX build of Qwen-Image 2.1
+   exists (about 6.7 s/step at 768² on an M1 Max, ~7 GB peak; ~78 s per 1024² image on an
+   M5 Max 64 GB, per third-party reports, unverified). Not done now because: the gain over
+   sd.cpp Metal is unmeasured (maybe 1.3–2×), it needs a bundled Python runtime and a second
+   backend path (request mapping, edits, inpaint semantics, upscaler) to maintain, and it does
+   not fix 16 GB Macs, where memory, not the engine, is the limit. Revisit after Turbo ships,
+   with a same-machine benchmark of both engines first.

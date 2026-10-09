@@ -117,6 +117,42 @@ Whenever a result is larger than what the model rendered (edits restored to the 
 outpaint, sizes above the VRAM budget) it is enlarged with ESRGAN ×4 and then resized down to
 the exact size; Lanczos is only used for shrinking or factors below 1.1×.
 
+On Apple Silicon, Fast at Auto resolution renders at most 768² (`planner::UNIFIED_FAST_AREA`)
+and is enlarged to the 1 MP output, because Mac GPUs are several times slower.
+
+### Turbo (the default quality, 2026-10-10)
+
+Quality level **Turbo** = ~1 MP in 8 steps on Qwen's official distilled model
+([Qwen/Qwen-Image-2.1-Turbo](https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo), released
+2026-10-09, Qwen Research License like the base), as the stable-diffusion.cpp conversion
+[DogukanUrker/Qwen-Image-2.1-Turbo-GGUF](https://huggingface.co/DogukanUrker/Qwen-Image-2.1-Turbo-GGUF)
+Q4_K (4.05 GB, `catalog::TURBO_Q4_K`, part of every preset). t2i and edits.
+
+- It is a separate diffusion model. `AppConfig::with_turbo` swaps it into the active profile;
+  the engine restarts the server when a job needs the other model (`Engine::server_config_for`),
+  and starts the server with the model of the last job (Turbo before any job). Switching costs a
+  full server start (encoder included), so mixing Turbo and other levels is slow.
+- Schedule: `planner::TURBO_SIGMAS` = `sample_sigmas` of the checkpoint's model_index.json
+  ([1, .978453, .95418, .926626, .89508, .845148, .704534, .414568, 0], fixed at every
+  resolution), sent as `sample_params.custom_sigmas` (used verbatim, steps = len − 1). sd.cpp's
+  default Qwen schedule shifts by resolution and has a 0.02 terminal shift. CFG is forced to 1;
+  Advanced steps/CFG are ignored.
+- Not installed (configs from before Turbo): Turbo requests run as Balanced with a note.
+- **Same-seed A/B, RTX 5070 Ti, 1024², 3 t2i + 3 edits** (`scripts/dev/compare-fast-modes.py`):
+  Fast (20 steps) 19.1 s t2i / 23.8 s edit; Viggle v0.3 LoRA (6 steps) 10.1 / 13.6 s; official
+  Turbo (8 steps) 9.5 / 13.1 s. ~4.5 s per image are fixed (encode, 2.7 s decode), so the
+  sampling speed-up (18.4 → 7.8 s) shows less here than on a Mac. The LoRA made every step 30%
+  slower (runtime LoRA on GGUF: 1.15 vs 0.85–0.88 s/step). Quality equal by eye; in the poster
+  edit ("title → PORTO, tram blue") Fast and Viggle dropped the subtitle, Turbo kept it.
+- Candidates rejected or not adopted: Viggle turbo v0.3 LoRA (works, slower per step, third
+  party); Turbo8 and Pruna 8-step LoRAs (unofficial; Turbo8 reports text exact-match 75% vs
+  95%); Sarvam Tez 2-step (t2i only, precision-sensitive); **Alibaba Fun-Acc 4-step**: a PDD
+  bundle, not a plain LoRA (keys without `.weight` that sd.cpp ignores silently, replacement norm
+  weights, `proj_out.weight [4,64,4096]` = one output head per step), would need an sd.cpp
+  patch. LightX2V Lightning for 2.1: not released (issue #1548).
+- Open: Turbo Q6_K / Q8_0 vs Q4_K (the comparison script has `official8_q6_k`,
+  `official8_q8_0`); Turbo above 1 MP.
+
 The **Upscale** action has two methods: **Quick** (ESRGAN only) and **Detailed** (a low-denoise
 0.3 img2img pass at about 2K, then ESRGAN to the target).
 

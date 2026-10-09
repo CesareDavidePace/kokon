@@ -620,6 +620,22 @@ impl AppConfig {
         }
     }
 
+    /// The Turbo model of the hardware preset, if it is installed.
+    pub fn turbo_model(&self) -> Option<PathBuf> {
+        let t = self.preset().turbo;
+        t.is_present(&self.sdcpp_dir).then(|| t.path(&self.sdcpp_dir))
+    }
+
+    /// This configuration with the server running the Turbo model instead of the active
+    /// profile's diffusion model (same encoder, VAE and launch flags). None if not installed.
+    pub fn with_turbo(&self) -> Option<AppConfig> {
+        let path = self.turbo_model()?;
+        let mut c = self.clone();
+        let id = c.active_profile.clone();
+        c.profiles.iter_mut().find(|p| p.id == id)?.diffusion_model = path;
+        Some(c)
+    }
+
     /// The configured ESRGAN model file, if present. sd-server resolves names the same
     /// way: `<dir>/<name>.<ext>`, top level only.
     pub fn upscaler_file(&self) -> Option<PathBuf> {

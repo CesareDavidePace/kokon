@@ -4,7 +4,7 @@ export type Mode = "auto" | "generate" | "edit" | "inpaint" | "outpaint" | "mult
 export type ResolvedMode = Exclude<Mode, "auto">;
 /** What an inpaint does in the painted area. */
 export type InpaintAction = "edit" | "remove" | "replace" | "add";
-export type Quality = "fast" | "balanced" | "quality" | "ultra";
+export type Quality = "fast" | "balanced" | "quality" | "ultra" | "turbo";
 export type ResolutionMode = "auto" | "source" | "1k" | "1.5k" | "2k" | "custom";
 export type OutputFormat = "png" | "jpeg" | "webp";
 export type Units = "pixels" | "percent";
@@ -179,6 +179,7 @@ export interface StatusResponse {
   active_job: JobView | null;
   queue: { queued: number; jobs: JobView[] };
   upscaler?: { model: string; available: boolean; refine_mode: RefineMode };
+  turbo?: { available: boolean };
   setup_complete: boolean;
 }
 

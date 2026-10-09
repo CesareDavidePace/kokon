@@ -165,7 +165,7 @@ export function Setup() {
   const running = inst?.running ?? false;
   // While (or after) installing this preset, show the live list; otherwise what is on disk.
   const live = !!inst && inst.preset === preset && inst.items.length > 0 && (running || inst.items.some((i) => i.state !== "pending" && i.state !== "present"));
-  const items = (live ? inst!.items : chosen?.files ?? []).filter((i) => upscaler || i.kind !== "optional" || live);
+  const items = (live ? inst!.items : chosen?.files ?? []).filter((i) => i.kind !== "optional" || live || upscaler);
   const missing = items.filter((i) => i.state !== "present" && i.state !== "done");
   const failed = items.filter((i) => i.state === "failed");
   const paused = !running && items.some((i) => i.state === "cancelled" || (i.state === "pending" && i.received > 0));
@@ -177,6 +177,8 @@ export function Setup() {
   const rate = inst?.bytes_per_sec ?? 0;
   const vram = hw?.vram_mib ?? null;
   const optionalMissing = chosen?.files.some((f) => f.kind === "optional" && f.state !== "present");
+  // Wanted extras not on disk yet (e.g. the upscaler added after the first setup).
+  const extrasMissing = missing.some((i) => i.kind === "optional");
 
   return (
     <div className="setup">
@@ -209,10 +211,16 @@ export function Setup() {
               </div>
             )}
             {hw.gpu?.unified ? (
-              hw.gpu.memory_total_mib < 23 * 1024 && (
+              hw.gpu.memory_total_mib < 23 * 1024 ? (
                 <div className="setup-note">
-                  With {gb(hw.gpu.memory_total_mib)} of unified memory Kokon runs in its lightest mode: model weights are read from disk as needed and images are made at about 1 megapixel. Expect several minutes per image; 24 GB or more is recommended. Close other apps while generating.
+                  With {gb(hw.gpu.memory_total_mib)} of unified memory Kokon works, but slowly: model weights are read from disk as needed and images are made at about 1 megapixel, which took about 10 minutes on an M2 Pro. Fast renders smaller and enlarges the result, so it is quicker. 32 GB or more and a Pro, Max or Ultra chip are recommended. Close other apps while generating.
                 </div>
+              ) : (
+                hw.gpu.memory_total_mib < 31 * 1024 && (
+                  <div className="setup-note">
+                    With {gb(hw.gpu.memory_total_mib)} of unified memory expect several minutes per image. 32 GB or more and a Pro, Max or Ultra chip are recommended.
+                  </div>
+                )
               )
             ) : (
               <>
@@ -341,7 +349,7 @@ export function Setup() {
         )}
 
         <div className="setup-actions">
-          {hw && !running && !paused && !presetInstalled && (
+          {hw && !running && !paused && (!presetInstalled || extrasMissing) && (
             <button className="btn primary big" disabled={!chosen || lowSpace} onClick={install}>
               <Download size={16} /> {failed.length ? "Try again" : `Install · ${formatBytes(toDownload)}`}
             </button>

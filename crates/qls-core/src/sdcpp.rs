@@ -38,6 +38,9 @@ pub struct SampleParams {
     pub sample_steps: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub flow_shift: Option<f32>,
+    /// Exact noise schedule, used verbatim (steps = len - 1, no shift).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub custom_sigmas: Vec<f32>,
     pub guidance: Guidance,
 }
 
@@ -457,6 +460,7 @@ mod tests {
                 scheduler: None,
                 sample_steps: 30,
                 flow_shift: None,
+                custom_sigmas: Vec::new(),
                 guidance: Guidance { txt_cfg: 6.0, img_cfg: None },
             },
             vae_tiling_params: None,
@@ -483,6 +487,11 @@ mod tests {
         assert_eq!(v["embed_image_metadata"], false);
         assert_eq!(v["image_preprocess"][0], "target=ref,mode=none");
         assert!(v.get("hires").is_none() && v.get("cache_mode").is_none() && v.get("cache_option").is_none(), "server defaults apply");
+        assert!(v["sample_params"].get("custom_sigmas").is_none(), "default schedule");
+        // Turbo: exact schedule.
+        let turbo = ImgGenRequest { sample_params: SampleParams { custom_sigmas: vec![1.0, 0.5, 0.0], ..req.sample_params.clone() }, ..req };
+        let v = serde_json::to_value(&turbo).unwrap();
+        assert_eq!(v["sample_params"]["custom_sigmas"][1], 0.5);
     }
 
     #[test]

@@ -172,6 +172,7 @@ pub fn prepare(plan: &Plan, prompt: &str, seed: i64, images: &[LoadedImage], mas
             scheduler: plan.scheduler.clone(),
             sample_steps: plan.steps,
             flow_shift: plan.flow_shift,
+            custom_sigmas: plan.custom_sigmas.clone(),
             guidance: Guidance { txt_cfg: plan.cfg, img_cfg: None },
         },
         vae_tiling_params: vae_tiling_params(plan.vae_tiling, opts.server_vae_tile_size),

@@ -132,10 +132,13 @@ pub const UPSCALE_PROMPT: &str = "A sharp, highly detailed, high-quality image w
 #[serde(rename_all = "snake_case")]
 pub enum Quality {
     Fast,
-    #[default]
     Balanced,
     Quality,
     Ultra,
+    /// ~1 MP in 8 steps with Qwen's distilled Turbo model (`catalog::TURBO_Q4_K`). The
+    /// default; plans fall back to Balanced when the Turbo model is not installed.
+    #[default]
+    Turbo,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -321,6 +324,12 @@ pub struct Plan {
     pub upscaler: Option<String>,
     #[serde(default)]
     pub upscale: Option<UpscalePlan>,
+    /// Run on the Turbo model instead of the profile's diffusion model.
+    #[serde(default)]
+    pub turbo: bool,
+    /// Exact noise schedule (Turbo); empty = the server's default for `steps`.
+    #[serde(default)]
+    pub custom_sigmas: Vec<f32>,
 }
 
 /// Facts about inputs and the environment, measured before planning.
@@ -343,6 +352,11 @@ pub struct PlanInputs {
     /// Without a measurement, report `estimated_seconds` = 0 (unknown until the first image)
     /// instead of the uncalibrated model, which only fits the hardware it was measured on.
     pub hide_uncalibrated: bool,
+    /// Apple Silicon (unified memory): the GPU is several times slower than the discrete
+    /// cards the presets were tuned on, so Fast renders smaller (`UNIFIED_FAST_AREA`).
+    pub unified_memory: bool,
+    /// The Turbo model is installed (`AppConfig::turbo_model`).
+    pub turbo_available: bool,
 }
 
 // ---------------------------------------------------------------------------------------
@@ -496,6 +510,8 @@ pub fn resolution_area(mode: ResolutionMode, quality: Quality, rec: &Recommended
             Quality::Balanced => rec.area_balanced,
             Quality::Quality => rec.area_quality,
             Quality::Ultra => rec.area_ultra,
+            // ~1 MP, like the distillation's training and Fast.
+            Quality::Turbo => rec.area_fast,
         }),
         ResolutionMode::K1 => Some(1024 * 1024),
         ResolutionMode::K15 => Some(1536 * 1536),
@@ -535,7 +551,17 @@ pub fn unified_memory_planning_mib(ram_mib: u64, text_encoder_mib: u64) -> u64 {
     gpu_share.saturating_sub(text_encoder_mib)
 }
 
+/// Working area of Fast (Auto resolution) on Apple Silicon. Sampling time grows faster than
+/// the area, so 768² takes well under half of 1 MP; the upscaler model then enlarges the
+/// result to the size Fast would have rendered.
+pub const UNIFIED_FAST_AREA: u64 = 768 * 768;
+
 pub const PIXELS_PER_TOKEN: u64 = 256; // 8x VAE downscale, 2x2 patches
+
+/// Turbo's noise schedule: `sample_sigmas` of Qwen/Qwen-Image-2.1-Turbo's model_index.json
+/// (8 steps, fixed at every resolution, no dynamic shift), sent verbatim because sd.cpp's
+/// own Qwen schedule shifts by resolution and has a 0.02 terminal shift.
+pub const TURBO_SIGMAS: [f32; 9] = [1.0, 0.978453, 0.95418, 0.926626, 0.89508, 0.845148, 0.704534, 0.414568, 0.0];
 
 /// Area of the inpaint guide reference (the region with the painted area marked), as a
 /// share of the working canvas: enough to locate the area, cheap in tokens.
@@ -592,6 +618,7 @@ fn steps_for(q: Quality, rec: &RecommendedSettings) -> u32 {
         Quality::Balanced => rec.steps_balanced,
         Quality::Quality => rec.steps_quality,
         Quality::Ultra => rec.steps_ultra,
+        Quality::Turbo => TURBO_SIGMAS.len() as u32 - 1,
     }
 }
 
@@ -702,16 +729,27 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
     if req.prompt.trim().is_empty() && !prompt_optional {
         return Err(AppError::invalid("Describe what to generate or change."));
     }
-    let default_cfg = if mode == ResolvedMode::Generate { rec.cfg } else { rec.cfg_edit };
-    let cfg = req.advanced.cfg.unwrap_or(default_cfg).clamp(0.0, 30.0);
     let mut notes = Vec::new();
+    // Turbo (the default) needs its model; without it the job runs as Balanced.
+    let quality = if req.quality == Quality::Turbo && !inputs.turbo_available {
+        notes.push("The Turbo model is not installed, so this used Balanced. Add it in Settings → Models → Set up models….".into());
+        Quality::Balanced
+    } else {
+        req.quality
+    };
+    // Turbo: its fixed schedule, CFG 1 (an upscale keeps its own settings).
+    let turbo = quality == Quality::Turbo && mode != ResolvedMode::Upscale;
+    let default_cfg = if mode == ResolvedMode::Generate { rec.cfg } else { rec.cfg_edit };
+    let cfg = if turbo { 1.0 } else { req.advanced.cfg.unwrap_or(default_cfg).clamp(0.0, 30.0) };
     let budget_tokens = token_budget(inputs.vram_total_mib);
     let budget_area = budget_tokens * PIXELS_PER_TOKEN;
-    let tier_area = resolution_area(req.resolution, req.quality, rec);
+    let tier_area = resolution_area(req.resolution, quality, rec);
     let adv = &req.advanced;
-    let mut steps = adv.steps.unwrap_or_else(|| steps_for(req.quality, rec)).clamp(1, 150);
+    let mut steps = if turbo { steps_for(Quality::Turbo, rec) } else { adv.steps.unwrap_or_else(|| steps_for(quality, rec)).clamp(1, 150) };
     let batch_count = if mode == ResolvedMode::Upscale { 1 } else { adv.batch_count.unwrap_or(1).clamp(1, 8) };
     let mut optimized = false;
+    // Largest area actually rendered; the output keeps its size and is enlarged afterwards.
+    let render_cap = (inputs.unified_memory && quality == Quality::Fast && req.resolution == ResolutionMode::Auto).then_some(UNIFIED_FAST_AREA);
     // Diffusion always runs in one pass; larger outputs are enlarged with the upscaler
     // model (user A/B test, 2026-10-06: the two-pass refine made results worse).
     // `refine` only sets the effort of a Detailed upscale.
@@ -787,7 +825,8 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
                 let wanted = tier_area.unwrap_or(rec.area_balanced);
                 let area = cap_for_refs(wanted, 0.0, &mut notes);
                 let size = size_for_aspect(aspect, area, rec);
-                working = plan_working_canvas(size, &limits(size.area(), rec));
+                let render = render_cap.map_or(size.area(), |c| c.min(size.area()));
+                working = plan_working_canvas(size, &limits(render, rec));
                 output = size;
             }
         }
@@ -822,12 +861,16 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
             // than the target's area (see `ref_canvas`), so small references leave room.
             let area = cap_for_sources(wanted, &inputs.image_sizes, &mut notes);
             sources_reduced = area < wanted;
-            working = plan_working_canvas(target, &limits(area, rec));
+            let full = plan_working_canvas(target, &limits(area, rec));
+            working = match render_cap {
+                Some(c) if c < area => plan_working_canvas(target, &limits(c, rec)),
+                _ => full,
+            };
             for (i, s) in inputs.image_sizes.iter().enumerate() {
                 let c = if i == 0 && *s == target { working } else { ref_canvas(*s, working.canvas.area(), rec) };
                 references.push(RefPlan { index: i, source: *s, canvas: c });
             }
-            output = if req.preserve_dimensions || tier || chosen_aspect.is_some() { target } else { working.content };
+            output = if req.preserve_dimensions || tier || chosen_aspect.is_some() { target } else { full.content };
             strength = adv.strength.map(|s| s.clamp(0.0, 1.0));
         }
         ResolvedMode::Upscale => {
@@ -983,7 +1026,7 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
         outpaint,
         inpaint_region,
         inpaint_action,
-        quality: req.quality,
+        quality,
         resolution: req.resolution,
         notes,
         optimized_for_vram: optimized,
@@ -991,6 +1034,8 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
         cache_threshold,
         upscaler: inputs.upscaler.clone(),
         upscale,
+        custom_sigmas: if turbo { TURBO_SIGMAS.to_vec() } else { Vec::new() },
+        turbo,
     })
 }
 
@@ -1038,7 +1083,7 @@ mod tests {
         RecommendedSettings::default()
     }
     fn req(prompt: &str) -> GenerationRequest {
-        GenerationRequest { prompt: prompt.into(), preserve_dimensions: true, ..Default::default() }
+        GenerationRequest { prompt: prompt.into(), preserve_dimensions: true, quality: Quality::Balanced, ..Default::default() }
     }
     fn inputs(sizes: &[(u32, u32)]) -> PlanInputs {
         PlanInputs { image_sizes: sizes.iter().map(|(w, h)| Size::new(*w, *h)).collect(), mask: None, vram_total_mib: Some(16303), ..Default::default() }
@@ -1054,6 +1099,54 @@ mod tests {
         assert_eq!((p.steps, p.cfg, p.sampler.as_str()), (20, 1.0, "euler"), "20 steps, no CFG (official)");
         assert!(p.vae_tiling, "decodes above ~1.5 MP are tiled");
         assert!(p.references.is_empty());
+    }
+
+    #[test]
+    fn turbo_is_the_default_and_uses_its_model_and_schedule() {
+        assert_eq!(GenerationRequest::default().quality, Quality::Turbo, "the default");
+        let mut r = req("a lighthouse at dusk");
+        r.quality = Quality::Turbo;
+        r.advanced.cfg = Some(4.0);
+        r.advanced.steps = Some(30);
+        let i = PlanInputs { turbo_available: true, ..inputs(&[]) };
+        let p = plan(&r, &i, &rec()).unwrap();
+        assert_eq!(p.working, Size::new(1024, 1024), "~1 MP");
+        assert_eq!((p.steps, p.cfg, p.turbo), (8, 1.0, true), "fixed steps, no CFG");
+        assert_eq!(p.custom_sigmas, TURBO_SIGMAS.to_vec());
+        // Edits too; other qualities never run on the Turbo model.
+        let p = plan(&r, &PlanInputs { turbo_available: true, ..inputs(&[(1200, 800)]) }, &rec()).unwrap();
+        assert!(p.turbo && p.custom_sigmas.len() == 9);
+        r.quality = Quality::Fast;
+        let p = plan(&r, &i, &rec()).unwrap();
+        assert!(!p.turbo && p.custom_sigmas.is_empty());
+        // Not installed: Balanced, with a note.
+        r.quality = Quality::Turbo;
+        r.advanced = Default::default();
+        let p = plan(&r, &inputs(&[]), &rec()).unwrap();
+        assert!(!p.turbo && p.quality == Quality::Balanced && p.steps == 20);
+        assert!(p.notes.iter().any(|n| n.contains("Turbo model is not installed")));
+    }
+
+    #[test]
+    fn mac_fast_renders_smaller_and_keeps_the_output_size() {
+        let mac = |sizes: &[(u32, u32)]| PlanInputs { unified_memory: true, vram_total_mib: Some(4600), upscaler: Some("4x-UltraSharp".into()), ..inputs(sizes) };
+        let mut r = req("a lighthouse at dusk");
+        r.quality = Quality::Fast;
+        let p = plan(&r, &mac(&[]), &rec()).unwrap();
+        assert_eq!(p.output, Size::new(1024, 1024), "same output as Fast on a PC");
+        assert_eq!(p.working, Size::new(768, 768));
+        assert!(p.notes.iter().any(|n| n.contains("enlarged")));
+        // Edits too: smaller render, source size kept.
+        let p = plan(&r, &mac(&[(1024, 768)]), &rec()).unwrap();
+        assert_eq!(p.output, Size::new(1024, 768));
+        assert!(p.working.area() <= UNIFIED_FAST_AREA + 32 * 1024, "{:?}", p.working);
+        // Other qualities, explicit sizes and PCs are unchanged.
+        r.quality = Quality::Balanced;
+        assert_eq!(plan(&r, &mac(&[]), &rec()).unwrap().working, Size::new(1024, 1024), "budget-capped 1 MP");
+        r.quality = Quality::Fast;
+        assert_eq!(plan(&r, &inputs(&[]), &rec()).unwrap().working, Size::new(1024, 1024));
+        r.resolution = ResolutionMode::K1;
+        assert_eq!(plan(&r, &mac(&[]), &rec()).unwrap().working, Size::new(1024, 1024));
     }
 
     #[test]

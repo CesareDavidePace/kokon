@@ -189,6 +189,7 @@ async fn status(State(s): St) -> Json<Value> {
             "upscale": srv.capabilities.as_ref().map(|c| c.upscale),
         },
         "upscaler": { "model": cfg.upscaler_model, "available": cfg.upscaler_file().is_some(), "refine_mode": cfg.refine_mode },
+        "turbo": { "available": cfg.turbo_model().is_some() },
         "profile": { "id": cfg.profile().id, "display_name": cfg.profile().display_name },
         "gpu": gpu,
         "active_job": s.engine.active_job(),
@@ -334,7 +335,7 @@ async fn put_config(State(s): St, Json(cfg): Json<AppConfig>) -> ApiResult<Json<
 }
 
 async fn backend_start(State(s): St) -> ApiResult<Json<Value>> {
-    let cfg = s.engine.config();
+    let cfg = s.engine.server_config();
     let engine = s.engine.clone();
     engine.emit_server();
     let r = engine.server.ensure_ready(&cfg).await;

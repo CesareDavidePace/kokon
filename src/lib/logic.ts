@@ -41,7 +41,7 @@ export const emptyComposer = (prefs?: Partial<Composer>): Composer => ({
   outpaint: null,
   mode: "auto",
   aspect: prefs?.aspect ?? "auto",
-  quality: prefs?.quality ?? "balanced",
+  quality: prefs?.quality ?? "turbo",
   resolution: prefs?.resolution ?? "auto",
   customWidth: prefs?.customWidth ?? 1024,
   customHeight: prefs?.customHeight ?? 1024,

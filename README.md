@@ -31,7 +31,7 @@
   <a href="docs/engineering-notes.md">How it works</a>
 </p>
 
-https://github.com/user-attachments/assets/ceaf29e5-ee36-4727-bf95-db98e14b654d
+https://github.com/user-attachments/assets/f954c20e-eb07-4bc8-8216-b8a412860e99
 
 <p align="center">
   <a href="https://github.com/GabrieleLozupone/kokon/releases/latest"><picture>
@@ -93,6 +93,13 @@ https://github.com/user-attachments/assets/ceaf29e5-ee36-4727-bf95-db98e14b654d
 </table>
 
 ## Examples
+
+<p align="center">
+  <img src="docs/media/examples/fatto-in-casa.jpg" alt="A grandmother sprinkles parmesan over a miniature Colosseum made of pasta, standing on a tomato sauce river on her kitchen table, with Rome's rooftops at sunset through the window" width="860">
+  <br>
+  <sub>One project from the demo video, made in six steps: generate the Colosseum, rebuild it out of pasta,
+  add a tomato sauce river, generate the kitchen, combine the two, expand to 21:9.</sub>
+</p>
 
 Every result below came from one sentence in Kokon, with default settings.
 
@@ -163,7 +170,7 @@ Other weights, such as fine-tunes, can be selected in Settings → Models.
 | Any result | **Upscale** to 2×, 4K, the source size or a custom width | Quick (seconds) or Detailed (about a minute) |
 
 <p align="center">
-  <img src="docs/media/screenshot-app.png" alt="The Kokon window: a living room staged in four edits, with its versions, the compare views and the prompt box" width="860">
+  <img src="docs/media/screenshot-app.png" alt="The Kokon window: a cat-and-cowboy western showdown built from three generated images, combined, edited and expanded, with its version tree, the compare views and the prompt box" width="860">
 </p>
 
 Every result can be edited again, varied, used as a reference, upscaled, saved, copied or

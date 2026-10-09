@@ -28,14 +28,26 @@ RECORDINGS = {
         (137, 157, "wait"), (157, 172, 3.0), (172, 203, "wait"), (203, 228, 4.0),
         (228, 268, "wait"), (268, 279, 3.0), (279, 320, "wait"), (320, 325.1, 2.0),  # ends on the full title
     ],
+    # 2026-10-09: "Fatto in casa." TV series. Colosseum -> pasta -> sauce -> kitchen with
+    # grandmother -> combine -> expand -> series key art with the title logo
+    "series": [
+        (0, 100.5, "wait"), (100.5, 113.5, 4.0), (113.5, 197.5, "wait"), (197.5, 216, 3.0),
+        (216, 297.5, "wait"), (297.5, 316, 3.0), (316, 328.5, 4.0), (328.5, 417, "wait"),
+        (417, 437.5, 4.0), (437.5, 498.5, "wait"), (498.5, 537, 4.0), (537, 626.5, "wait"),
+        (626.5, 643, 4.0), (643, 729, "wait"), (729, 734, 1.0),  # ends on the key art
+    ],
 }
 # docs/media/demo.mp4: the "pasta" recording zoomed onto the app window (same timing),
 # with black margins around it that are cropped away; then padded in the app's background
 # colour so the UI does not touch the edges of GitHub's video player.
 RECORDINGS["demo"] = RECORDINGS["pasta"]
-CROPS = {"demo": "crop=1304:994:460:78,pad=1464:1134:80:70:color=0x161616,"}
+CROPS = {"demo": "crop=1304:994:460:78,pad=1464:1134:80:70:color=0x161616,",
+         # recorded as the app window only: just add the margin
+         "series": "pad=1964:1494:80:70:color=0x161616,"}
 NAME = sys.argv[3] if len(sys.argv) > 3 else "demo"
 SEGMENTS, CROP = RECORDINGS[NAME], CROPS.get(NAME, "")
+# label position as a fraction of the frame: centred on the image, below the app's top bar
+LABEL_X, LABEL_Y = {"series": (0.6, 0.2)}.get(NAME, (0.5, 0.08))
 
 parts, labels = [], []
 for i, (a, b, sp) in enumerate(SEGMENTS):
@@ -43,7 +55,7 @@ for i, (a, b, sp) in enumerate(SEGMENTS):
     if sp == "wait":
         f += f",setpts=PTS*{WAIT_S / (b - a):.5f}"
         f += (f",drawtext=fontfile='{FONT}':text='sped up · {round(b - a)} s':fontsize=44:fontcolor=white"
-              f":box=1:boxcolor=0x0d0d0dcc:boxborderw=18:x=(w-tw)/2:y=h*0.08")
+              f":box=1:boxcolor=0x0d0d0dcc:boxborderw=18:x=w*{LABEL_X}-tw/2:y=h*{LABEL_Y}")
     else:
         f += f",setpts=PTS/{sp}"
     if i == len(SEGMENTS) - 1:

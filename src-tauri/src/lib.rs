@@ -244,6 +244,21 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(shared.clone())
+        .setup(|app| {
+            // The window starts hidden and the page shows it once its splash is painted
+            // (public/boot.js). If the page never loads (dev server down, broken web view),
+            // show it anyway so there is something to close or read.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_secs(4));
+                if let Some(w) = handle.get_webview_window("main")
+                    && !w.is_visible().unwrap_or(true)
+                {
+                    let _ = w.show();
+                }
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![connect, copy_image, read_clipboard_image, reveal, open_folder, open_link, data_folder])
         .build(tauri::generate_context!())
         .expect("error while building Kokon");

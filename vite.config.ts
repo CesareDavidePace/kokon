@@ -5,7 +5,8 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   clearScreen: false,
-  server: { port: 1420, strictPort: true, host: "127.0.0.1" },
+  // warmup: compile the app as soon as the dev server starts, not when the window asks for it.
+  server: { port: 1420, strictPort: true, host: "127.0.0.1", warmup: { clientFiles: ["./src/main.tsx"] } },
   build: { target: "es2022", sourcemap: false, chunkSizeWarningLimit: 1500 },
   test: { environment: "jsdom" },
 });

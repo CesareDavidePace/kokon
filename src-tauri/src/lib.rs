@@ -267,6 +267,9 @@ fn release(shared: &Shared) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Feature unification gives every reqwest client here rustls without a provider (from
+    // tauri-plugin-updater); building one before a provider is installed panics.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let shared = Arc::new(Shared::default());
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {

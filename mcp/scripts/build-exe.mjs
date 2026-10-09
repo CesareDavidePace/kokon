@@ -1,4 +1,4 @@
-// Builds build/kokon-mcp.exe: the bundled server injected into a copy of node.exe
+// Builds build/kokon-mcp(.exe): the bundled server injected into a copy of the Node binary
 // (Node "single executable application"). No separate Node install is needed to run it.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -16,10 +16,21 @@ fs.writeFileSync(
   JSON.stringify({ main: "build/kokon-mcp.cjs", output: "build/sea-prep.blob", disableExperimentalSEAWarning: true, useSnapshot: false, useCodeCache: true }),
 );
 run(process.execPath, ["--experimental-sea-config", "build/sea-config.json"]);
-const exe = path.join(build, "kokon-mcp.exe");
+const mac = process.platform === "darwin";
+const exe = path.join(build, mac ? "kokon-mcp" : "kokon-mcp.exe");
 fs.copyFileSync(process.execPath, exe);
-run("npx", ["postject", exe, "NODE_SEA_BLOB", path.join(build, "sea-prep.blob"), "--sentinel-fuse", "NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2"]);
+fs.chmodSync(exe, 0o755);
+const fuse = ["--sentinel-fuse", "NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2"];
+if (mac) {
+  // macOS (Node SEA docs): drop Node's signature, inject into the NODE_SEA segment, re-sign ad hoc.
+  run("codesign", ["--remove-signature", exe]);
+  run("npx", ["postject", exe, "NODE_SEA_BLOB", path.join(build, "sea-prep.blob"), ...fuse, "--macho-segment-name", "NODE_SEA"]);
+  run("codesign", ["--sign", "-", exe]);
+} else {
+  run("npx", ["postject", exe, "NODE_SEA_BLOB", path.join(build, "sea-prep.blob"), ...fuse]);
+}
 
-const sidecar = path.resolve(root, "..", "src-tauri", "binaries", "kokon-mcp-x86_64-pc-windows-msvc.exe");
+const triple = mac ? "aarch64-apple-darwin" : "x86_64-pc-windows-msvc";
+const sidecar = path.resolve(root, "..", "src-tauri", "binaries", `kokon-mcp-${triple}${mac ? "" : ".exe"}`);
 fs.copyFileSync(exe, sidecar);
 console.log(`built ${exe} (${(fs.statSync(exe).size / 1e6).toFixed(1)} MB) -> ${sidecar}`);

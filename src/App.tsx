@@ -1,5 +1,5 @@
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { EyeOff, PanelLeft, Redo2, Settings, SquarePen, Undo2, X } from "lucide-react";
+import { ArrowDownToLine, EyeOff, PanelLeft, Redo2, Settings, SquarePen, Undo2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, configure } from "./lib/api";
 import { native } from "./lib/native";
@@ -17,6 +17,7 @@ import { Stage } from "./components/Stage";
 import { IconButton } from "./components/ui";
 import { shortcut } from "./lib/platform";
 import { KokonMark, Welcome } from "./components/Welcome";
+import { autoCheckForUpdate, installUpdate } from "./lib/updates";
 
 const IMAGE_EXT = /\.(png|jpe?g|webp|bmp|gif|tiff?|heic|heif)$/i;
 
@@ -96,6 +97,28 @@ function BootSplash() {
   );
 }
 
+/** "Update" pill in the top bar once a newer release is found; one click installs it. */
+function UpdatePill() {
+  const update = useStore((s) => s.update);
+  if (!update) return null;
+  const busy = update.phase !== "available";
+  const click = async () => {
+    const running = Object.values(getState().jobs).some((j) => !["done", "failed", "cancelled"].includes(j.status));
+    const msg = `Install Kokon ${update.version} now? Kokon closes and restarts in a few seconds${running ? "; the images being made now are stopped" : ""}. Your images, settings and models stay.`;
+    if (await native.confirm(update.notes ? `${msg}
+
+What's new:
+${update.notes}` : msg, "Update Kokon")) installUpdate();
+  };
+  const label =
+    update.phase === "downloading" ? `Downloading${update.progress != null ? ` ${Math.round(update.progress * 100)}%` : "…"}` : update.phase === "installing" ? "Installing…" : `Update to ${update.version}`;
+  return (
+    <button className="update-pill" onClick={click} disabled={busy} title={`Kokon ${update.version} is available`}>
+      <ArrowDownToLine size={14} /> {label}
+    </button>
+  );
+}
+
 function PrivateToggle() {
   const on = useStore((s) => s.privateMode);
   const toggle = () => setPrivateMode(!on, () => native.confirm("Turn off private mode? The images made in private mode will be deleted.", "Private mode"));
@@ -171,6 +194,7 @@ export default function App() {
         const welcomeSeen = !!(cfg.ui as Record<string, unknown> | null)?.welcomeSeen;
         setState({ needsSetup: !cfg.setupComplete, ...(welcomeSeen ? {} : { overlay: "welcome" }) });
         setBoot("ok");
+        autoCheckForUpdate();
         // Preload the model so the first generation starts immediately.
         if (cfg.setupComplete && st && st.server.state === "stopped") api.startBackend().then(refreshStatus, () => refreshStatus());
       } catch (e) {
@@ -297,6 +321,7 @@ export default function App() {
           </div>
           <div className="toolbar">
             {!needsSetup && <HistoryButtons />}
+            <UpdatePill />
             {!needsSetup && <PrivateToggle />}
             <StatusIndicator />
             <IconButton title="Settings" onClick={() => setState({ overlay: "settings" })}>

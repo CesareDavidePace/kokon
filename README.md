@@ -306,9 +306,18 @@ Simple-operation fields: `prompt`, `image` / `images[]`, `mask`, `action`
 
 ## Privacy
 
-Kokon makes network requests **only from the setup screen**: to `github.com` for the
-stable-diffusion.cpp release and to `huggingface.co` for the models. Creating, editing, the
-gallery, the MCP server and the API talk to `127.0.0.1` only. Logs never contain your prompts.
+Kokon makes only two kinds of network request:
+
+- **Setup:** `github.com` for the stable-diffusion.cpp release and `huggingface.co` for the
+  models.
+- **Update check:** at most once a day, the app fetches `latest.json` from this repository's
+  latest GitHub release, a small file with the newest version number. Nothing about you or your
+  images is sent. Turn it off on the welcome screen or in Settings → General. Updates are
+  downloaded only when you click **Update**, and installed only if their signature matches the
+  key built into the app.
+
+Creating, editing, the gallery, the MCP server and the API talk to `127.0.0.1` only. Logs never
+contain your prompts.
 
 You can check this yourself. While you work, watch `Kokon.exe`, `kokon-service.exe` and
 `sd-server.exe` in Resource Monitor (Network tab), or run

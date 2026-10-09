@@ -31,19 +31,41 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "publisher": "Kokon",
     "shortDescription": "Create and edit images by describing them, on your own GPU",
     "longDescription": "Kokon creates and edits images from a sentence, privately on your own GPU, with Qwen-Image 2.1 via stable-diffusion.cpp. Everything runs on this PC.",
     "category": "Graphics and Design",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
-    "externalBin": ["binaries/kokon-service", "binaries/kokon-mcp"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "externalBin": [
+      "binaries/kokon-service",
+      "binaries/kokon-mcp"
+    ],
     "windows": {
       "nsis": {
         "installerIcon": "icons/icon.ico",
         "uninstallerIcon": "icons/icon.ico",
         "installMode": "currentUser",
         "displayLanguageSelector": false
+      }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEZEOTYyMjkyRkI1MTQzREQKUldUZFExSDdraUtXL2ZXWWcrNnhNVGZuTnp2UFFrRk1XMFR0em1IWURmcmVEUlJ2bnVscDBCaC8K",
+      "endpoints": [
+        "https://github.com/GabrieleLozupone/kokon/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

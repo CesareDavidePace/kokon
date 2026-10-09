@@ -30,12 +30,20 @@ cp target/release/kokon-service "src-tauri/binaries/kokon-service-$TRIPLE"
 echo "4/5 kokon-mcp"
 (cd mcp && npm run build:exe)
 
-echo "5/5 Kokon.app + disk image"
+echo "5/5 Kokon.app + disk image (signed for the in-app updater)"
+# Updates are verified against the public key in tauri.conf.json. Copy the private key from
+# the PC that made it (~/.tauri/kokon-updater.key) once; see docs/releasing.md.
+if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+  KEY="$HOME/.tauri/kokon-updater.key"
+  [ -f "$KEY" ] || { echo "✗ Updater signing key not found: $KEY (see docs/releasing.md)"; exit 1; }
+  export TAURI_SIGNING_PRIVATE_KEY="$KEY"
+fi
 npx tauri build --target "$TRIPLE"
 
 DMG="$(ls -t target/$TRIPLE/release/bundle/dmg/*.dmg | head -1)"
 mkdir -p dist-release
 cp "$DMG" dist-release/
+node scripts/release/updater.mjs fragment darwin-aarch64 "target/$TRIPLE/release/bundle/macos/Kokon.app.tar.gz"
 codesign --verify --deep --strict "target/$TRIPLE/release/bundle/macos/Kokon.app" && echo "✓ signature (ad hoc) valid"
 ls -lh dist-release/*.dmg
 echo "Disk image: $(pwd)/dist-release/$(basename "$DMG")"

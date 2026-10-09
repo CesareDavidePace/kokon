@@ -41,7 +41,17 @@ export interface Toast {
   kind: "error" | "info";
 }
 
+/** A newer Kokon release found by the update check (`lib/updates.ts`). */
+export interface UpdateInfo {
+  version: string;
+  notes: string;
+  phase: "available" | "downloading" | "installing";
+  /** 0..1 while downloading, when the size is known. */
+  progress: number | null;
+}
+
 export interface State {
+  update: UpdateInfo | null;
   connected: boolean;
   connectError: string | null;
   server: { state: ServerState; owned: boolean; error: AppErrorBody | null };
@@ -249,6 +259,7 @@ const loadSidebar = () => {
 };
 
 let state: State = {
+  update: null,
   connected: false,
   connectError: null,
   server: { state: "stopped", owned: false, error: null },

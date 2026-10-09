@@ -3,10 +3,11 @@ import { useEffect, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { api } from "../lib/api";
 import { native } from "../lib/native";
-import { refreshStatus, setState, toastError, toastInfo } from "../lib/store";
+import { getState, refreshStatus, setState, toastError, toastInfo } from "../lib/store";
 import { UPSCALERS } from "../lib/logic";
 import type { AppConfig, Check, ModelProfile, RefineMode, SetupReport, TextEncoderPlacement } from "../lib/types";
 import { IconButton, Seg, Switch } from "./ui";
+import { autoCheckEnabled, checkForUpdate } from "../lib/updates";
 
 type Tab = "general" | "models" | "performance" | "diagnostics";
 
@@ -111,6 +112,7 @@ export function Settings() {
   const profile = cfg.profiles.find((p) => p.id === cfg.activeProfile) ?? cfg.profiles[0];
   // Apple Silicon (Metal) has unified memory: no VRAM, device picker or CUDA-only options.
   const mac = cfg.gpuBackend === "metal";
+  const appVersion = getState().status?.service.version ?? "";
   const set = (patch: Partial<AppConfig>) => {
     setCfg({ ...cfg, ...patch });
     setDirty(true);
@@ -173,6 +175,18 @@ export function Settings() {
                 <input className="input" type="number" min={0} max={1440} style={{ width: 90 }} value={cfg.idleUnloadMinutes} onChange={(e) => set({ idleUnloadMinutes: Math.max(0, Number(e.target.value) || 0) })} />
               </label>
               <span className="muted" style={{ marginTop: -10 }}>Applies to MCP and API use without the desktop window. 0 keeps it loaded.</span>
+              <div className="field-row">
+                <span>Check for updates once a day</span>
+                <Switch on={autoCheckEnabled(cfg.ui)} onChange={(v) => set({ ui: { ...cfg.ui, updateCheck: v } })} />
+              </div>
+              <div className="field-row" style={{ marginTop: -10 }}>
+                <span className="muted">
+                  Kokon {appVersion} · only asks GitHub for the latest version number; nothing about you or your images is sent. Updates install when you click them.
+                </span>
+                <button className="btn" onClick={() => checkForUpdate(true)}>
+                  Check now
+                </button>
+              </div>
               <div className="field-row">
                 <span>Welcome screen: what Kokon is and how it keeps your work private</span>
                 <button className="btn" onClick={() => setState({ overlay: "welcome" })}>

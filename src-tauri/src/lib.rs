@@ -92,12 +92,32 @@ fn spawn_service() -> Result<(), String> {
     Ok(())
 }
 
+/// Asks the service to exit (it also stops sd-server unless kept loaded) and waits until it
+/// no longer answers, so an update can replace its executable.
+fn stop_service(info: &ServiceInfo) -> bool {
+    let _ = http().post(format!("http://127.0.0.1:{}/api/v1/shutdown", info.port)).bearer_auth(&info.token).send();
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(15) {
+        if !ping(info.port) {
+            // The port closes before the process ends; give it a moment to release its files.
+            std::thread::sleep(Duration::from_millis(800));
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    false
+}
+
 fn ensure_service(shared: &Shared) -> Result<ServiceInfo, String> {
     let _g = shared.connect_lock.lock().unwrap();
     if let Some(i) = read_info()
         && ping(i.port)
     {
-        return Ok(i);
+        if i.version == env!("CARGO_PKG_VERSION") {
+            return Ok(i);
+        }
+        // Left running by the previous version (e.g. just updated): replace it.
+        stop_service(&i);
     }
     spawn_service()?;
     let start = Instant::now();
@@ -187,6 +207,21 @@ async fn read_clipboard_image(app: tauri::AppHandle) -> Result<tauri::ipc::Respo
     Ok(tauri::ipc::Response::new(png))
 }
 
+/// Before installing an update: stop the service so the installer can replace it.
+#[tauri::command]
+async fn prepare_update(state: tauri::State<'_, Arc<Shared>>) -> Result<(), String> {
+    let shared = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let info = shared.info.lock().unwrap().clone().or_else(read_info);
+        match info {
+            Some(i) if ping(i.port) && !stop_service(&i) => Err("The Kokon service did not stop. Close Kokon and try again.".to_string()),
+            _ => Ok(()),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn reveal(path: String) -> Result<(), String> {
     tauri_plugin_opener::reveal_item_in_dir(&path).map_err(|e| e.to_string())
@@ -243,6 +278,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(shared.clone())
         .setup(|app| {
             // The window starts hidden and the page shows it once its splash is painted
@@ -259,7 +296,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![connect, copy_image, read_clipboard_image, reveal, open_folder, open_link, data_folder])
+        .invoke_handler(tauri::generate_handler![connect, copy_image, read_clipboard_image, reveal, open_folder, open_link, data_folder, prepare_update])
         .build(tauri::generate_context!())
         .expect("error while building Kokon");
     app.run(move |_handle, event| {

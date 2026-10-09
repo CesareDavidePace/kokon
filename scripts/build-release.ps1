@@ -27,7 +27,14 @@ Write-Host "3/5 kokon-mcp.exe" -ForegroundColor Cyan
 Push-Location mcp; npm run build:exe; $rc = $LASTEXITCODE; Pop-Location
 if ($rc) { throw "MCP build failed" }
 
-Write-Host "4/5 Desktop app + NSIS installer" -ForegroundColor Cyan
+Write-Host "4/5 Desktop app + NSIS installer (signed for the in-app updater)" -ForegroundColor Cyan
+# Updates are verified against the public key in tauri.conf.json; the private key never
+# leaves this machine (back it up: without it, installed copies cannot be updated).
+if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
+    $key = Join-Path $env:USERPROFILE ".tauri\kokon-updater.key"
+    if (-not (Test-Path $key)) { throw "Updater signing key not found: $key (see docs/releasing.md)" }
+    $env:TAURI_SIGNING_PRIVATE_KEY = $key
+}
 npx tauri build
 if ($LASTEXITCODE) { throw "tauri build failed" }
 
@@ -39,5 +46,7 @@ Copy-Item $exe.FullName "dist-release\Kokon.exe" -Force
 Copy-Item $setup.FullName "dist-release\Kokon Setup.exe" -Force
 Copy-Item target\release\kokon-service.exe dist-release\ -Force
 Copy-Item mcp\build\kokon-mcp.exe dist-release\ -Force
+node scripts\release\updater.mjs fragment windows-x86_64 $setup.FullName
+if ($LASTEXITCODE) { throw "updater entry failed" }
 Get-ChildItem dist-release | Format-Table Name, @{n = 'MB'; e = { [math]::Round($_.Length / 1MB, 1) } } -AutoSize
 Write-Host "Installer: $root\dist-release\Kokon Setup.exe" -ForegroundColor Green

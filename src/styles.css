@@ -333,6 +333,9 @@ pre.diag { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font
 .spin { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .private-pill { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 999px; border: 0; background: var(--invert-bg); color: var(--invert-text); font: inherit; font-size: 13px; cursor: pointer; }
+.update-pill { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; font-size: 13px; cursor: pointer; font-variant-numeric: tabular-nums; }
+.update-pill:hover:not(:disabled) { background: var(--surface-2); }
+.update-pill:disabled { cursor: default; color: var(--text-2); }
 .setup { flex: 1; display: flex; justify-content: center; overflow-y: auto; padding: 40px 24px 0; }
 /* Bottom room inside the scroller (padding on the scroller itself is dropped by Chromium). */
 .setup-inner { width: 100%; max-width: 640px; display: flex; flex-direction: column; gap: 20px; padding-bottom: 72px; height: fit-content; }
@@ -490,3 +493,5 @@ pre.diag { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font
 .boot-text.on { opacity: 1; }
 @keyframes boot-breathe { 50% { opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) { .boot-splash .kokon-mark { animation: none; } }
+.welcome-check { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); cursor: pointer; }
+.welcome-check input { width: 15px; height: 15px; accent-color: var(--text); margin: 0; }

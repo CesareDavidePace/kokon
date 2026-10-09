@@ -11,6 +11,7 @@ import restyle from "../assets/showcase/restyle.jpg";
 import text from "../assets/showcase/text.jpg";
 import { api } from "../lib/api";
 import { isMac } from "../lib/platform";
+import { autoCheckEnabled } from "../lib/updates";
 import { setState, toastError, useStore } from "../lib/store";
 
 const machine = isMac ? "Mac" : "PC";
@@ -21,12 +22,13 @@ export function KokonMark({ size = 40 }: { size?: number }) {
   return <span className="kokon-mark" aria-hidden dangerouslySetInnerHTML={{ __html: svg }} />;
 }
 
-/** Remembers that the welcome screen was seen (in the app config, so it survives updates). */
-async function markSeen() {
+/** Remembers that the welcome screen was seen (in the app config, so it survives updates)
+ * and the update-check choice made on it. */
+async function markSeen(updateCheck: boolean) {
   try {
     const cfg = await api.config();
     const ui = (cfg.ui ?? {}) as Record<string, unknown>;
-    if (!ui.welcomeSeen) await api.saveConfig({ ...cfg, ui: { ...ui, welcomeSeen: true } });
+    if (!ui.welcomeSeen || autoCheckEnabled(ui) !== updateCheck) await api.saveConfig({ ...cfg, ui: { ...ui, welcomeSeen: true, updateCheck } });
   } catch (e) {
     toastError(e);
   }
@@ -34,7 +36,7 @@ async function markSeen() {
 
 const PROMISES = [
   { icon: Cpu, title: `Made on your ${machine}`, text: "Your graphics chip creates every image. Photos and prompts never leave this computer." },
-  { icon: CloudOff, title: "Online only once", text: "Setup downloads the model. After that Kokon works without an internet connection." },
+  { icon: CloudOff, title: "Online only when needed", text: "To download the model, and once a day to check for a new Kokon version. Your images and prompts are never sent." },
   { icon: Unlimited, title: "No limits", text: "No account, no credits, no subscription, no queue. Create as much as you like." },
   { icon: EyeOff, title: "Private mode", text: "Click the eye icon and nothing is kept: no gallery, no files, no history." },
 ];
@@ -42,9 +44,15 @@ const PROMISES = [
 /** First launch (and Settings → General → Show welcome screen): what Kokon is and why it is private. */
 export function Welcome() {
   const needsSetup = useStore((s) => s.needsSetup);
+  const [updateCheck, setUpdateCheck] = useState(true);
+  useEffect(() => {
+    api.config().then((c) => setUpdateCheck(autoCheckEnabled(c.ui)), () => {});
+  }, []);
+  const choice = useRef(updateCheck);
+  choice.current = updateCheck;
   const close = () => {
     setState({ overlay: null });
-    markSeen();
+    markSeen(choice.current);
   };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
@@ -69,6 +77,10 @@ export function Welcome() {
             </div>
           ))}
         </div>
+        <label className="welcome-check">
+          <input type="checkbox" checked={updateCheck} onChange={(e) => setUpdateCheck(e.target.checked)} />
+          Check for Kokon updates once a day
+        </label>
         <button className="btn primary big" onClick={close}>
           {needsSetup ? "Set up Kokon" : "Start creating"}
         </button>

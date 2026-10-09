@@ -319,7 +319,7 @@ export function Composer() {
   const hintTitle = plan
     ? [
         plan.working.width !== plan.output.width || plan.working.height !== plan.output.height ? `Works at ${plan.working.width}×${plan.working.height}` : "",
-        plan.optimized_for_vram ? "Optimized for VRAM" : "",
+        plan.optimized_for_vram ? "Optimized for GPU memory" : "",
         ...plan.notes,
       ]
         .filter(Boolean)

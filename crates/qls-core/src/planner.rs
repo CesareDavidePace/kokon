@@ -309,7 +309,7 @@ pub struct Plan {
     pub quality: Quality,
     pub resolution: ResolutionMode,
     pub aspect_label: String,
-    /// User-visible notes such as "Optimized for available VRAM".
+    /// User-visible notes such as "Optimized for available GPU memory".
     pub notes: Vec<String>,
     pub optimized_for_vram: bool,
     pub estimated_seconds: f32,
@@ -710,7 +710,7 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
         let allowed = (budget_area as f64 / (1.0 + n_refs)) as u64;
         if wanted > allowed {
             optimized = true;
-            notes.push("Resolution reduced to fit available VRAM.".into());
+            notes.push("Resolution reduced to fit available GPU memory.".into());
             allowed
         } else {
             wanted
@@ -728,7 +728,7 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
             let mid = (lo + hi) / 2;
             if fits(mid) { lo = mid } else { hi = mid }
         }
-        notes.push("Resolution reduced to fit available VRAM.".into());
+        notes.push("Resolution reduced to fit available GPU memory.".into());
         lo
     };
 
@@ -990,6 +990,12 @@ mod tests {
         assert_eq!(recommended_preset(Some(mac(48))).id, "24gb");
         assert_eq!(recommended_preset(Some(mac(64))).id, "32gb");
         assert_eq!(unified_memory_planning_mib(4096, te), 0, "never underflows");
+        // The Mac names of the presets match what each memory size gets.
+        for (gb, id) in [(16, "12gb"), (24, "12gb"), (32, "16gb"), (36, "16gb"), (48, "24gb"), (64, "32gb"), (128, "32gb")] {
+            let p = recommended_preset(Some(mac(gb)));
+            assert_eq!(p.id, id, "{gb} GB Mac");
+            assert!(p.unified_label.contains(&gb.to_string()) || (gb > 64 && p.unified_label.contains('+')), "{gb} GB Mac labelled {}", p.unified_label);
+        }
     }
 
     use super::*;

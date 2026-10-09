@@ -109,6 +109,8 @@ export function Settings() {
 
   if (!cfg) return null;
   const profile = cfg.profiles.find((p) => p.id === cfg.activeProfile) ?? cfg.profiles[0];
+  // Apple Silicon (Metal) has unified memory: no VRAM, device picker or CUDA-only options.
+  const mac = cfg.gpuBackend === "metal";
   const set = (patch: Partial<AppConfig>) => {
     setCfg({ ...cfg, ...patch });
     setDirty(true);
@@ -165,7 +167,7 @@ export function Settings() {
                 <span>Keep inference server running after closing the app</span>
                 <Switch on={cfg.keepServerRunning} onChange={(v) => set({ keepServerRunning: v })} />
               </div>
-              <span className="muted" style={{ marginTop: -10 }}>Keeps the model in VRAM so the next start is instant.</span>
+              <span className="muted" style={{ marginTop: -10 }}>Keeps the model loaded so the next start is instant.</span>
               <label className="field-row">
                 <span>Unload the model after idle minutes (app closed)</span>
                 <input className="input" type="number" min={0} max={1440} style={{ width: 90 }} value={cfg.idleUnloadMinutes} onChange={(e) => set({ idleUnloadMinutes: Math.max(0, Number(e.target.value) || 0) })} />
@@ -224,11 +226,38 @@ export function Settings() {
             </>
           )}
 
-          {tab === "performance" && (
+          {tab === "performance" && mac && (
             <>
               <div className="field">
                 <span>Engine</span>
-                <span>{{ cuda: "CUDA (NVIDIA)", vulkan: "Vulkan", metal: "Metal (Apple Silicon, beta)" }[cfg.gpuBackend]}</span>
+                <span>Metal (Apple Silicon GPU, beta)</span>
+              </div>
+              <div className="field">
+                <span>Model memory</span>
+                <Seg<TextEncoderPlacement>
+                  value={cfg.textEncoderPlacement === "disk" ? "disk" : "gpu"}
+                  options={[
+                    { value: "gpu", label: "Keep loaded" },
+                    { value: "disk", label: "Load when needed" },
+                  ]}
+                  onChange={(v) => set({ textEncoderPlacement: v })}
+                />
+                <span className="muted">
+                  Keep loaded: every model stays in memory, fastest between steps; needs 24 GB or more. Load when needed: each model (text encoder, image model, decoder) is loaded from the SSD when it runs and released after, so the image model has room to work on 16 GB Macs. It adds a few seconds per image. macOS cannot swap memory the GPU is using, so this is what makes 16 GB work.
+                </span>
+              </div>
+              <label className="field-row">
+                <span>Memory kept free for macOS (GiB)</span>
+                <input className="input" type="number" min={0} max={16} step={0.5} style={{ width: 90 }} value={cfg.vramReserveGib} onChange={(e) => set({ vramReserveGib: Math.max(0, Number(e.target.value) || 0) })} />
+              </label>
+            </>
+          )}
+
+          {tab === "performance" && !mac && (
+            <>
+              <div className="field">
+                <span>Engine</span>
+                <span>{cfg.gpuBackend === "vulkan" ? "Vulkan" : "CUDA (NVIDIA)"}</span>
                 <span className="muted">To switch engine, use Models → Set up models…: it downloads the other engine if needed. Both can stay installed.</span>
               </div>
               <label className="field-row">
@@ -251,26 +280,32 @@ export function Settings() {
                     { value: "gpu", label: "GPU" },
                     { value: "cpu", label: "CPU" },
                     { value: "auto", label: "Auto" },
-                    { value: "disk", label: "Disk" },
                   ]}
                   onChange={(v) => set({ textEncoderPlacement: v })}
                 />
                 <span className="muted">
-                  RAM (recommended): weights in system memory, computed on the GPU. CPU uses the least VRAM but makes image editing several times slower. Disk reads all weights from disk when needed: least memory, slower (for 16 GB Macs). On a Mac, RAM and GPU are the same memory.
+                  RAM (recommended): weights in system memory, computed on the GPU. CPU uses the least VRAM but makes image editing several times slower.
                 </span>
               </div>
               <label className="field-row">
                 <span>VRAM reserve (GiB)</span>
                 <input className="input" type="number" min={0} max={16} step={0.5} style={{ width: 90 }} value={cfg.vramReserveGib} onChange={(e) => set({ vramReserveGib: Math.max(0, Number(e.target.value) || 0) })} />
               </label>
+            </>
+          )}
+
+          {tab === "performance" && (
+            <>
               <div className="field-row">
                 <span>Flash attention</span>
                 <Switch on={cfg.flashAttention} onChange={(v) => set({ flashAttention: v })} />
               </div>
-              <div className="field-row">
-                <span>SageAttention (faster sampling)</span>
-                <Switch on={cfg.sageAttention && cfg.gpuBackend === "cuda"} onChange={(v) => set({ sageAttention: v })} disabled={cfg.gpuBackend !== "cuda"} />
-              </div>
+              {cfg.gpuBackend === "cuda" && (
+                <div className="field-row">
+                  <span>SageAttention (faster sampling)</span>
+                  <Switch on={cfg.sageAttention} onChange={(v) => set({ sageAttention: v })} />
+                </div>
+              )}
               <label className="field-row">
                 <span>VAE tile size (px, 0 = off)</span>
                 <input className="input" type="number" min={0} max={2048} step={128} style={{ width: 90 }} value={cfg.vaeTileSize} onChange={(e) => set({ vaeTileSize: Math.max(0, Math.round(Number(e.target.value) || 0)) })} />
@@ -288,13 +323,15 @@ export function Settings() {
                   onChange={(v) => set({ prefixCacheType: v })}
                 />
                 <span className="muted">
-                  Reuses the reference image and prompt across steps so each step only computes the new image. 8-bit (recommended) fits a 2 MP edit on 16 GB; FP16 is more exact but needs twice the memory; Auto uses FP32 when SageAttention is on and usually does not fit.
+                  Reuses the reference image and prompt across steps so each step only computes the new image. 8-bit (recommended) uses the least memory; FP16 is more exact but needs twice the memory{cfg.gpuBackend === "cuda" ? "; Auto uses FP32 when SageAttention is on and usually does not fit" : ""}.
                 </span>
               </div>
-              <div className="field-row">
-                <span>Load all weights at startup</span>
-                <Switch on={cfg.eagerLoad} onChange={(v) => set({ eagerLoad: v })} />
-              </div>
+              {cfg.textEncoderPlacement !== "disk" && (
+                <div className="field-row">
+                  <span>Load all weights at startup</span>
+                  <Switch on={cfg.eagerLoad} onChange={(v) => set({ eagerLoad: v })} />
+                </div>
+              )}
               <div className="field">
                 <span>Detailed upscale</span>
                 <Seg<RefineMode>
@@ -313,13 +350,17 @@ export function Settings() {
                 <span>ESRGAN tile size (px, 0 = default 128)</span>
                 <input className="input" type="number" min={0} max={1024} step={64} style={{ width: 90 }} value={cfg.upscaleTileSize} onChange={(e) => set({ upscaleTileSize: Math.max(0, Math.round(Number(e.target.value) || 0)) })} />
               </label>
-              <label className="field-row">
-                <span>Simulated VRAM for testing (MiB, 0 = detect)</span>
-                <input className="input" type="number" min={0} max={196608} step={1024} style={{ width: 100 }} value={cfg.vramOverrideMib} onChange={(e) => set({ vramOverrideMib: Math.max(0, Math.round(Number(e.target.value) || 0)) })} />
-              </label>
-              <span className="muted" style={{ marginTop: -10 }}>
-                Plans image sizes as if the card had this much memory (e.g. 12288 to test a 12 GB card). Combine with the VRAM ballast script in scripts/dev so the memory is really unavailable.
-              </span>
+              {!mac && (
+                <>
+                  <label className="field-row">
+                    <span>Simulated VRAM for testing (MiB, 0 = detect)</span>
+                    <input className="input" type="number" min={0} max={196608} step={1024} style={{ width: 100 }} value={cfg.vramOverrideMib} onChange={(e) => set({ vramOverrideMib: Math.max(0, Math.round(Number(e.target.value) || 0)) })} />
+                  </label>
+                  <span className="muted" style={{ marginTop: -10 }}>
+                    Plans image sizes as if the card had this much memory (e.g. 12288 to test a 12 GB card). Combine with the VRAM ballast script in scripts/dev so the memory is really unavailable.
+                  </span>
+                </>
+              )}
               <label className="field-row">
                 <span>Inference server port</span>
                 <input className="input" type="number" min={1024} max={65535} style={{ width: 100 }} value={cfg.serverPort} onChange={(e) => set({ serverPort: Number(e.target.value) || cfg.serverPort })} />

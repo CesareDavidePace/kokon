@@ -241,12 +241,17 @@ export function Setup() {
                   </div>
                 )}
                 <div className="field">
-                  <span>Preset for your graphics card</span>
+                  <span>{hw.gpu?.unified ? "Preset for your Mac's memory" : "Preset for your graphics card"}</span>
                   <Seg<string> value={preset ?? hw.recommended} options={hw.presets.map((p) => ({ value: p.id, label: p.label }))} onChange={setPreset} />
                   {chosen && (
                     <span className="muted">
                       {chosen.summary}.{chosen.id === hw.recommended ? " Recommended for your GPU." : ""}
-                      {chosen.verified ? "" : " Not yet tested on a real card of this size."}
+                      {hw.gpu?.unified ? " Not yet tested on a Mac." : chosen.verified ? "" : " Not yet tested on a real card of this size."}
+                    </span>
+                  )}
+                  {hw.gpu?.unified && (
+                    <span className="muted">
+                      Presets are named by total unified memory. macOS lets the graphics part use about two thirds of it, and the text encoder shares the same memory, so the image model gets less than the number on your Mac: a 16 GB Mac has room for the lightest preset only. Pick a larger one only on a Mac with that much memory.
                     </span>
                   )}
                 </div>

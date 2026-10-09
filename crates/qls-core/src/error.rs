@@ -120,7 +120,7 @@ pub fn translate_generation_failure(backend_message: &str, log_tail: &str, size:
     let combined = format!("{backend_message}\n{log_tail}");
     let lc = combined.to_ascii_lowercase();
     if looks_like_oom(&combined) {
-        let mut e = AppError::new(ErrorCode::OutOfMemory, format!("Not enough VRAM for {}×{}.", size.0, size.1));
+        let mut e = AppError::new(ErrorCode::OutOfMemory, format!("Not enough GPU memory for {}×{}.", size.0, size.1));
         e = match smaller {
             Some((w, h)) => e.suggest(format!("Try {w}×{h}, fewer reference images, or the Fast preset.")),
             None => e.suggest("Try a smaller resolution or fewer reference images."),
@@ -150,8 +150,8 @@ pub fn translate_startup_failure(log_tail: &str) -> AppError {
             .detail(log_tail.to_string());
     }
     if looks_like_oom(log_tail) {
-        return AppError::new(ErrorCode::OutOfMemory, "Not enough VRAM to load the model.")
-            .suggest("Close other GPU applications, or store the text encoder in RAM (Settings).")
+        return AppError::new(ErrorCode::OutOfMemory, "Not enough GPU memory to load the model.")
+            .suggest("Close other apps that use the GPU, or lower the memory use in Settings → Performance.")
             .detail(log_tail.to_string());
     }
     if lc.contains("address already in use") || lc.contains("bind") && lc.contains("fail") {
@@ -182,7 +182,7 @@ mod tests {
     fn oom_is_translated_with_suggestion() {
         let e = translate_generation_failure("generate_image returned empty results", "[ERROR] cudaMalloc failed: out of memory", (2048, 2048), Some((1536, 1536)));
         assert_eq!(e.code, ErrorCode::OutOfMemory);
-        assert_eq!(e.message, "Not enough VRAM for 2048×2048.");
+        assert_eq!(e.message, "Not enough GPU memory for 2048×2048.");
         assert!(e.suggestion.unwrap().contains("1536×1536"));
         assert!(e.detail.unwrap().contains("cudaMalloc"));
     }

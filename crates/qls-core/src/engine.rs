@@ -842,9 +842,9 @@ impl Engine {
                 };
                 j.request.width = None;
                 j.request.height = None;
-                j.view.notes.push("Ran out of VRAM; retrying at a lower resolution.".into());
+                j.view.notes.push("Ran out of GPU memory; retrying at a lower resolution.".into());
             } else {
-                j.view.notes.push("Ran out of VRAM; retrying with memory optimization.".into());
+                j.view.notes.push("Ran out of GPU memory; retrying with memory optimization.".into());
             }
             j.view.status = JobStatus::Queued;
             j.view.stage = None;

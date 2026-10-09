@@ -234,6 +234,11 @@ pub struct Preset {
     pub label: &'static str,
     /// Smallest reported VRAM (MiB) this preset is recommended for.
     pub min_vram_mib: u64,
+    /// Name on a Mac: the unified memory sizes it is chosen for (through
+    /// `planner::unified_memory_planning_mib`), since "12 GB" would read as RAM there.
+    pub unified_label: &'static str,
+    /// `summary` for a Mac (no "system RAM": it is the same memory).
+    pub unified_summary: &'static str,
     pub diffusion: Download,
     pub text_encoder: Download,
     pub text_encoder_placement: TextEncoderPlacement,
@@ -248,6 +253,8 @@ pub const PRESETS: &[Preset] = &[
     Preset {
         id: "12gb",
         label: "12 GB",
+        unified_label: "16–24 GB Mac",
+        unified_summary: "4-bit image model and text encoder; images of about 1–1.5 megapixels",
         min_vram_mib: 0,
         diffusion: DIFFUSION_Q4_K_M,
         text_encoder: TEXT_ENCODER_Q4_K_M,
@@ -258,6 +265,8 @@ pub const PRESETS: &[Preset] = &[
     Preset {
         id: "16gb",
         label: "16 GB",
+        unified_label: "32–36 GB Mac",
+        unified_summary: "4-bit image model and text encoder; native 2K for Quality",
         min_vram_mib: 14 * 1024,
         diffusion: DIFFUSION_Q4_K_M,
         text_encoder: TEXT_ENCODER_Q4_K_M,
@@ -268,6 +277,8 @@ pub const PRESETS: &[Preset] = &[
     Preset {
         id: "24gb",
         label: "24 GB",
+        unified_label: "48 GB Mac",
+        unified_summary: "8-bit image model (closest to the original); larger edits fit",
         min_vram_mib: 20 * 1024,
         diffusion: DIFFUSION_Q8_0,
         text_encoder: TEXT_ENCODER_Q4_K_M,
@@ -278,6 +289,8 @@ pub const PRESETS: &[Preset] = &[
     Preset {
         id: "32gb",
         label: "32 GB+",
+        unified_label: "64 GB+ Mac",
+        unified_summary: "8-bit image model and 8-bit text encoder",
         min_vram_mib: 28 * 1024,
         diffusion: DIFFUSION_Q8_0,
         text_encoder: TEXT_ENCODER_Q8_0,

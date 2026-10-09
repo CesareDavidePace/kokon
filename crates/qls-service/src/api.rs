@@ -225,13 +225,14 @@ async fn setup_hardware(State(s): St, Query(q): Query<HardwareQ>) -> ApiResult<J
         let vendor = gpu.as_ref().map(|g| g.vendor.clone());
         let recommended_backend = vendor.as_deref().map(GpuBackend::for_vendor).unwrap_or_default();
         let backend = q.backend.unwrap_or(if cfg.setup_complete { cfg.gpu_backend } else { recommended_backend });
+        let unified = gpu.as_ref().is_some_and(|g| g.unified);
         let presets: Vec<Value> = catalog::PRESETS
             .iter()
             .map(|p| {
                 let files = catalog::downloads_for(p, backend, true);
                 let (download, disk) = installer::space_needed(&dir, &files);
                 json!({
-                    "id": p.id, "label": p.label, "summary": p.summary, "verified": p.verified, "min_vram_mib": p.min_vram_mib,
+                    "id": p.id, "label": if unified { p.unified_label } else { p.label }, "summary": if unified { p.unified_summary } else { p.summary }, "verified": p.verified, "min_vram_mib": p.min_vram_mib,
                     "files": installer::preview(&dir, &files), "download_bytes": download, "disk_bytes": disk,
                 })
             })

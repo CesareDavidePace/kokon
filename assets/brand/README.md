@@ -24,6 +24,7 @@ The app UI itself is monochrome (see `src/styles.css`).
 | --- | --- | --- |
 | `icon/kokon-icon*` | light squircle tile with the black mark | desktop app (installed into `src-tauri/icons`) |
 | `icon/kokon-icon-inverse*` | black tile, light mark | website, social avatars, anywhere but the desktop app |
+| `icon/macos/` | macOS icon on Apple's template grid (824 px squircle in 1024, 100 px margin, soft shadow), PNGs + `kokon.icns` | installed into `src-tauri/icons/macos` (used by `tauri.macos.conf.json`, also the Dock icon in dev) |
 | `icon/kokon-app.ico` | Windows icon, 16–256 px each drawn directly | copied to `src-tauri/icons/icon.ico` (app, installer, uninstaller) |
 | `mark/` | the mark alone on transparent, black and light | documents, slides, merch |
 | `logo/` | mark + "Kokon" (Inter SemiBold, outlined) | README header, website header; `-white` on dark backgrounds |

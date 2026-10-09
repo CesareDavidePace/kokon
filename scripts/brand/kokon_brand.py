@@ -11,6 +11,7 @@ app already ships in node_modules/@fontsource-variable/inter).
 from __future__ import annotations
 
 import math
+import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -236,6 +237,30 @@ def icon_layers(v: Variant, size: int, inverse=False, border=True):
     return rl, sl
 
 
+def macos_icon(v: Variant, size: int):
+    """macOS app icon on Apple's template grid: an 824/1024 squircle centred on the canvas
+    (100 px margin), mark at the same share of the tile as the desktop icon, and the soft
+    drop shadow every Dock icon has. Without the margin Kokon looks bigger than its
+    neighbours in the Dock."""
+    k = size / 1024
+    r = 412 * k
+    cx, cy = size / 2, size / 2
+    tile = squircle(cx, cy, r)
+    m = 2 * r * (0.50 / 0.92)  # mark/tile ratio of icon_layers
+    paths, _ = placed(mark(v), (cx - m / 2, cy - m / 2, m, m))
+    # Shadow: the tile shape, 12 px lower, blurred 20 px, 30 % black (at 1024).
+    from PIL import ImageFilter
+    sh = Image.new("L", (size * SS, size * SS), 0)
+    ImageDraw.Draw(sh).polygon([(x * SS, (y + 12 * k) * SS) for x, y in tile.pts], fill=int(255 * 0.30))
+    sh = sh.resize((size, size), Image.LANCZOS)
+    if size >= 64:
+        sh = sh.filter(ImageFilter.GaussianBlur(20 * k))
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    img.putalpha(sh)
+    body = raster((size, size), [([tile], PAPER_RGB + (255,)), (paths, INK_RGB + (255,))])
+    return Image.alpha_composite(img, body)
+
+
 # ---------------------------------------------------------------------------------------
 # Inter (wordmark): instance the variable font the app ships, as TTF for Pillow and paths.
 # ---------------------------------------------------------------------------------------
@@ -451,6 +476,21 @@ def build(v: Variant):
     app_ico = OUT / "icon" / "kokon-app.ico"
     imgs[256].save(app_ico, sizes=[(s, s) for s in ico_sizes], append_images=[imgs[s] for s in ico_sizes if s != 256])
     made.append(app_ico)
+
+    # 7. macOS app icon set (Apple template grid), installed into src-tauri/icons/macos.
+    mac = {sz: macos_icon(v, sz) for sz in (16, 32, 64, 128, 256, 512, 1024)}
+    for sz, img in mac.items():
+        save(img, f"icon/macos/kokon-macos-{sz}.png")
+    icns = OUT / "icon" / "macos" / "kokon.icns"
+    mac[1024].save(icns, format="ICNS", append_images=[mac[s] for s in (16, 32, 64, 128, 256, 512)])
+    made.append(icns)
+    tauri = ROOT / "src-tauri" / "icons" / "macos"
+    tauri.mkdir(parents=True, exist_ok=True)
+    for sz, name in [(32, "32x32.png"), (128, "128x128.png"), (256, "128x128@2x.png"), (512, "icon.png")]:
+        mac[sz].save(tauri / name)
+        made.append(tauri / name)
+    shutil.copyfile(icns, tauri / "icon.icns")
+    made.append(tauri / "icon.icns")
 
     # 6. Social preview (GitHub, links): dark, white logo, one line of copy.
     W_, H_ = 1280, 640

@@ -99,9 +99,19 @@ so nobody with a base chip is surprised.
    - Tauri sidecar names and the `.exe` suffix;
    - data folders (`dirs` already maps them to `~/Library/...`).
 4. Packaging (todo; `tauri.macos.conf.json` prepared): a GitHub Actions `macos-14` (arm64) runner builds the `.dmg`. Without an Apple
-   Developer ID ($99/year) the app is unsigned, so users must right-click → Open the first
-   time. The engine itself, downloaded by the app over HTTP, carries no quarantine flag and
-   runs, because it is ad-hoc signed.
+   Developer ID ($99/year) the app is unsigned. Since macOS 15, right-click → Open no longer
+   bypasses Gatekeeper: users must try to open it, then go to System Settings → Privacy &
+   Security → *Open Anyway*. Signing + notarization removes that step. The signature shows
+   the developer account's **team name** (individual: the holder's name; organization: its
+   legal name), so the account should be one whose name Kokon is meant to carry. The engine
+   itself, downloaded by the app over HTTP, carries no quarantine flag and runs, because it
+   is ad-hoc signed.
+   **Decision 2026-10-09:** the shared Developer Program membership has expired, so the Mac beta
+   ships ad-hoc signed (`signingIdentity: "-"`, free): a DMG with "Open Anyway" instructions
+   (with a screenshot), plus a one-line `curl … | bash` installer (curl downloads carry no
+   quarantine flag, so no warning). Homebrew's official tap requires apps that pass
+   Gatekeeper, so it is not an option. Revisit a personal $99 Developer ID if the Mac
+   audience is large.
 5. Known Metal issue: transparent (RGBA) output decodes as white (#2024, fix not merged).
    Kokon outputs RGB, so only transparency-preserving edits are affected.
 6. Testing: needs a real Apple Silicon Mac with 24 GB+ (GitHub's runners have 7 GB: build

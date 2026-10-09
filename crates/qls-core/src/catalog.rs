@@ -398,7 +398,10 @@ mod tests {
         let mut cfg = crate::config::AppConfig::default();
         cfg.sdcpp_dir = dir.path().to_path_buf();
         cfg.gpu_backend = GpuBackend::Vulkan;
-        assert_eq!(cfg.server_exe(), join_rel(dir.path(), ENGINE_VULKAN.provides[0]), "installer and launcher agree on the path");
+        if cfg!(windows) {
+            // The Vulkan build is a Windows download (sd-server.exe).
+            assert_eq!(cfg.server_exe(), join_rel(dir.path(), ENGINE_VULKAN.provides[0]), "installer and launcher agree on the path");
+        }
         cfg.gpu_backend = GpuBackend::Metal;
         if !cfg!(windows) {
             assert_eq!(cfg.server_exe(), join_rel(dir.path(), ENGINE_METAL.provides[0]));

@@ -1193,6 +1193,7 @@ mod tests {
     fn plan_inputs_follow_config() {
         let dir = tempfile::tempdir().unwrap();
         let mut cfg = AppConfig::default();
+        cfg.gpu_backend = crate::config::GpuBackend::Cuda; // SageAttention is CUDA only
         cfg.upscalers_dir = Some(dir.path().to_path_buf());
         let i = plan_inputs(&cfg, vec![], None, Some(16303));
         assert_eq!(i.upscaler, None, "no model file -> Lanczos");

@@ -722,14 +722,16 @@ mod tests {
         let c = AppConfig::load_from(&p);
         assert_eq!(c.active_profile, "uc", "the user's choice stays active");
         let off = c.profiles.iter().find(|p| p.id == OFFICIAL_PROFILE_ID).unwrap();
-        assert_eq!(off.diffusion_model, PathBuf::from(r"D:\sd\models\qwen21\qwen-image-2.1-Q4_K_M.gguf"));
+        // Catalog paths are joined per component, so the separator is the platform's own.
+        let sd = |f: &str| crate::catalog::join_rel(Path::new(r"D:\sd"), &format!("models/qwen21/{f}"));
+        assert_eq!(off.diffusion_model, sd("qwen-image-2.1-Q4_K_M.gguf"));
         // Saved again, nothing is added twice.
         c.save_to(&p).unwrap();
         assert_eq!(AppConfig::load_from(&p).profiles.len(), 2);
         // A file without profiles uses its own folder and preset.
         std::fs::write(&p, r#"{"sdcppDir":"D:\\sd","hardwarePreset":"24gb"}"#).unwrap();
         let c = AppConfig::load_from(&p);
-        assert_eq!(c.profile().diffusion_model, PathBuf::from(r"D:\sd\models\qwen21\qwen-image-2.1-Q8_0.gguf"));
+        assert_eq!(c.profile().diffusion_model, sd("qwen-image-2.1-Q8_0.gguf"));
     }
 
     #[test]

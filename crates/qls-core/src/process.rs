@@ -729,16 +729,18 @@ mod tests {
     #[test]
     fn default_launch_args() {
         let mut cfg = AppConfig::default();
+        cfg.gpu_backend = crate::config::GpuBackend::Cuda; // the default is Metal on a Mac
         cfg.sdcpp_dir = std::path::PathBuf::from(r"C:\AI\sdcpp");
         cfg.apply_preset(crate::catalog::preset("16gb").unwrap());
         cfg.upscalers_dir = Some(std::env::temp_dir().join("qls-no-upscalers-here"));
         let a = build_server_args(&cfg, cfg.profile());
         let s = a.join(" ");
+        let m = |f: &str| crate::catalog::join_rel(&cfg.sdcpp_dir, &format!("models/qwen21/{f}")).display().to_string();
         assert!(s.starts_with("--listen-ip 127.0.0.1 --listen-port 39150"));
-        assert!(s.contains(r"--diffusion-model C:\AI\sdcpp\models\qwen21\qwen-image-2.1-Q4_K_M.gguf"));
-        assert!(s.contains(r"--vae C:\AI\sdcpp\models\qwen21\qwen_image_2.1_vae_bf16.safetensors"));
-        assert!(s.contains(r"--llm C:\AI\sdcpp\models\qwen21\Qwen3VL-8B-Instruct-Q4_K_M.gguf"));
-        assert!(s.contains(r"--llm_vision C:\AI\sdcpp\models\qwen21\mmproj-Qwen3VL-8B-Instruct-F16.gguf"));
+        assert!(s.contains(&format!("--diffusion-model {}", m("qwen-image-2.1-Q4_K_M.gguf"))));
+        assert!(s.contains(&format!("--vae {}", m("qwen_image_2.1_vae_bf16.safetensors"))));
+        assert!(s.contains(&format!("--llm {}", m("Qwen3VL-8B-Instruct-Q4_K_M.gguf"))));
+        assert!(s.contains(&format!("--llm_vision {}", m("mmproj-Qwen3VL-8B-Instruct-F16.gguf"))));
         assert!(s.contains("--backend cuda0 --params-backend te=cpu"));
         assert!(s.contains("--fa --sage-attn --vae-tiling --vae-tile-size 768 --vae-tile-overlap 0.125"));
         assert!(s.contains("--model-args qwen_image_2_1_prefix_cache_type=q8_0 --eager-load"));
@@ -818,6 +820,7 @@ mod tests {
     #[test]
     fn placement_variants_and_reserve() {
         let mut cfg = AppConfig::default();
+        cfg.gpu_backend = crate::config::GpuBackend::Cuda;
         cfg.text_encoder_placement = TextEncoderPlacement::Cpu;
         cfg.vram_reserve_gib = 1.5;
         cfg.flash_attention = false;

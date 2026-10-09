@@ -225,6 +225,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn normalize_resolves_dots() {
         assert_eq!(normalize(r"C:\a\b\..\c\.\d.png", None).unwrap(), PathBuf::from(r"C:\a\c\d.png"));
         assert_eq!(normalize(r"assets\hero.png", Some(Path::new(r"C:\proj"))).unwrap(), PathBuf::from(r"C:\proj\assets\hero.png"));
@@ -232,6 +233,27 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
+    fn normalize_resolves_dots_unix() {
+        assert_eq!(normalize("/a/b/../c/./d.png", None).unwrap(), PathBuf::from("/a/c/d.png"));
+        assert_eq!(normalize("assets/hero.png", Some(Path::new("/proj"))).unwrap(), PathBuf::from("/proj/assets/hero.png"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn traversal_outside_root_is_rejected_unix() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("proj");
+        std::fs::create_dir_all(root.join("assets")).unwrap();
+        let roots = vec![root.clone()];
+        assert!(resolve_output_path("assets/hero.png", Some(&root), &roots, &[]).unwrap().ends_with("hero.png"));
+        assert!(resolve_output_path("../outside.png", Some(&root), &roots, &[]).is_err());
+        assert!(resolve_output_path("assets/../../proj2/x.png", Some(&root), &roots, &[]).is_err());
+        assert!(!is_within(&dir.path().join("proj2").join("x.png"), &roots));
+    }
+
+    #[test]
+    #[cfg(windows)]
     fn traversal_outside_root_is_rejected() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("proj");

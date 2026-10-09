@@ -8,12 +8,18 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const root = path.resolve(__dirname, "..", "..");
+const serviceExe = process.platform === "win32" ? "kokon-service.exe" : "kokon-service";
+// The most recently built service (debug or release), so a stale build is not tested.
+const serviceBuild = ["debug", "release"]
+  .map((b) => path.join(root, "target", b, serviceExe))
+  .filter((p) => fs.existsSync(p))
+  .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "qls-mcp-proto-"));
 const env = {
   ...process.env,
   QLS_DATA_DIR: path.join(tmp, "data"),
   QLS_CONFIG_DIR: path.join(tmp, "config"),
-  QLS_SERVICE_EXE: path.join(root, "target", "debug", "kokon-service.exe"),
+  QLS_SERVICE_EXE: serviceBuild ?? path.join(root, "target", "debug", serviceExe),
 } as Record<string, string>;
 delete env.CLAUDE_PROJECT_DIR;
 fs.mkdirSync(env.QLS_CONFIG_DIR, { recursive: true });
@@ -67,7 +73,7 @@ describe("MCP protocol", () => {
     const ok = await client.callTool({ name: "get_image_info", arguments: { image_path: "dot.png" } });
     expect(ok.isError).toBe(false);
     expect(ok.structuredContent).toMatchObject({ width: 1, height: 1, file_type: "png" });
-    const bad = await client.callTool({ name: "get_image_info", arguments: { image_path: "C:\\Windows\\System32\\cmd.png" } });
+    const bad = await client.callTool({ name: "get_image_info", arguments: { image_path: path.join(os.tmpdir(), "cmd.png") } });
     expect(bad.isError).toBe(true);
     expect((bad.structuredContent as { error: { code: string } }).error.code).toBe("invalid_path");
   }, 60_000);

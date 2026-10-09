@@ -13,9 +13,13 @@ const outside = path.join(tmp, "proj2");
 fs.mkdirSync(outside);
 fs.writeFileSync(path.join(outside, "x.png"), "x");
 const roots = [proj];
+const WIN = process.platform === "win32";
 
 describe("normalize", () => {
-  it.each([["\\\\server\\share\\a.png"], ["\\\\?\\C:\\a.png"], ["//server/a.png"], ["C:\\a.png:ads"], ["C:\\x\\CON.png"], ["C:rel.png"], [""], ["a\u0000b"]])("rejects %s", (p) => {
+  it.each([["\\\\server\\share\\a.png"], ["\\\\?\\C:\\a.png"], ["//server/a.png"], [""], ["a\u0000b"]])("rejects %s", (p) => {
+    expect(() => normalize(p, proj)).toThrow(PathError);
+  });
+  it.runIf(WIN).each([["C:\\a.png:ads"], ["C:\\x\\CON.png"], ["C:rel.png"]])("rejects %s (Windows)", (p) => {
     expect(() => normalize(p, proj)).toThrow(PathError);
   });
   it("resolves relative paths against the project", () => {

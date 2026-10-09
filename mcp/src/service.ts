@@ -3,7 +3,11 @@
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+
+const WIN = process.platform === "win32";
+const SERVICE_EXE = WIN ? "kokon-service.exe" : "kokon-service";
 
 export interface ServiceInfo {
   port: number;
@@ -25,7 +29,10 @@ export class ServiceError extends Error {
 
 export function dataDir(): string {
   if (process.env.QLS_DATA_DIR) return process.env.QLS_DATA_DIR;
-  const base = process.env.LOCALAPPDATA ?? path.join(process.env.USERPROFILE ?? "C:\\", "AppData", "Local");
+  // Same folder as the service's dirs::data_local_dir().
+  const base = WIN
+    ? (process.env.LOCALAPPDATA ?? path.join(process.env.USERPROFILE ?? "C:\\", "AppData", "Local"))
+    : path.join(os.homedir(), "Library", "Application Support");
   // The service moves the folder of the app's old name (QwenLocalStudio) to KokonData on its
   // first start; until then the old one is read.
   const [next, old] = [path.join(base, "KokonData"), path.join(base, "QwenLocalStudio")];
@@ -50,15 +57,20 @@ async function ping(port: number): Promise<boolean> {
 }
 
 export function findServiceExe(): string | null {
-  const local = process.env.LOCALAPPDATA ?? "";
+  const installed = WIN
+    ? [
+        path.join(process.env.LOCALAPPDATA ?? "", "Kokon", SERVICE_EXE),
+        path.join(process.env.ProgramFiles ?? "C:\\Program Files", "Kokon", SERVICE_EXE),
+      ]
+    : [path.join("/Applications", "Kokon.app", "Contents", "MacOS", SERVICE_EXE), path.join(os.homedir(), "Applications", "Kokon.app", "Contents", "MacOS", SERVICE_EXE)];
   const candidates = [
     process.env.QLS_SERVICE_EXE,
-    path.join(path.dirname(process.execPath), "kokon-service.exe"),
-    path.join(local, "Kokon", "kokon-service.exe"),
-    path.join(process.env.ProgramFiles ?? "C:\\Program Files", "Kokon", "kokon-service.exe"),
+    // Next to kokon-mcp (Windows install folder, Kokon.app/Contents/MacOS)
+    path.join(path.dirname(process.execPath), SERVICE_EXE),
+    ...installed,
     // Development checkout (mcp/build -> target/...)
-    path.resolve(__dirname, "..", "..", "target", "release", "kokon-service.exe"),
-    path.resolve(__dirname, "..", "..", "target", "debug", "kokon-service.exe"),
+    path.resolve(__dirname, "..", "..", "target", "release", SERVICE_EXE),
+    path.resolve(__dirname, "..", "..", "target", "debug", SERVICE_EXE),
   ];
   for (const c of candidates) {
     if (c && fs.existsSync(c)) return c;
@@ -88,9 +100,9 @@ export class ServiceClient {
     const exe = findServiceExe();
     if (!exe) {
       throw new ServiceError(
-        "Kokon is not installed (kokon-service.exe not found).",
+        `Kokon is not installed (${SERVICE_EXE} not found).`,
         "not_installed",
-        "Install Kokon, or set QLS_SERVICE_EXE to the path of kokon-service.exe.",
+        `Install Kokon, or set QLS_SERVICE_EXE to the path of ${SERVICE_EXE}.`,
       );
     }
     // Detached: the service outlives this MCP process and exits on its own when idle.

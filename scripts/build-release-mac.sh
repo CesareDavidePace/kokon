@@ -17,18 +17,17 @@ echo "1/5 Packages"
 npm ci --no-audit --no-fund
 (cd mcp && npm ci --no-audit --no-fund)
 
-echo "2/5 Tests (Rust core + frontend + MCP)"
+echo "2/5 Tests (Rust core + frontend)"
 cargo test -p qls-core --release --quiet
 npx vitest run
-(cd mcp && npx vitest run)
 
 echo "3/5 kokon-service (release)"
 cargo build -p qls-service --release
 mkdir -p src-tauri/binaries
 cp target/release/kokon-service "src-tauri/binaries/kokon-service-$TRIPLE"
 
-echo "4/5 kokon-mcp"
-(cd mcp && npm run build:exe)
+echo "4/5 kokon-mcp + MCP tests (they drive the bundle and the service built above)"
+(cd mcp && npm run build:exe && npx vitest run)
 
 echo "5/5 Kokon.app + disk image (signed for the in-app updater)"
 # Updates are verified against the public key in tauri.conf.json. Copy the private key from

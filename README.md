@@ -40,8 +40,8 @@ https://github.com/user-attachments/assets/f954c20e-eb07-4bc8-8216-b8a412860e99
     <img src="assets/readme/download-windows-light.svg" alt="Download for Windows" height="52">
   </picture></a>
   <a href="https://github.com/GabrieleLozupone/kokon/releases/latest"><picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/download-macos-dark.svg">
-    <img src="assets/readme/download-macos-light.svg" alt="Download for macOS (Apple Silicon, beta)" height="52">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/readme/download-macos-beta-dark.svg">
+    <img src="assets/readme/download-macos-beta-light.svg" alt="Download for macOS (Apple Silicon, beta)" height="52">
   </picture></a>
   <a href="#roadmap"><picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/readme/download-linux-dark.svg">

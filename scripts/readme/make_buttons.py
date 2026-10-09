@@ -18,7 +18,8 @@ LINUX = '<path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 
 BUTTONS = [
     # name, logo, caption, label, available
     ("windows", WINDOWS, "Download for", "Windows", True),
-    ("macos", APPLE, "Apple Silicon · beta", "macOS", True),
+    # New name when the artwork changes: GitHub and browsers cache README images by URL.
+    ("macos-beta", APPLE, "Apple Silicon · beta", "macOS", True),
     ("linux", LINUX, "x86-64 · NVIDIA", "Linux", False),
 ]
 

@@ -21,20 +21,51 @@ Kokon.exe (Tauri 2 + React)      kokon-mcp.exe (MCP, stdio)      scripts
 | --- | --- |
 | `crates/qls-core/src/geometry.rs` | Pure dimension math: 32-alignment, working canvas, outpaint/inpaint geometry |
 | `imaging.rs` | EXIF orientation, alpha-safe resize, padding, masks, compositing, PNG metadata/ICC |
-| `planner.rs` | Mode detection, resolution policy, upscale targets, VRAM budget |
+| `planner.rs` | Mode detection, resolution policy, upscale targets, memory budget (incl. Apple unified memory) |
 | `pipeline.rs` | Builds backend requests, post-processes results (crop back, ESRGAN tiling, composite) |
 | `sdcpp.rs` | Inference adapter — the only code that knows sd-server's schema |
 | `process.rs` | sd-server launch/reuse/stop, log capture, truthful progress parsing |
 | `engine.rs` | Async job queue, cancellation, OOM retry, saving |
+| `speed.rs` | Per-machine speed calibration of time estimates |
+| `diagnostics.rs` | GPU detection (nvidia-smi, DXGI, sysctl on macOS), readiness checks |
 | `store.rs` | SQLite gallery + content-addressed inputs |
 | `paths.rs` | Path validation (no UNC/device/ADS/traversal, never overwrite) |
 | `catalog.rs`, `installer.rs` | Pinned downloads (URLs, sizes, SHA-256), hardware presets, parallel resumable downloader |
 | `crates/qls-service` | Headless service and stable HTTP API; single instance; lifecycle |
-| `src-tauri`, `src/` | Desktop shell (Rust) and UI (React + TypeScript) |
+| `src-tauri`, `src/` | Desktop shell (Rust) and UI (React + TypeScript); in-app updates in `src/lib/updates.ts` |
 | `mcp/` | MCP server (TypeScript, official SDK) |
 
 Internal names (`qls-core`, `qls-service`, `QLS_*` environment variables) come from the working title used
-during development (Qwen Local Studio) and are kept on purpose.
+during development (Qwen Local Studio) and are kept on purpose. Executables carry `.exe` only on
+Windows.
+
+## Platforms and engines
+
+Details and the reasoning are in [platforms.md](platforms.md); the short version:
+
+| Platform | Engine (stable-diffusion.cpp `3f8527a`) | Folder | Launch differences |
+| --- | --- | --- | --- |
+| Windows + NVIDIA | CUDA 12 build | `<sdcpp>` | `--backend cuda0 --params-backend te=cpu`, SageAttention |
+| Windows + AMD / Intel (also NVIDIA) | Vulkan build | `<sdcpp>/engine-vulkan` | `--backend vulkan0`, no SageAttention |
+| macOS, Apple Silicon | Metal build (macOS 26+) | `<sdcpp>/engine-metal` | `--backend mtl0 --mmap`; 24 GB+: `--auto-fit off` (all weights on the GPU, zero-copy); 16 GB: `--params-backend disk` |
+
+- `GpuBackend` in `config.rs` picks the engine, its folder, device name and flags. Each engine
+  is a pinned download in `catalog.rs`, so both Windows engines can stay installed.
+- GPU detection: `nvidia-smi`, then DXGI for other cards (name, vendor, dedicated VRAM), then
+  `sysctl` on a Mac (chip, unified memory). A Mac's memory becomes the "VRAM" the planner uses
+  through `planner::unified_memory_planning_mib`: Metal's share (~2/3, ~3/4 from 64 GB) minus
+  the text encoder, which shares the same memory. Presets are labelled by Mac memory there.
+- macOS paging does not relieve GPU memory: ggml keeps Metal buffers wired (residency sets), so
+  16 GB Macs release each model after use instead (`--params-backend disk`).
+- Time estimates: the time model was measured on an RTX 5070 Ti. `speed.rs` compares every
+  finished backend job with the uncalibrated prediction and keeps a smoothed ratio per engine,
+  GPU and memory mode (`<data>/speed.json`). Uncalibrated non-CUDA machines show no estimate
+  until their first image.
+- Startup: the window starts hidden and `public/boot.js` shows it once the splash in
+  `index.html` is painted (the shell shows it after 4 s regardless).
+- Updates: Tauri updater with a signed `latest.json` in the latest GitHub release; the shell
+  stops the service before installing and replaces a running service of another version.
+  Release steps in [releasing.md](releasing.md).
 
 ## Verified backend facts (stable-diffusion.cpp commit `3f8527a`)
 
@@ -58,7 +89,7 @@ during development (Qwen Local Studio) and are kept on purpose.
   Fast 20 steps at ~1 MP; Balanced 20 steps at ~1.5K (1536²); Quality 20 steps and Ultra
   40 steps at the official 2K buckets (2048², 2752×1536…; edits share that budget with their
   reference images, so they land near 2 MP on 16 GB).
-- Default launch: `--backend cuda0 --params-backend te=cpu --fa --sage-attn --vae-tiling
+- Default launch (CUDA; other engines above): `--backend cuda0 --params-backend te=cpu --fa --sage-attn --vae-tiling
   --vae-tile-size 768 --vae-tile-overlap 0.125 --max-vram -1` plus `--hires-upscalers-dir`
   when the upscalers folder exists (text-encoder weights in RAM, computed on the GPU). Measured
   on an RTX 5070 Ti: running the text encoder fully on the CPU made a one-image edit take 240 s

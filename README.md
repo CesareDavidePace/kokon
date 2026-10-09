@@ -6,17 +6,18 @@
   </picture>
 </p>
 
-<h3 align="center">Edit photos by describing the change, on your own GPU.</h3>
+<h3 align="center">Edit photos by describing the change, on your own computer.</h3>
 
 <p align="center">
-  One installer, no Python, no cloud. Powered by Qwen-Image 2.1, and ready for your AI agent.
+  One installer for Windows and Mac, no Python, no cloud. Powered by Qwen-Image 2.1, and ready for your AI agent.
 </p>
 
 <p align="center">
   <a href="https://github.com/GabrieleLozupone/kokon/releases/latest"><img src="https://img.shields.io/github/v/release/GabrieleLozupone/kokon?style=flat-square&color=6b6b6b&labelColor=333&label=release" alt="Latest release"></a>
   <a href="https://github.com/GabrieleLozupone/kokon/releases"><img src="https://img.shields.io/github/downloads/GabrieleLozupone/kokon/total?style=flat-square&color=6b6b6b&labelColor=333" alt="Downloads"></a>
   <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-6b6b6b?labelColor=333&style=flat-square&logo=windows&logoColor=white" alt="Windows 10 and 11">
-  <img src="https://img.shields.io/badge/NVIDIA-12%20GB%2B-6b6b6b?labelColor=333&style=flat-square&logo=nvidia&logoColor=76B900" alt="NVIDIA, 12 GB or more">
+  <img src="https://img.shields.io/badge/macOS-Apple%20Silicon%20(beta)-6b6b6b?labelColor=333&style=flat-square&logo=apple&logoColor=white" alt="macOS on Apple Silicon, beta">
+  <img src="https://img.shields.io/badge/GPU-NVIDIA%20%C2%B7%20AMD%20%C2%B7%20Intel%20%C2%B7%20Apple-6b6b6b?labelColor=333&style=flat-square" alt="NVIDIA, AMD, Intel and Apple GPUs">
   <a href="#use-it-from-your-ai-agent"><img src="https://img.shields.io/badge/MCP-server%20included-6b6b6b?labelColor=333&style=flat-square" alt="MCP server included"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/GabrieleLozupone/kokon?style=flat-square&color=6b6b6b&labelColor=333" alt="License"></a>
   <a href="https://github.com/GabrieleLozupone/kokon/stargazers"><img src="https://img.shields.io/github/stars/GabrieleLozupone/kokon?style=flat-square&color=6b6b6b&labelColor=333" alt="Stars"></a>
@@ -38,16 +39,16 @@ https://github.com/user-attachments/assets/f954c20e-eb07-4bc8-8216-b8a412860e99
     <source media="(prefers-color-scheme: dark)" srcset="assets/readme/download-windows-dark.svg">
     <img src="assets/readme/download-windows-light.svg" alt="Download for Windows" height="52">
   </picture></a>
-  <a href="#roadmap"><picture>
+  <a href="https://github.com/GabrieleLozupone/kokon/releases/latest"><picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/readme/download-macos-dark.svg">
-    <img src="assets/readme/download-macos-light.svg" alt="macOS (Apple Silicon): coming soon" height="52">
+    <img src="assets/readme/download-macos-light.svg" alt="Download for macOS (Apple Silicon, beta)" height="52">
   </picture></a>
   <a href="#roadmap"><picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/readme/download-linux-dark.svg">
     <img src="assets/readme/download-linux-light.svg" alt="Linux: coming soon" height="52">
   </picture></a>
   <br>
-  <sub>Free and open source · about 12 GB of models downloaded on first run · nothing leaves your PC</sub>
+  <sub>Free and open source · about 12 GB of models downloaded on first run · nothing leaves your computer</sub>
 </p>
 
 ---
@@ -63,14 +64,15 @@ https://github.com/user-attachments/assets/f954c20e-eb07-4bc8-8216-b8a412860e99
     </td>
     <td width="33%" valign="top">
       <h3>🔒 Private by design</h3>
-      Everything runs on your own GPU. No account, no uploads, no telemetry. After setup,
-      Kokon talks only to <code>127.0.0.1</code>. A private mode keeps nothing at all.
+      Everything runs on your own GPU. No account, no uploads, no telemetry, no limits. After
+      setup, Kokon only checks once a day for a new version (you can turn that off). A private
+      mode keeps nothing at all.
     </td>
     <td width="33%" valign="top">
       <h3>📦 One installer</h3>
       A native app built on <a href="https://github.com/leejet/stable-diffusion.cpp">stable-diffusion.cpp</a>.
-      No Python, no ComfyUI, no node graphs. The first run detects your GPU and downloads the
-      right model, then verifies it.
+      No Python, no ComfyUI, no node graphs. The first run detects your graphics card or your
+      Mac's memory and downloads the right model, then verifies it. Updates install in one click.
     </td>
   </tr>
   <tr>
@@ -111,15 +113,25 @@ Every result below came from one sentence in Kokon, with default settings.
 
 ## Install
 
-**1. Download** `Kokon Setup.exe` from the [latest release](https://github.com/GabrieleLozupone/kokon/releases/latest) and run it. It installs for your user only, so you don't need administrator rights.
+**1. Download** from the [latest release](https://github.com/GabrieleLozupone/kokon/releases/latest):
 
-**2. Set up models.** On first launch Kokon shows your GPU, VRAM and RAM, recommends a preset
-and downloads everything it needs. The download resumes if it is interrupted and every file
-is checked against its SHA-256 checksum. On a fast connection the whole thing takes a few minutes.
+- **Windows:** `Kokon Setup.exe`. Run it. It installs for your user only, so you don't need
+  administrator rights.
+- **Mac (Apple Silicon, beta):** `Kokon_<version>_aarch64.dmg`. Open it and drag Kokon to
+  Applications. The first time, macOS blocks it because the app is not notarized by Apple:
+  open System Settings → Privacy & Security and click **Open Anyway**
+  ([details](#macos-says-kokon-cannot-be-opened)).
+
+**2. Set up models.** On first launch Kokon shows your graphics card (or your Mac's chip and
+memory), recommends a preset and downloads everything it needs. The download resumes if it is
+interrupted and every file is checked against its SHA-256 checksum. On a fast connection the
+whole thing takes a few minutes, and the setup screen shows what Kokon can do while you wait.
 
 **3. Edit.** Drop or paste a photo, describe the change and press <kbd>Enter</kbd>.
 
 ### Requirements
+
+**Windows**
 
 | | Minimum | Recommended |
 | --- | --- | --- |
@@ -129,18 +141,34 @@ is checked against its SHA-256 checksum. On a fast connection the whole thing ta
 | **Disk** | 15 GB free | 25 GB free on an SSD |
 | **Time per edit** <!-- TODO re-measure at CFG 1 before launch; RTX 5070 12 GB not timed yet --> | A little slower than the RTX 5070 Ti on a 12 GB RTX 5070 | About 1 minute at Balanced on a 16 GB RTX 5070 Ti |
 
+**Mac (beta)**
+
+| | Minimum | Recommended |
+| --- | --- | --- |
+| **Chip** | Apple M1 or newer (Intel Macs are not supported) | M-series Pro, Max or Ultra |
+| **macOS** | 26 Tahoe | latest |
+| **Unified memory** | 16 GB (lightest mode, about 1 megapixel) | 24 GB or more; 32 GB+ for native 2K |
+| **Disk** | 15 GB free | 25 GB free |
+| **Time per image** | Minutes: a 512×512 image took about 2 minutes on a 16 GB M2 Pro | Faster on Pro/Max chips with more memory |
+
+Kokon measures your machine's speed with the first image and shows realistic time estimates
+from then on.
+
 > [!NOTE]
 > NVIDIA cards run on the CUDA engine, the fastest and tested path. AMD and Intel cards use the
 > **Vulkan engine (beta)**: it works on NVIDIA, but nobody has tried it on a real AMD or Intel
 > card yet, so please [report how it goes](https://github.com/GabrieleLozupone/kokon/issues).
-> Vulkan is slower than CUDA, and its first image takes longer. Apple Silicon Macs are in
-> testing ([platforms](docs/platforms.md)).
+> Vulkan is slower than CUDA, and its first image takes longer. Macs use the **Metal engine
+> (beta)**, tested so far on a 16 GB M2 Pro. Details in [docs/platforms.md](docs/platforms.md).
 
 <details>
 <summary><b>Model presets: what gets downloaded</b></summary>
 <br>
 
-The setup screen picks a preset from your VRAM. You can change it later from Settings → Models → **Set up models…**
+The setup screen picks a preset from your VRAM. On a Mac the presets are named by unified
+memory (16–24 GB Mac, 32–36 GB Mac, 48 GB Mac, 64 GB+ Mac), because the graphics part can use
+only about two thirds of it and the text encoder shares the same memory. You can change the
+preset later from Settings → Models → **Set up models…**
 
 | Preset | Diffusion model | Text encoder (in RAM) | Download | Tested on real hardware |
 | --- | --- | --- | --- | --- |
@@ -149,14 +177,14 @@ The setup screen picks a preset from your VRAM. You can change it later from Set
 | 24 GB | Qwen-Image 2.1 Q8_0 (7.6 GB) | Qwen3-VL 8B Q4_K_M | ~15 GB | not yet |
 | 32 GB+ | Qwen-Image 2.1 Q8_0 | Qwen3-VL 8B Q8_0 (8.7 GB) | ~19 GB | not yet |
 
-Every preset also gets stable-diffusion.cpp (the CUDA 12 build on NVIDIA, the Vulkan build on AMD and Intel), the Qwen-Image 2.1 VAE, the
+Every preset also gets stable-diffusion.cpp (the CUDA 12 build on NVIDIA, the Vulkan build on AMD and Intel, the Metal build on a Mac), the Qwen-Image 2.1 VAE, the
 Qwen3-VL vision projector and, optionally, the 4x-UltraSharp upscaler. The sources are the
 official [Qwen-Image 2.1](https://huggingface.co/Qwen/Qwen-Image-2.1) weights through
 [unsloth/Qwen-Image-2.1-GGUF](https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF),
 [Qwen/Qwen3-VL-8B-Instruct-GGUF](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF) and
 [Comfy-Org/Qwen-Image-2.1](https://huggingface.co/Comfy-Org/Qwen-Image-2.1).
 
-Files go to `%LOCALAPPDATA%\KokonData\sdcpp` by default. You can point the setup screen at an
+Files go to `%LOCALAPPDATA%\KokonData\sdcpp` (Mac: `~/Library/Application Support/KokonData/sdcpp`) by default. You can point the setup screen at an
 existing stable-diffusion.cpp folder instead; files that are already there are kept.
 Other weights, such as fine-tunes, can be selected in Settings → Models.
 
@@ -178,10 +206,10 @@ Other weights, such as fine-tunes, can be selected in Settings → Models.
 </p>
 
 Every result can be edited again, varied, used as a reference, upscaled, saved, copied or
-opened in Explorer. A few things make that loop fast:
+opened in Explorer or Finder. A few things make that loop fast:
 
 - **Before/after**: compare with Slider, Flicker or Changes, or hold <kbd>B</kbd> to see the original.
-- **Undo/redo between versions** with <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd>.
+- **Undo/redo between versions** with <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd> (<kbd>⌘</kbd> on a Mac).
   Undo returns to the version the current one came from, and nothing is ever deleted.
 - **Gallery**: every image keeps its full recipe (prompt, seed, settings, pipeline) and reopens
   with one click. The recipe is also embedded in the PNG.
@@ -192,7 +220,7 @@ opened in Explorer. A few things make that loop fast:
 
 ```mermaid
 flowchart LR
-    A["📷 Your photo<br>+ a sentence"] --> B["Planner<br><sub>mode · size · VRAM budget</sub>"]
+    A["📷 Your photo<br>+ a sentence"] --> B["Planner<br><sub>mode · size · memory budget</sub>"]
     B --> C["Qwen-Image 2.1<br><sub>stable-diffusion.cpp<br>on your GPU</sub>"]
     C --> D["AI upscaler<br><sub>ESRGAN, back to<br>full size</sub>"]
     D --> E["🖼️ Result<br><sub>gallery + recipe</sub>"]
@@ -210,11 +238,17 @@ the measured backend settings and the reasons behind each default.
 
 ## Use it from your AI agent
 
-Kokon ships `kokon-mcp.exe`, an [MCP](https://modelcontextprotocol.io) server. Register it once
+Kokon ships `kokon-mcp`, an [MCP](https://modelcontextprotocol.io) server. Register it once
 with Claude Code:
 
 ```powershell
+# Windows
 claude mcp add --scope user kokon -- "$env:LOCALAPPDATA\Kokon\kokon-mcp.exe"
+```
+
+```bash
+# Mac
+claude mcp add --scope user kokon -- /Applications/Kokon.app/Contents/MacOS/kokon-mcp
 ```
 
 Then ask: *“Generate a hero image for this README and save it in docs/”* or *“Remove the
@@ -227,7 +261,8 @@ starts the engine on demand. The first call takes about a minute while the model
 <summary><b>Other MCP hosts (JSON config)</b></summary>
 <br>
 
-Project-scoped `.mcp.json`, or any host that takes the standard format:
+Project-scoped `.mcp.json`, or any host that takes the standard format (on a Mac the command is
+`/Applications/Kokon.app/Contents/MacOS/kokon-mcp`):
 
 ```json
 {
@@ -272,7 +307,8 @@ claude mcp add-json --scope user kokon '{"type":"stdio","command":"C:\\Users\\<y
 <br>
 
 Base URL `http://127.0.0.1:39151/api/v1`. Every call except `/ping` needs
-`Authorization: Bearer <token>`, with the token from `%LOCALAPPDATA%\KokonData\service.json`.
+`Authorization: Bearer <token>`, with the token from `%LOCALAPPDATA%\KokonData\service.json`
+(Mac: `~/Library/Application Support/KokonData/service.json`).
 Requests that carry a browser `Origin` header are refused.
 
 ```powershell
@@ -319,9 +355,9 @@ Kokon makes only two kinds of network request:
 Creating, editing, the gallery, the MCP server and the API talk to `127.0.0.1` only. Logs never
 contain your prompts.
 
-You can check this yourself. While you work, watch `Kokon.exe`, `kokon-service.exe` and
-`sd-server.exe` in Resource Monitor (Network tab), or run
-`Get-NetTCPConnection -OwningProcess <pid>`.
+You can check this yourself. While you work, watch `Kokon`, `kokon-service` and `sd-server` in
+Resource Monitor's Network tab on Windows (or run `Get-NetTCPConnection -OwningProcess <pid>`),
+or with `lsof -i -P | grep -iE "kokon|sd-server"` on a Mac.
 
 **Private mode** (the eye icon in the top bar) keeps images and prompts out of the gallery, the
 output folder and the project list. They are deleted when you turn private mode off, close the
@@ -334,11 +370,12 @@ If you want full control over every node, ComfyUI is the better tool.
 
 | | **Kokon** | ComfyUI + Qwen workflow | Krita AI Diffusion | Other Qwen web UIs |
 | --- | :---: | :---: | :---: | :---: |
-| Install | One `.exe` | Python environment + nodes | Krita + plugin + ComfyUI | Python or ComfyUI |
+| Install | One installer (`.exe` / `.dmg`) | Python environment + nodes | Krita + plugin + ComfyUI | Python or ComfyUI |
 | Picks size and memory settings for you | ✅ | ❌ | partly | partly |
 | Brush edits the model can see | ✅ | depends on the workflow | ✅ | rarely |
 | MCP server for AI agents | ✅ | community nodes | ❌ | ❌ |
 | AMD / Intel GPUs | beta (Vulkan) | ✅ | ✅ | varies |
+| Apple Silicon Macs | beta (Metal) | ✅ | ✅ | varies |
 | Custom pipelines, node graphs | ❌ | ✅ | partly | ❌ |
 | Painting and layers | ❌ | ❌ | ✅ | ❌ |
 
@@ -355,10 +392,23 @@ release notes, or [build it yourself](#build-from-source).
 </details>
 
 <details>
+<summary id="macos-says-kokon-cannot-be-opened"><b>macOS says Kokon “cannot be opened”</b></summary>
+<br>
+
+Kokon is not notarized by Apple (that needs a paid Apple developer account), so macOS blocks
+it the first time. Try to open it once, then go to **System Settings → Privacy &
+Security**, scroll down and click **Open Anyway**. You only do this once; in-app updates don't
+trigger it again. You can also [build it yourself](#build-from-source).
+
+</details>
+
+<details>
 <summary><b>Do I need an internet connection?</b></summary>
 <br>
 
-Only once, to download the models. After that Kokon works fully offline.
+Only to download the models. After that Kokon works fully offline. If you are online it checks
+once a day for a new version, which you can turn off on the welcome screen or in Settings →
+General.
 
 </details>
 
@@ -371,8 +421,9 @@ them, which uses the graphics driver you already have. It works on NVIDIA cards,
 been verified on a real AMD or Intel card yet; integrated graphics are not supported. Please
 [open an issue](https://github.com/GabrieleLozupone/kokon/issues) with your card and how it went.
 
-Mac: Apple Silicon support is in testing. See [docs/platforms.md](docs/platforms.md) for the
-planned requirements (24 GB of unified memory recommended).
+Mac: yes, in beta, on Apple Silicon (M1 or newer) with macOS 26. It runs on a 16 GB Mac in a
+lighter mode; 24 GB or more is recommended. See the [requirements](#requirements) and
+[docs/platforms.md](docs/platforms.md).
 
 </details>
 
@@ -401,8 +452,8 @@ use case.
 <summary><b>iPhone photos (HEIC) and HDR</b></summary>
 <br>
 
-HEIC/HEIF photos open like any other image. They are decoded by Windows, so Microsoft's
-**HEIF Image Extensions** and **HEVC Video Extensions** must be installed.
+HEIC/HEIF photos open like any other image. On a Mac they are decoded by macOS itself. On
+Windows, Microsoft's **HEIF Image Extensions** and **HEVC Video Extensions** must be installed.
 
 iPhone photos with an HDR gain map (iOS 18+) show a **Keep HDR** switch in Advanced, which is on
 by default. Edits of such photos are saved as **Ultra HDR JPEG**: Chrome, Edge, Android and
@@ -419,7 +470,7 @@ Settings → Models offers two ESRGAN models: **UltraSharp** (default, downloade
 screen) and **Superscale-SP**. To use Superscale-SP, put
 `4x_NMKD-Superscale-SP_178000_G.pth` from
 [uwg/upscaler](https://huggingface.co/uwg/upscaler/tree/main/ESRGAN) into
-`<stable-diffusion.cpp folder>\models\upscalers\`. Without an upscaler everything still works,
+`<stable-diffusion.cpp folder>/models/upscalers/`. Without an upscaler everything still works,
 with a plain resize instead.
 
 </details>
@@ -428,13 +479,13 @@ with a plain resize instead.
 <summary><b>Where are my images and settings stored?</b></summary>
 <br>
 
-| What | Where |
-| --- | --- |
-| Images | `%USERPROFILE%\Pictures\Kokon\<date>\` (configurable) |
-| Settings | `%APPDATA%\Kokon\config.json` |
-| Gallery database, inputs, thumbnails, logs | `%LOCALAPPDATA%\KokonData\` |
-| Models (default) | `%LOCALAPPDATA%\KokonData\sdcpp\` |
-| API port and token | `%LOCALAPPDATA%\KokonData\service.json` |
+| What | Windows | Mac |
+| --- | --- | --- |
+| Images | `%USERPROFILE%\Pictures\Kokon\<date>\` (configurable) | `~/Pictures/Kokon/<date>/` (configurable) |
+| Settings | `%APPDATA%\Kokon\config.json` | `~/Library/Application Support/Kokon/config.json` |
+| Gallery database, inputs, thumbnails, logs | `%LOCALAPPDATA%\KokonData\` | `~/Library/Application Support/KokonData/` |
+| Models (default) | `%LOCALAPPDATA%\KokonData\sdcpp\` | `~/Library/Application Support/KokonData/sdcpp/` |
+| API port and token | `%LOCALAPPDATA%\KokonData\service.json` | `~/Library/Application Support/KokonData/service.json` |
 
 </details>
 
@@ -442,8 +493,13 @@ with a plain resize instead.
 <summary><b>How do I uninstall it?</b></summary>
 <br>
 
-Use **Settings → Apps → Installed apps → Kokon → Uninstall**. Your images stay in your Pictures
-folder. To free the model space too, delete `%LOCALAPPDATA%\KokonData`.
+**Windows:** Settings → Apps → Installed apps → Kokon → Uninstall. To free the model space too,
+delete `%LOCALAPPDATA%\KokonData`.
+
+**Mac:** drag Kokon from Applications to the Trash. To free the model space too, delete
+`~/Library/Application Support/KokonData`.
+
+Your images stay in your Pictures folder.
 
 </details>
 
@@ -453,8 +509,8 @@ folder. To free the model space too, delete `%LOCALAPPDATA%\KokonData`.
 
 If a download fails, the setup screen shows the file's download page and target folder so you
 can fetch it by hand. For anything else, please
-[open an issue](https://github.com/GabrieleLozupone/kokon/issues/new) with your GPU, driver version and
-the log from `%LOCALAPPDATA%\KokonData\logs`.
+[open an issue](https://github.com/GabrieleLozupone/kokon/issues/new) with your GPU (or Mac model), driver
+or macOS version and the log from `KokonData/logs` (see the table above).
 
 </details>
 
@@ -464,12 +520,14 @@ the log from `%LOCALAPPDATA%\KokonData\logs`.
 - [x] First-run setup with GPU detection and verified, resumable downloads
 - [x] MCP server and local HTTP API
 - [x] Before/after, version undo, private mode, HEIC and HDR
-- [ ] Fast mode with a turbo LoRA (an edit in about 15 seconds)
+- [x] macOS on Apple Silicon (beta, Metal)
+- [x] One-click in-app updates on Windows and Mac
 - [ ] AMD and Intel GPUs through Vulkan (beta now; works on NVIDIA, to verify on AMD/Intel)
+- [ ] Fast mode with a turbo LoRA (an edit in about 15 seconds)
 - [ ] Background removal and transparent cutouts
 - [ ] Batch edits: one instruction for a whole folder
 - [ ] Plugins for Krita, GIMP and Photoshop through the local API
-- [ ] macOS on Apple Silicon (in testing), then Linux
+- [ ] Linux
 
 Have an idea? [Start a discussion](https://github.com/GabrieleLozupone/kokon/discussions) or 👍 an existing one.
 
@@ -479,7 +537,7 @@ Have an idea? [Start a discussion](https://github.com/GabrieleLozupone/kokon/dis
 <summary><b>Requirements and commands</b></summary>
 <br>
 
-You need Rust (stable, MSVC), Node 22+, Visual Studio Build Tools and WebView2.
+**Windows:** Rust (stable, MSVC), Node 22+, Visual Studio Build Tools and WebView2.
 
 ```powershell
 npm install
@@ -490,6 +548,17 @@ npx tauri dev                     # run the desktop app in development
 powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1   # installer
 ```
 
+**Mac (Apple Silicon, macOS 26+):** Xcode Command Line Tools, Rust and Node 22+.
+
+```bash
+bash scripts/dev/mac-dev.sh --check   # check the prerequisites
+bash scripts/dev/mac-dev.sh           # build and run the app in development
+bash scripts/build-release-mac.sh     # Kokon.app + .dmg in dist-release/
+```
+
+Publishing a release (signed in-app updates for both platforms) is described in
+[docs/releasing.md](docs/releasing.md).
+
 </details>
 
 <details>
@@ -498,11 +567,11 @@ powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1   # installer
 
 ```mermaid
 flowchart TB
-    UI["<b>Kokon.exe</b><br>Tauri 2 + React"]
-    MCP["<b>kokon-mcp.exe</b><br>MCP over stdio"]
+    UI["<b>Kokon</b><br>Tauri 2 + React"]
+    MCP["<b>kokon-mcp</b><br>MCP over stdio"]
     S["Scripts and other apps"]
-    SVC["<b>kokon-service.exe</b><br>planner · preprocessing · job queue · gallery<br><code>127.0.0.1:39151/api/v1</code>"]
-    SD["<b>sd-server.exe</b><br>stable-diffusion.cpp<br><code>127.0.0.1:39150</code>"]
+    SVC["<b>kokon-service</b><br>planner · preprocessing · job queue · gallery<br><code>127.0.0.1:39151/api/v1</code>"]
+    SD["<b>sd-server</b><br>stable-diffusion.cpp (CUDA · Vulkan · Metal)<br><code>127.0.0.1:39150</code>"]
     UI -- "HTTP + SSE, token" --> SVC
     MCP -- "HTTP, token" --> SVC
     S -- "HTTP, token" --> SVC

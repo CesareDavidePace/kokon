@@ -8,7 +8,7 @@ so model behaviour is identical everywhere; only speed and memory differ.
 | --- | --- | --- |
 | Windows + NVIDIA | CUDA 12 build | ✅ verified (RTX 5070 Ti 16 GB, RTX 5070 12 GB) |
 | Windows + AMD / Intel | Vulkan build (30 MB, uses the driver's Vulkan runtime) | 🟡 beta: works on NVIDIA (RTX 5070 Ti, 2K/20 steps, slower than CUDA); AMD / Intel to verify |
-| macOS + Apple Silicon | Metal build (universal binary, shaders embedded) | 🟡 built, first run on an M2 Pro 16 GB pending (`scripts/dev/mac-dev.sh`) |
+| macOS + Apple Silicon | Metal build (universal binary, shaders embedded) | 🟡 beta: runs on an M2 Pro 16 GB (512² in ~2 min, lightest mode); `.dmg` build script ready, first packaged build pending |
 | Windows + AMD via ROCm | ROCm build | ✗ not planned: open crashes (#2008), DLL conflicts (#2012), black images with k-quants (#1385) |
 | Linux | Vulkan / CUDA builds exist | later |
 
@@ -37,26 +37,25 @@ budget (largest working size per quality level). Nothing is tuned per platform.
   - an edit with 2 reference images can crash (#1991, fix in ggml not yet synced);
   - no published Qwen 2.1 speeds on AMD/Intel yet.
 
-## macOS: Apple Silicon (in testing)
+## macOS: Apple Silicon (beta)
 
 Evidence: [qwen-image-studio](https://github.com/sanketshinde3001/qwen-image-studio) runs Qwen 2.1
 t2i and edits on a 16 GB M5 with **our exact engine build**. Its numbers: 10–12 GB peak
 (`--mmap --params-backend disk`), about 75 s/step at 1024² with CFG 6, so about 37 s per model
 pass. Kokon uses CFG 1, which is one pass per step.
 
-### Draft system requirements
+### System requirements (as in the README)
 
 | | Minimum | Recommended |
 | --- | --- | --- |
 | **Chip** | Apple M1 or newer (Intel Macs: no) | M-series Pro / Max / Ultra |
 | **macOS** | 26 Tahoe (the engine binary's minimum) | latest |
-| **Unified memory** | 24 GB (Fast/Balanced, up to ~1.5K) | 32 GB+ (Quality 2K); 48 GB+ gets the 8-bit model |
+| **Unified memory** | 16 GB (lightest mode, ~1 MP; verified on an M2 Pro) | 24 GB+ (everything stays loaded); 32 GB+ for Quality 2K; 48 GB+ gets the 8-bit model |
 | **Disk** | 15 GB free | 25 GB on the internal SSD |
 
-16 GB Macs can run it only in the lightest setup: 1 MP, with each model's weights loaded when
-it runs and released afterwards. That costs only a few seconds per image; the GPU compute is
-what makes it slow. It should be offered as "not supported, try at your own risk" rather than
-blocked.
+16 GB Macs run in the lightest setup: 1 MP, with each model's weights loaded when it runs and
+released afterwards. That costs only a few seconds per image; the GPU compute is what makes it
+slow (a 512² image took ~2 min on the M2 Pro). The setup screen says so before downloading.
 
 ### Why macOS paging does not help here (verified in the source, 2026-10-09)
 
@@ -136,7 +135,9 @@ so nobody with a base chip is surprised.
    - HEIC decoding uses Windows WIC (macOS: `sips`);
    - Tauri sidecar names and the `.exe` suffix;
    - data folders (`dirs` already maps them to `~/Library/...`).
-4. Packaging (todo; `tauri.macos.conf.json` prepared): a GitHub Actions `macos-14` (arm64) runner builds the `.dmg`. Without an Apple
+4. ✅ Packaging: `scripts/build-release-mac.sh` builds `Kokon.app` + `.dmg` (ad-hoc signed,
+   app icon on Apple's grid, in-app updates signed with the updater key). First packaged build
+   on a Mac pending. Notes on the options considered: a GitHub Actions `macos-14` (arm64) runner builds the `.dmg`. Without an Apple
    Developer ID ($99/year) the app is unsigned. Since macOS 15, right-click → Open no longer
    bypasses Gatekeeper: users must try to open it, then go to System Settings → Privacy &
    Security → *Open Anyway*. Signing + notarization removes that step. The signature shows
@@ -152,5 +153,6 @@ so nobody with a base chip is surprised.
    audience is large.
 5. Known Metal issue: transparent (RGBA) output decodes as white (#2024, fix not merged).
    Kokon outputs RGB, so only transparency-preserving edits are affected.
-6. Testing: needs a real Apple Silicon Mac with 24 GB+ (GitHub's runners have 7 GB: build
+6. Testing: runs on the M2 Pro 16 GB (device name `mtl0` fixed from that run); an M4 Pro 24 GB
+   run is planned. Originally: needs a real Apple Silicon Mac with 24 GB+ (GitHub's runners have 7 GB: build
    only). Without one, ship as "beta, untested".

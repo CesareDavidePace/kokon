@@ -82,7 +82,8 @@ impl GpuBackend {
         match self {
             GpuBackend::Cuda => "cuda",
             GpuBackend::Vulkan => "vulkan",
-            GpuBackend::Metal => "metal",
+            // ggml registers the Mac GPU as "MTL0" (`--list-devices`, seen on an M2 Pro).
+            GpuBackend::Metal => "mtl",
         }
     }
 
@@ -599,10 +600,6 @@ impl AppConfig {
     /// The configured device when it belongs to the active engine, else its first GPU.
     pub fn effective_device(&self) -> String {
         let dev = self.device.trim().to_ascii_lowercase();
-        if self.gpu_backend == GpuBackend::Metal {
-            // sd-server resolves "metal" to the Mac's GPU (ggml names it MTL0).
-            return "metal".into();
-        }
         let prefix = self.gpu_backend.device_prefix();
         match dev.strip_prefix(prefix) {
             Some(i) if !i.is_empty() && i.chars().all(|c| c.is_ascii_digit()) => dev,
@@ -706,7 +703,7 @@ mod tests {
         assert_eq!(GpuBackend::for_vendor("apple"), GpuBackend::Metal);
         c.gpu_backend = GpuBackend::Metal;
         c.device = "cuda0".into();
-        assert_eq!(c.effective_device(), "metal");
+        assert_eq!(c.effective_device(), "mtl0", "matches MTL0 in --list-devices");
         assert_eq!(c.engine_dir(), c.sdcpp_dir.join("engine-metal"));
         assert!(!c.uses_sage_attention());
         // Configs written before the field existed keep this platform's engine.

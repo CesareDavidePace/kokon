@@ -860,12 +860,12 @@ mod tests {
         let mut cfg = AppConfig::default();
         cfg.gpu_backend = crate::config::GpuBackend::Metal;
         let s = build_server_args(&cfg, cfg.profile()).join(" ");
-        assert!(s.contains("--backend metal --auto-fit off --mmap --fa"), "RAM placement runs everything on the GPU: {s}");
+        assert!(s.contains("--backend mtl0 --auto-fit off --mmap --fa"), "RAM placement runs everything on the GPU: {s}");
         assert!(!s.contains("--params-backend") && !s.contains("--sage-attn"));
         assert!(s.contains("--mmap") && s.contains("--eager-load"));
         cfg.text_encoder_placement = TextEncoderPlacement::Disk;
         let s = build_server_args(&cfg, cfg.profile()).join(" ");
-        assert!(s.contains("--backend metal --params-backend disk"), "{s}");
+        assert!(s.contains("--backend mtl0 --params-backend disk"), "{s}");
         assert!(!s.contains("--eager-load"), "nothing to preload when weights stream from disk");
     }
 
@@ -938,6 +938,15 @@ mod tests {
             vec![("CUDA0".into(), "NVIDIA GeForce RTX 5070 Ti".into()), ("CPU".into(), "AMD Ryzen 7 7700 8-Core Processor".into())]
         );
         // ggml's Vulkan backend (device names as ggml registers them; not yet captured from a real run).
+        // Device names reported by the Metal build on an M2 Pro (2026-10-09); descriptions illustrative.
+        let out = "MTL0	Apple M2 Pro
+BLAS	Accelerate
+CPU	Apple M2 Pro
+";
+        assert_eq!(parse_device_list(out)[0].0, "MTL0");
+        let mut cfg = AppConfig::default();
+        cfg.gpu_backend = crate::config::GpuBackend::Metal;
+        assert!(parse_device_list(out).iter().any(|(n, _)| n.to_ascii_lowercase() == cfg.effective_device()));
         let out = "ggml_vulkan: Found 1 Vulkan devices:\nggml_vulkan: 0 = AMD Radeon RX 7800 XT (AMD proprietary driver) | uma: 0 | fp16: 1\nVulkan0\tAMD Radeon RX 7800 XT\nCPU\tAMD Ryzen 7 7700\n";
         assert_eq!(parse_device_list(out)[0], ("Vulkan0".into(), "AMD Radeon RX 7800 XT".into()));
     }

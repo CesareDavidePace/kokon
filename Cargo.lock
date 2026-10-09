@@ -2326,6 +2326,7 @@ dependencies = [
  "dirs",
  "image",
  "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "tauri",

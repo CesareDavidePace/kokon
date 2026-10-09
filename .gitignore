@@ -14,3 +14,4 @@ __pycache__/
 /docs/media/*.mp4
 /src-tauri/binaries/*-apple-darwin
 /target/mac-check
+.DS_Store

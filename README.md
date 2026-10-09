@@ -16,8 +16,13 @@
   <a href="https://github.com/GabrieleLozupone/kokon/releases/latest"><img src="https://img.shields.io/github/v/release/GabrieleLozupone/kokon?style=flat-square&color=6b6b6b&labelColor=333&label=release" alt="Latest release"></a>
   <a href="https://github.com/GabrieleLozupone/kokon/releases"><img src="https://img.shields.io/github/downloads/GabrieleLozupone/kokon/total?style=flat-square&color=6b6b6b&labelColor=333" alt="Downloads"></a>
   <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-6b6b6b?labelColor=333&style=flat-square&logo=windows&logoColor=white" alt="Windows 10 and 11">
-  <img src="https://img.shields.io/badge/macOS-Apple%20Silicon%20(beta)-6b6b6b?labelColor=333&style=flat-square&logo=apple&logoColor=white" alt="macOS on Apple Silicon, beta">
-  <img src="https://img.shields.io/badge/GPU-NVIDIA%20%C2%B7%20AMD%20%C2%B7%20Intel%20%C2%B7%20Apple-6b6b6b?labelColor=333&style=flat-square" alt="NVIDIA, AMD, Intel and Apple GPUs">
+  <img src="https://img.shields.io/badge/macOS-26%2B-6b6b6b?labelColor=333&style=flat-square&logo=apple&logoColor=white" alt="macOS 26 or newer">
+  <br>
+  <img src="https://img.shields.io/badge/NVIDIA-12%20GB%2B%20VRAM-6b6b6b?labelColor=333&style=flat-square&logo=nvidia&logoColor=76B900" alt="NVIDIA, 12 GB of VRAM or more">
+  <img src="https://img.shields.io/badge/AMD-12%20GB%2B%20VRAM%20(beta)-6b6b6b?labelColor=333&style=flat-square&logo=amd&logoColor=white" alt="AMD, 12 GB of VRAM or more, beta">
+  <img src="https://img.shields.io/badge/Intel%20Arc-12%20GB%2B%20VRAM%20(beta)-6b6b6b?labelColor=333&style=flat-square&logo=intel&logoColor=white" alt="Intel Arc, 12 GB of VRAM or more, beta">
+  <img src="https://img.shields.io/badge/Apple%20Silicon-16%20GB%2B%20unified%20memory%20(beta)-6b6b6b?labelColor=333&style=flat-square&logo=apple&logoColor=white" alt="Apple Silicon, 16 GB of unified memory or more, beta">
+  <br>
   <a href="#use-it-from-your-ai-agent"><img src="https://img.shields.io/badge/MCP-server%20included-6b6b6b?labelColor=333&style=flat-square" alt="MCP server included"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/GabrieleLozupone/kokon?style=flat-square&color=6b6b6b&labelColor=333" alt="License"></a>
   <a href="https://github.com/GabrieleLozupone/kokon/stargazers"><img src="https://img.shields.io/github/stars/GabrieleLozupone/kokon?style=flat-square&color=6b6b6b&labelColor=333" alt="Stars"></a>

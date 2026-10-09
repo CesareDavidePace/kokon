@@ -1,5 +1,5 @@
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { EyeOff, Loader2, PanelLeft, Redo2, Settings, SquarePen, Undo2, X } from "lucide-react";
+import { EyeOff, PanelLeft, Redo2, Settings, SquarePen, Undo2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, configure } from "./lib/api";
 import { native } from "./lib/native";
@@ -16,7 +16,7 @@ import { ProjectTitle, Sidebar } from "./components/Sidebar";
 import { Stage } from "./components/Stage";
 import { IconButton } from "./components/ui";
 import { shortcut } from "./lib/platform";
-import { Welcome } from "./components/Welcome";
+import { KokonMark, Welcome } from "./components/Welcome";
 
 const IMAGE_EXT = /\.(png|jpe?g|webp|bmp|gif|tiff?|heic|heif)$/i;
 
@@ -77,6 +77,22 @@ function HistoryButtons() {
         <Redo2 size={18} />
       </IconButton>
     </>
+  );
+}
+
+/** Same breathing mark as the HTML splash in index.html, so startup looks like one step;
+ * a line of text appears if connecting to the local service takes a while. */
+function BootSplash() {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const t = window.setTimeout(() => setSlow(true), 3000);
+    return () => window.clearTimeout(t);
+  }, []);
+  return (
+    <div className="boot-splash">
+      <KokonMark size={56} />
+      <span className={`muted boot-text ${slow ? "on" : ""}`}>Starting Kokon…</span>
+    </div>
   );
 }
 
@@ -247,7 +263,7 @@ export default function App() {
     return (
       <div className="app" style={{ display: "grid", placeItems: "center" }}>
         {boot === "connecting" ? (
-          <Loader2 className="spin" size={22} />
+          <BootSplash />
         ) : (
           <div className="failed">
             <strong>Could not start the local service</strong>

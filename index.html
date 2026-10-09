@@ -4,9 +4,24 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Kokon</title>
+    <!-- Painted before any JavaScript runs, so the window never shows an empty white page
+         (the dev server can take seconds to compile; the web view itself needs a moment).
+         React replaces #root's content when the app mounts. Colors match styles.css. -->
+    <style>
+      html, body { margin: 0; height: 100%; background: #ffffff; color: #0d0d0d; }
+      @media (prefers-color-scheme: dark) { html, body { background: #161616; color: #ececec; } }
+      .boot-splash { height: 100vh; display: grid; place-items: center; }
+      .boot-splash svg { width: 56px; height: 56px; opacity: 0.9; animation: boot-breathe 1.6s ease-in-out infinite; }
+      @keyframes boot-breathe { 50% { opacity: 0.35; } }
+      @media (prefers-reduced-motion: reduce) { .boot-splash svg { animation: none; } }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="boot-splash" aria-label="Kokon is starting">
+        <svg viewBox="0 0 1024 1024" aria-hidden="true"><path fill="currentColor" d="M0.00 242.81 C0.00 112.17 70.23 25.08 175.59 25.08 C280.94 25.08 351.17 112.17 351.17 242.81 L351.17 781.19 C351.17 911.83 280.94 998.92 175.59 998.92 C70.23 998.92 0.00 911.83 0.00 781.19 Z M389.53 548.95 C389.53 250.35 662.35 25.08 1024.00 25.08 C1024.00 323.68 751.18 548.95 389.53 548.95 Z M389.53 587.31 C389.53 821.93 618.71 998.92 922.49 998.92 C922.49 764.30 693.31 587.31 389.53 587.31 Z"/></svg>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

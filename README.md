@@ -120,7 +120,7 @@ Every result below came from one sentence in Kokon, with default settings.
 
 **1. Download** from the [latest release](https://github.com/GabrieleLozupone/kokon/releases/latest):
 
-- **Windows:** `Kokon Setup.exe`. Run it. It installs for your user only, so you don't need
+- **Windows:** `Kokon_<version>_x64-setup.exe`. Run it. It installs for your user only, so you don't need
   administrator rights.
 - **Mac (Apple Silicon, beta):** `Kokon_<version>_aarch64.dmg`. Open it and drag Kokon to
   Applications. The first time, macOS blocks it because the app is not notarized by Apple:

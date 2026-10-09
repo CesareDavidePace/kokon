@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::config::{RecommendedSettings, RefineMode};
+use crate::config::RecommendedSettings;
 use crate::error::{AppError, ErrorCode};
 use crate::geometry::{
     self, CanvasLimits, Expansion, ExpansionUnits, OutpaintPlan, Rect, Size, WorkingCanvas, aspect_label, dims_for_area,
@@ -99,11 +99,11 @@ impl InpaintAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum UpscaleMethod {
-    /// ESRGAN only (seconds).
+    /// The upscaler model (ESRGAN) only, straight from the image. "detailed" (a low-denoise
+    /// diffusion refine, removed 2026-10-09: Turbo cannot refine at low strength) maps here.
     #[default]
+    #[serde(alias = "detailed")]
     Quick,
-    /// Low-denoise img2img refine at up to ~2K, then ESRGAN to the target.
-    Detailed,
 }
 
 /// Target of an upscale job. Exact `width`+`height` win, then one side (aspect kept),
@@ -123,22 +123,19 @@ pub struct UpscaleSpec {
 /// Largest upscale result: 8192 px per side (the ESRGAN endpoint's limit) and ~40 MP.
 pub const MAX_UPSCALE_SIDE: u32 = 8192;
 pub const MAX_UPSCALE_AREA: u64 = 40_000_000;
-/// Denoise of the Detailed upscale refine (img2img).
-pub const DETAILED_DENOISE: f32 = 0.3;
-/// Prompt for refining images that have no usable description (inputs, edit results).
-pub const UPSCALE_PROMPT: &str = "A sharp, highly detailed, high-quality image with clean fine textures.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Quality {
-    Fast,
-    Balanced,
-    Quality,
-    Ultra,
-    /// ~1 MP in 8 steps with Qwen's distilled Turbo model (`catalog::TURBO_Q4_K`). The
-    /// default; plans fall back to Balanced when the Turbo model is not installed.
+    /// ~1 MP (768² on Apple Silicon, then enlarged). Older versions' "turbo" maps here.
     #[default]
-    Turbo,
+    #[serde(alias = "turbo")]
+    Fast,
+    /// ~1.5K.
+    Balanced,
+    /// Native 2K, Qwen's recommended size. Older versions' "ultra" (2K, 40 steps) maps here.
+    #[serde(alias = "ultra")]
+    Quality,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -194,19 +191,13 @@ pub struct OutpaintSpec {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct AdvancedOptions {
-    pub steps: Option<u32>,
-    pub cfg: Option<f32>,
     pub sampler: Option<String>,
-    pub scheduler: Option<String>,
     /// Edit/inpaint denoising strength (0..1).
     pub strength: Option<f32>,
     pub batch_count: Option<u32>,
     pub output_format: Option<OutputFormat>,
     /// None = automatic.
     pub vae_tiling: Option<bool>,
-    pub flow_shift: Option<f32>,
-    /// Effort of a Detailed upscale (Fast or Best); None = the app setting.
-    pub refine: Option<RefineMode>,
     /// Keep the HDR gain map of a HEIC source (Ultra HDR JPEG output); None = on.
     pub hdr: Option<bool>,
 }
@@ -292,13 +283,13 @@ pub struct Plan {
     pub working: Size,
     /// Content area inside `working` that maps to the output (rest is alignment padding).
     pub content: Rect,
+    /// Sampling steps (Turbo's 8; 0 = no diffusion, a Quick upscale).
     pub steps: u32,
+    /// Always 1 (Turbo runs without classifier-free guidance).
     pub cfg: f32,
     pub sampler: String,
-    pub scheduler: Option<String>,
     pub strength: Option<f32>,
     pub batch_count: u32,
-    pub flow_shift: Option<f32>,
     pub vae_tiling: bool,
     pub output_format: OutputFormat,
     pub negative_prompt: String,
@@ -316,18 +307,12 @@ pub struct Plan {
     pub notes: Vec<String>,
     pub optimized_for_vram: bool,
     pub estimated_seconds: f32,
-    /// EasyCache threshold (Detailed upscale only); None = off.
-    #[serde(default)]
-    pub cache_threshold: Option<f32>,
     /// ESRGAN model used to enlarge the result; None = Lanczos.
     #[serde(default)]
     pub upscaler: Option<String>,
     #[serde(default)]
     pub upscale: Option<UpscalePlan>,
-    /// Run on the Turbo model instead of the profile's diffusion model.
-    #[serde(default)]
-    pub turbo: bool,
-    /// Exact noise schedule (Turbo); empty = the server's default for `steps`.
+    /// Exact noise schedule (Turbo's); empty when no diffusion runs.
     #[serde(default)]
     pub custom_sigmas: Vec<f32>,
 }
@@ -341,8 +326,6 @@ pub struct PlanInputs {
     pub vram_total_mib: Option<u64>,
     /// ESRGAN model available to the server (`AppConfig::upscaler_file`).
     pub upscaler: Option<String>,
-    /// App default effort of a Detailed upscale (per-job override in `AdvancedOptions::refine`).
-    pub refine: RefineMode,
     /// The server was launched with `--vae-tiling` (tiles every decode by default).
     pub server_vae_tiling: bool,
     /// SageAttention is enabled (faster steps; used for estimates only).
@@ -355,8 +338,6 @@ pub struct PlanInputs {
     /// Apple Silicon (unified memory): the GPU is several times slower than the discrete
     /// cards the presets were tuned on, so Fast renders smaller (`UNIFIED_FAST_AREA`).
     pub unified_memory: bool,
-    /// The Turbo model is installed (`AppConfig::turbo_model`).
-    pub turbo_available: bool,
 }
 
 // ---------------------------------------------------------------------------------------
@@ -509,9 +490,6 @@ pub fn resolution_area(mode: ResolutionMode, quality: Quality, rec: &Recommended
             Quality::Fast => rec.area_fast,
             Quality::Balanced => rec.area_balanced,
             Quality::Quality => rec.area_quality,
-            Quality::Ultra => rec.area_ultra,
-            // ~1 MP, like the distillation's training and Fast.
-            Quality::Turbo => rec.area_fast,
         }),
         ResolutionMode::K1 => Some(1024 * 1024),
         ResolutionMode::K15 => Some(1536 * 1536),
@@ -558,10 +536,12 @@ pub const UNIFIED_FAST_AREA: u64 = 768 * 768;
 
 pub const PIXELS_PER_TOKEN: u64 = 256; // 8x VAE downscale, 2x2 patches
 
-/// Turbo's noise schedule: `sample_sigmas` of Qwen/Qwen-Image-2.1-Turbo's model_index.json
+/// The noise schedule of every diffusion job: `sample_sigmas` of Qwen/Qwen-Image-2.1-Turbo's model_index.json
 /// (8 steps, fixed at every resolution, no dynamic shift), sent verbatim because sd.cpp's
 /// own Qwen schedule shifts by resolution and has a 0.02 terminal shift.
 pub const TURBO_SIGMAS: [f32; 9] = [1.0, 0.978453, 0.95418, 0.926626, 0.89508, 0.845148, 0.704534, 0.414568, 0.0];
+/// Turbo's step count (fixed: Qwen evaluated no other schedule).
+pub const TURBO_STEPS: u32 = TURBO_SIGMAS.len() as u32 - 1;
 
 /// Area of the inpaint guide reference (the region with the painted area marked), as a
 /// share of the working canvas: enough to locate the area, cheap in tokens.
@@ -569,7 +549,7 @@ pub const INPAINT_GUIDE_AREA: f64 = 0.25;
 
 /// Seconds per sampling step, from RTX 5070 Ti measurements at CFG 6 (two model passes per
 /// step): 1 MP ≈ 2.0 s (1.63 s with SageAttention), 2048x1152 ≈ 5.6 s (3.8 s with
-/// SageAttention). CFG 1 runs one pass, so half of that (to re-measure).
+/// SageAttention). CFG 1 (always, with Turbo) runs one pass, so half of that.
 fn step_seconds(tokens: f32, ref_tokens: f32, sage: bool, cfg: f32) -> f32 {
     let x = tokens / 4096.0;
     let base = if sage { 1.6 * x.powf(1.1) } else { 2.0 * x.powf(1.4) };
@@ -594,32 +574,18 @@ fn decode_seconds(area: u64) -> f32 {
 }
 
 /// Rough wall-clock estimate of one diffusion job (single pass), excluding enlargement.
-pub fn estimate_seconds(working: Size, refs: &[RefPlan], steps: u32, batch: u32, cache: bool, sage: bool, cfg: f32) -> f32 {
+pub fn estimate_seconds(working: Size, refs: &[RefPlan], steps: u32, batch: u32, sage: bool, cfg: f32) -> f32 {
     let tokens = |s: Size| (s.area() / PIXELS_PER_TOKEN) as f32;
     let ref_tokens: f32 = refs.iter().map(|r| tokens(r.canvas.canvas)).sum();
     let encode = 4.0 + ref_tokens / 4096.0 * 3.0;
-    // EasyCache skipped ~1/3 of the refine steps in the 2K bench.
-    let cache_factor = if cache { 0.7 } else { 1.0 };
-    let t = encode + step_seconds(tokens(working), ref_tokens, sage, cfg) * steps as f32 * cache_factor;
+    let t = encode + step_seconds(tokens(working), ref_tokens, sage, cfg) * steps as f32;
     (t + decode_seconds(working.area())) * batch as f32
 }
 
 /// Uncalibrated prediction of the backend part of a planned job (what `crate::speed`
 /// compares with the measured time): encode, sampling and decode, no enlargement.
 pub fn backend_seconds(p: &Plan, sage: bool) -> f32 {
-    let detailed = p.upscale.map(|u| u.method == UpscaleMethod::Detailed).unwrap_or(false);
-    let steps = if detailed { (p.steps as f32 * p.strength.unwrap_or(1.0)).ceil() as u32 } else { p.steps };
-    estimate_seconds(p.working, &p.references, steps, p.batch_count, p.cache_threshold.is_some(), sage, p.cfg)
-}
-
-fn steps_for(q: Quality, rec: &RecommendedSettings) -> u32 {
-    match q {
-        Quality::Fast => rec.steps_fast,
-        Quality::Balanced => rec.steps_balanced,
-        Quality::Quality => rec.steps_quality,
-        Quality::Ultra => rec.steps_ultra,
-        Quality::Turbo => TURBO_SIGMAS.len() as u32 - 1,
-    }
+    estimate_seconds(p.working, &p.references, p.steps, p.batch_count, sage, p.cfg)
 }
 
 fn limits(max_area: u64, rec: &RecommendedSettings) -> CanvasLimits {
@@ -730,30 +696,20 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
         return Err(AppError::invalid("Describe what to generate or change."));
     }
     let mut notes = Vec::new();
-    // Turbo (the default) needs its model; without it the job runs as Balanced.
-    let quality = if req.quality == Quality::Turbo && !inputs.turbo_available {
-        notes.push("The Turbo model is not installed, so this used Balanced. Add it in Settings → Models → Set up models….".into());
-        Quality::Balanced
-    } else {
-        req.quality
-    };
-    // Turbo: its fixed schedule, CFG 1 (an upscale keeps its own settings).
-    let turbo = quality == Quality::Turbo && mode != ResolvedMode::Upscale;
-    let default_cfg = if mode == ResolvedMode::Generate { rec.cfg } else { rec.cfg_edit };
-    let cfg = if turbo { 1.0 } else { req.advanced.cfg.unwrap_or(default_cfg).clamp(0.0, 30.0) };
+    let quality = req.quality;
+    // Turbo: its fixed 8-step schedule without CFG (model card).
+    let cfg = 1.0;
     let budget_tokens = token_budget(inputs.vram_total_mib);
     let budget_area = budget_tokens * PIXELS_PER_TOKEN;
     let tier_area = resolution_area(req.resolution, quality, rec);
     let adv = &req.advanced;
-    let mut steps = if turbo { steps_for(Quality::Turbo, rec) } else { adv.steps.unwrap_or_else(|| steps_for(quality, rec)).clamp(1, 150) };
+    let mut steps = TURBO_STEPS;
     let batch_count = if mode == ResolvedMode::Upscale { 1 } else { adv.batch_count.unwrap_or(1).clamp(1, 8) };
     let mut optimized = false;
     // Largest area actually rendered; the output keeps its size and is enlarged afterwards.
     let render_cap = (inputs.unified_memory && quality == Quality::Fast && req.resolution == ResolutionMode::Auto).then_some(UNIFIED_FAST_AREA);
     // Diffusion always runs in one pass; larger outputs are enlarged with the upscaler
     // model (user A/B test, 2026-10-06: the two-pass refine made results worse).
-    // `refine` only sets the effort of a Detailed upscale.
-    let refine = adv.refine.unwrap_or(inputs.refine);
     let mut upscale = None;
 
     // Shared: cap an area by the VRAM budget given references totalling `n_refs` times it.
@@ -878,23 +834,9 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
             let spec = req.upscale.unwrap_or_default();
             output = upscale_target(src, &spec)?;
             upscale = Some(UpscalePlan { method: spec.method, source: src });
-            match spec.method {
-                UpscaleMethod::Quick => {
-                    // No diffusion: the "working" image is the source itself.
-                    working = WorkingCanvas { source: src, content: src, canvas: src, content_offset: (0, 0), scale: 1.0 };
-                    steps = 0;
-                }
-                UpscaleMethod::Detailed => {
-                    // img2img at up to ~2K in the target's shape; the server trims the
-                    // schedule by `strength`, so `steps` = effective steps / strength.
-                    working = plan_working_canvas(output, &CanvasLimits { min_side: 64, ..limits(rec.hires_max_area.min(budget_area), rec) });
-                    let s = adv.strength.unwrap_or(DETAILED_DENOISE).clamp(0.05, 1.0);
-                    let effective = if refine == RefineMode::Best { rec.hires_steps_best } else { rec.hires_steps_fast };
-                    steps = adv.steps.unwrap_or_else(|| (effective as f32 / s).ceil() as u32).clamp(1, 150);
-                    strength = Some(s);
-                    references.push(RefPlan { index: 0, source: src, canvas: working });
-                }
-            }
+            // No diffusion: the upscaler model works on the source itself.
+            working = WorkingCanvas { source: src, content: src, canvas: src, content_offset: (0, 0), scale: 1.0 };
+            steps = 0;
         }
         ResolvedMode::Inpaint => {
             let src = inputs.image_sizes[0];
@@ -952,7 +894,7 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
     }
 
     optimized |= sources_reduced;
-    let quick_upscale = upscale.map(|u| u.method == UpscaleMethod::Quick).unwrap_or(false);
+    let quick_upscale = upscale.is_some();
     if !quick_upscale && !working.canvas.is_aligned(rec.align) {
         return Err(AppError::new(ErrorCode::Internal, "Working size is not aligned.").detail(format!("{:?}", working.canvas)));
     }
@@ -976,33 +918,21 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
             inputs.upscaler.as_deref().unwrap_or("Lanczos")
         ));
     }
-    let detailed_upscale = upscale.map(|u| u.method == UpscaleMethod::Detailed).unwrap_or(false);
-    let cache_threshold = (detailed_upscale && refine != RefineMode::Best).then_some(rec.easycache_threshold);
     // Results are enlarged with ESRGAN when the model exists (Lanczos otherwise).
     let enlarge = output.area() as f64 > working.content.area() as f64 * 1.21;
-    // img2img only runs the last `strength` share of the schedule.
-    let sampled_steps = if detailed_upscale { (steps as f32 * strength.unwrap_or(1.0)).ceil() as u32 } else { steps };
-    let mut estimated_seconds = if quick_upscale {
-        2.0
-    } else {
-        estimate_seconds(working.canvas, &references, sampled_steps, batch_count, cache_threshold.is_some(), inputs.sage_attention, cfg)
-    };
-    if inputs.upscaler.is_some() {
-        if enlarge || quick_upscale {
-            estimated_seconds += esrgan_seconds(working.content.area()) * batch_count as f32;
-        }
-        if detailed_upscale && working.content.area() as f64 > inputs.image_sizes[0].area() as f64 * 1.21 {
-            estimated_seconds += esrgan_seconds(inputs.image_sizes[0].area());
-        }
+    let mut estimated_seconds =
+        if quick_upscale { 2.0 } else { estimate_seconds(working.canvas, &references, steps, batch_count, inputs.sage_attention, cfg) };
+    if inputs.upscaler.is_some() && (enlarge || quick_upscale) {
+        estimated_seconds += esrgan_seconds(working.content.area()) * batch_count as f32;
     }
     estimated_seconds = match inputs.speed_factor {
         Some(f) => estimated_seconds * f,
         None if inputs.hide_uncalibrated => 0.0,
         None => estimated_seconds,
     };
-    let negative_prompt = req.negative_prompt.clone().unwrap_or_else(|| rec.negative_prompt.clone());
-    if !negative_prompt.trim().is_empty() && !uses_guidance(cfg) && !quick_upscale {
-        notes.push("The negative prompt is ignored at CFG 1; raise CFG in Advanced to use it.".into());
+    let negative_prompt = req.negative_prompt.clone().unwrap_or_default();
+    if !negative_prompt.trim().is_empty() && !quick_upscale {
+        notes.push("The negative prompt is ignored: Turbo runs without CFG.".into());
     }
     Ok(Plan {
         mode,
@@ -1015,10 +945,8 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
         steps,
         cfg,
         sampler: adv.sampler.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| rec.sampler.clone()),
-        scheduler: adv.scheduler.clone().filter(|s| !s.is_empty() && s != "default").or_else(|| rec.scheduler.clone()),
         strength,
         batch_count,
-        flow_shift: adv.flow_shift,
         vae_tiling,
         output_format: adv.output_format.unwrap_or_default(),
         negative_prompt,
@@ -1031,11 +959,9 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
         notes,
         optimized_for_vram: optimized,
         estimated_seconds,
-        cache_threshold,
         upscaler: inputs.upscaler.clone(),
         upscale,
-        custom_sigmas: if turbo { TURBO_SIGMAS.to_vec() } else { Vec::new() },
-        turbo,
+        custom_sigmas: if quick_upscale { Vec::new() } else { TURBO_SIGMAS.to_vec() },
     })
 }
 
@@ -1096,35 +1022,28 @@ mod tests {
         assert!(p.auto_mode);
         assert_eq!(p.output, Size::new(1536, 1536), "Balanced = 1.5K");
         assert_eq!(p.working, Size::new(1536, 1536));
-        assert_eq!((p.steps, p.cfg, p.sampler.as_str()), (20, 1.0, "euler"), "20 steps, no CFG (official)");
+        assert_eq!((p.steps, p.cfg, p.sampler.as_str()), (8, 1.0, "euler"), "Turbo: 8 steps, no CFG (official)");
         assert!(p.vae_tiling, "decodes above ~1.5 MP are tiled");
         assert!(p.references.is_empty());
     }
 
     #[test]
-    fn turbo_is_the_default_and_uses_its_model_and_schedule() {
-        assert_eq!(GenerationRequest::default().quality, Quality::Turbo, "the default");
-        let mut r = req("a lighthouse at dusk");
-        r.quality = Quality::Turbo;
-        r.advanced.cfg = Some(4.0);
-        r.advanced.steps = Some(30);
-        let i = PlanInputs { turbo_available: true, ..inputs(&[]) };
-        let p = plan(&r, &i, &rec()).unwrap();
-        assert_eq!(p.working, Size::new(1024, 1024), "~1 MP");
-        assert_eq!((p.steps, p.cfg, p.turbo), (8, 1.0, true), "fixed steps, no CFG");
-        assert_eq!(p.custom_sigmas, TURBO_SIGMAS.to_vec());
-        // Edits too; other qualities never run on the Turbo model.
-        let p = plan(&r, &PlanInputs { turbo_available: true, ..inputs(&[(1200, 800)]) }, &rec()).unwrap();
-        assert!(p.turbo && p.custom_sigmas.len() == 9);
-        r.quality = Quality::Fast;
-        let p = plan(&r, &i, &rec()).unwrap();
-        assert!(!p.turbo && p.custom_sigmas.is_empty());
-        // Not installed: Balanced, with a note.
-        r.quality = Quality::Turbo;
-        r.advanced = Default::default();
-        let p = plan(&r, &inputs(&[]), &rec()).unwrap();
-        assert!(!p.turbo && p.quality == Quality::Balanced && p.steps == 20);
-        assert!(p.notes.iter().any(|n| n.contains("Turbo model is not installed")));
+    fn every_job_runs_turbos_schedule() {
+        assert_eq!(GenerationRequest::default().quality, Quality::Fast, "the default");
+        for q in [Quality::Fast, Quality::Balanced, Quality::Quality] {
+            for sizes in [&[][..], &[(1200, 800)][..], &[(1200, 800), (900, 900)][..]] {
+                let mut r = req("a lighthouse at dusk");
+                r.quality = q;
+                let p = plan(&r, &inputs(sizes), &rec()).unwrap();
+                assert_eq!((p.steps, p.cfg), (8, 1.0), "{q:?}: fixed steps, no CFG");
+                assert_eq!(p.custom_sigmas, TURBO_SIGMAS.to_vec());
+            }
+        }
+        let r = req("a lighthouse at dusk");
+        assert_eq!(plan(&GenerationRequest { quality: Quality::Fast, ..r }, &inputs(&[]), &rec()).unwrap().working, Size::new(1024, 1024), "Fast = ~1 MP");
+        // Older clients' quality names still load.
+        let q = |s: &str| serde_json::from_str::<Quality>(s).unwrap();
+        assert_eq!((q(r#""turbo""#), q(r#""ultra""#), q(r#""quality""#)), (Quality::Fast, Quality::Quality, Quality::Quality));
     }
 
     #[test]
@@ -1150,16 +1069,13 @@ mod tests {
     }
 
     #[test]
-    fn negative_prompt_needs_cfg() {
+    fn negative_prompt_is_ignored() {
         let mut r = req("a lighthouse at dusk");
         r.negative_prompt = Some("blurry".into());
         let p = plan(&r, &inputs(&[]), &rec()).unwrap();
         assert_eq!(p.negative_prompt, "blurry", "still sent; the server ignores it at CFG 1");
         assert!(p.notes.iter().any(|n| n.contains("negative prompt is ignored")));
-        r.advanced.cfg = Some(4.0);
-        let p = plan(&r, &inputs(&[]), &rec()).unwrap();
-        assert!(!p.notes.iter().any(|n| n.contains("negative prompt")));
-        assert!(p.estimated_seconds > plan(&req("a lighthouse at dusk"), &inputs(&[]), &rec()).unwrap().estimated_seconds * 1.6, "CFG > 1 doubles the steps' cost");
+        assert!(!plan(&req("a fox"), &inputs(&[]), &rec()).unwrap().notes.iter().any(|n| n.contains("negative prompt")));
     }
 
     #[test]
@@ -1185,21 +1101,14 @@ mod tests {
         r.resolution = ResolutionMode::Auto;
         r.quality = Quality::Fast;
         let p = plan(&r, &inputs(&[]), &rec()).unwrap();
-        assert_eq!(p.steps, 20);
         assert!(p.output.area() <= 1_100_000);
         r.quality = Quality::Balanced;
         let p = plan(&r, &inputs(&[]), &rec()).unwrap();
-        assert_eq!(p.steps, 20);
         assert!(p.output.area() > 1_100_000 && p.output.area() <= 1536 * 1536 * 102 / 100, "Balanced = about 1.5K");
         r.quality = Quality::Quality;
         let p = plan(&r, &inputs(&[]), &rec()).unwrap();
-        assert_eq!(p.steps, 20);
         assert_eq!(p.working, Size::new(2752, 1536), "Quality = official native 2K bucket");
         assert_eq!(p.output, p.working);
-        r.quality = Quality::Ultra;
-        let p = plan(&r, &inputs(&[]), &rec()).unwrap();
-        assert_eq!(p.steps, 40, "Ultra = official 40 steps");
-        assert_eq!(p.working, Size::new(2752, 1536));
     }
 
     #[test]
@@ -1249,27 +1158,23 @@ mod tests {
         assert!(p.notes.iter().any(|n| n.contains("enlarged to 4032×3024")));
     }
 
-    fn env(upscaler: bool, refine: RefineMode) -> PlanInputs {
-        PlanInputs { upscaler: upscaler.then(|| "RealESRGAN_x4plus".to_string()), refine, sage_attention: true, ..inputs(&[]) }
+    fn env(upscaler: bool) -> PlanInputs {
+        PlanInputs { upscaler: upscaler.then(|| "RealESRGAN_x4plus".to_string()), sage_attention: true, ..inputs(&[]) }
     }
 
     #[test]
     fn generation_is_always_one_pass() {
-        // Any refine setting, any size: one diffusion pass, no cache.
-        for refine in [RefineMode::Off, RefineMode::Fast, RefineMode::Best] {
-            for (res, aspect) in [(ResolutionMode::Auto, "16:9"), (ResolutionMode::K15, "1:1"), (ResolutionMode::K2, "9:16")] {
-                for q in [Quality::Fast, Quality::Balanced, Quality::Quality, Quality::Ultra] {
-                    let mut r = req("a cozy mountain cabin");
-                    r.aspect_ratio = Some(aspect.into());
-                    r.resolution = res;
-                    r.quality = q;
-                    r.advanced.refine = Some(refine);
-                    let p = plan(&r, &env(true, refine), &rec()).unwrap();
-                    assert_eq!(p.cache_threshold, None, "{res:?} {aspect} {q:?}");
-                    assert!(!p.notes.iter().any(|n| n.contains("Two passes")));
-                    assert!(p.working.is_aligned(32));
-                    assert!(p.working.area() as f64 <= (token_budget(Some(16303)) * 256) as f64 * 1.02, "{:?}", p.working);
-                }
+        // Any size: one diffusion pass within the budget.
+        for (res, aspect) in [(ResolutionMode::Auto, "16:9"), (ResolutionMode::K15, "1:1"), (ResolutionMode::K2, "9:16")] {
+            for q in [Quality::Fast, Quality::Balanced, Quality::Quality] {
+                let mut r = req("a cozy mountain cabin");
+                r.aspect_ratio = Some(aspect.into());
+                r.resolution = res;
+                r.quality = q;
+                let p = plan(&r, &env(true), &rec()).unwrap();
+                assert!(!p.notes.iter().any(|n| n.contains("Two passes")), "{res:?} {aspect} {q:?}");
+                assert!(p.working.is_aligned(32));
+                assert!(p.working.area() as f64 <= (token_budget(Some(16303)) * 256) as f64 * 1.02, "{:?}", p.working);
             }
         }
     }
@@ -1280,7 +1185,7 @@ mod tests {
         let mut r = req("a city at night");
         r.aspect_ratio = Some("16:9".into());
         r.resolution = ResolutionMode::K2;
-        let p = plan(&r, &env(true, RefineMode::Fast), &rec()).unwrap();
+        let p = plan(&r, &env(true), &rec()).unwrap();
         assert_eq!(p.output, Size::new(2752, 1536));
         assert!(p.vae_tiling, "large decode is tiled");
 
@@ -1289,7 +1194,7 @@ mod tests {
         r.resolution = ResolutionMode::Custom;
         r.width = Some(3840);
         r.height = Some(2160);
-        let p = plan(&r, &env(true, RefineMode::Fast), &rec()).unwrap();
+        let p = plan(&r, &env(true), &rec()).unwrap();
         assert_eq!(p.output, Size::new(3840, 2160), "exact requested size is delivered");
         assert!(p.working.area() as f64 <= (token_budget(Some(16303)) * 256) as f64 * 1.02, "alignment padding only");
         assert!((p.content.width as f64 / p.content.height as f64 / (3840.0 / 2160.0) - 1.0).abs() < 0.01);
@@ -1298,7 +1203,7 @@ mod tests {
 
     #[test]
     fn edits_are_one_pass_and_enlarged_to_the_source() {
-        let i = PlanInputs { image_sizes: vec![Size::new(5120, 2880)], ..env(true, RefineMode::Fast) };
+        let i = PlanInputs { image_sizes: vec![Size::new(5120, 2880)], ..env(true) };
         let mut r = req("make it a dark version");
         r.quality = Quality::Fast;
         let p = plan(&r, &i, &rec()).unwrap();
@@ -1306,7 +1211,7 @@ mod tests {
         assert_eq!(p.working, Size::new(1376, 768));
         assert_eq!(p.references[0].canvas.canvas, p.working);
         assert_eq!(p.output, Size::new(5120, 2880));
-        assert_eq!((p.steps, p.cfg), (20, 1.0));
+        assert_eq!((p.steps, p.cfg), (8, 1.0));
         let esrgan = p.estimated_seconds;
         let p2 = plan(&r, &PlanInputs { upscaler: None, ..i.clone() }, &rec()).unwrap();
         assert!(esrgan > p2.estimated_seconds, "the enlargement is included in the estimate");
@@ -1317,9 +1222,9 @@ mod tests {
     fn quality_edit_shares_the_2k_budget_with_its_reference() {
         let mut r = req("remove the people");
         r.quality = Quality::Quality;
-        let i = PlanInputs { image_sizes: vec![Size::new(5712, 4284)], ..env(true, RefineMode::Best) };
+        let i = PlanInputs { image_sizes: vec![Size::new(5712, 4284)], ..env(true) };
         let p = plan(&r, &i, &rec()).unwrap();
-        assert_eq!((p.steps, p.cfg, p.cache_threshold), (20, 1.0, None));
+        assert_eq!((p.steps, p.cfg), (8, 1.0));
         // Native 2K plus a 2K reference exceeds 16 GB: both get half the budget (~2 MP each).
         // Each side rounds to 32 px, so allow the same 5 % slack as many_references_share_the_budget.
         assert!((1_850_000..=2_202_010).contains(&p.working.area()), "{:?}", p.working);
@@ -1377,7 +1282,7 @@ mod tests {
     fn many_references_share_the_budget() {
         let mut r = req("combine");
         r.resolution = ResolutionMode::Source;
-        let i = PlanInputs { image_sizes: vec![Size::new(3000, 2000), Size::new(2000, 2000), Size::new(2000, 2000)], ..env(true, RefineMode::Fast) };
+        let i = PlanInputs { image_sizes: vec![Size::new(3000, 2000), Size::new(2000, 2000), Size::new(2000, 2000)], ..env(true) };
         let p = plan(&r, &i, &rec()).unwrap();
         assert!(p.optimized_for_vram);
         let total: u64 = p.working.area() + p.references.iter().map(|r| r.canvas.canvas.area()).sum::<u64>();
@@ -1401,32 +1306,17 @@ mod tests {
     #[test]
     fn upscale_plans() {
         let mut r = GenerationRequest { mode: Mode::Upscale, upscale: Some(UpscaleSpec { scale: Some(2.0), ..Default::default() }), ..Default::default() };
-        let i = PlanInputs { image_sizes: vec![Size::new(1376, 768)], ..env(true, RefineMode::Fast) };
+        let i = PlanInputs { image_sizes: vec![Size::new(1376, 768)], ..env(true) };
         let p = plan(&r, &i, &rec()).unwrap();
         assert_eq!(p.mode, ResolvedMode::Upscale);
         assert_eq!(p.output, Size::new(2752, 1536));
         assert_eq!(p.steps, 0, "Quick runs no diffusion");
         assert_eq!(p.working, Size::new(1376, 768));
-        assert!(p.cache_threshold.is_none());
+        assert!(p.custom_sigmas.is_empty() && p.references.is_empty());
         assert!(p.estimated_seconds < 20.0, "{}", p.estimated_seconds);
 
-        r.upscale = Some(UpscaleSpec { method: UpscaleMethod::Detailed, width: Some(5120), height: Some(2880), ..Default::default() });
-        let p = plan(&r, &i, &rec()).unwrap();
-        assert_eq!(p.output, Size::new(5120, 2880));
-        assert_eq!(p.working, Size::new(2048, 1152), "refine at ~2K in the target's shape");
-        assert_eq!(p.strength, Some(DETAILED_DENOISE));
-        assert_eq!(p.steps, 20, "6 effective steps at denoise 0.3");
-        assert_eq!(p.cfg, 1.0);
-        assert_eq!(p.cache_threshold, Some(0.2));
-        assert_eq!(p.batch_count, 1);
-        assert_eq!(p.references.len(), 1);
-
-        r.advanced.refine = Some(RefineMode::Best);
-        let p = plan(&r, &i, &rec()).unwrap();
-        assert_eq!((p.steps, p.cache_threshold), (27, None));
-
         r.mode = Mode::Upscale;
-        assert!(plan(&r, &env(true, RefineMode::Fast), &rec()).is_err(), "needs an image");
+        assert!(plan(&r, &env(true), &rec()).is_err(), "needs an image");
     }
 
     #[test]
@@ -1564,16 +1454,16 @@ mod tests {
     #[test]
     fn estimate_matches_benchmarks_roughly() {
         // Benchmarks ran at CFG 6.
-        let s = estimate_seconds(Size::new(1024, 1024), &[], 20, 1, false, false, 6.0);
+        let s = estimate_seconds(Size::new(1024, 1024), &[], 20, 1, false, 6.0);
         assert!((40.0..55.0).contains(&s), "{s}");
-        let s = estimate_seconds(Size::new(2048, 2048), &[], 3, 1, false, false, 6.0);
+        let s = estimate_seconds(Size::new(2048, 2048), &[], 3, 1, false, 6.0);
         assert!((40.0..60.0).contains(&s), "{s}");
         // 2K bench (sd-cli incl. ~3 s load): sage single pass 104 s.
-        let s = estimate_seconds(Size::new(2048, 1152), &[], 20, 1, false, true, 6.0);
+        let s = estimate_seconds(Size::new(2048, 1152), &[], 20, 1, true, 6.0);
         assert!((80.0..105.0).contains(&s), "native {s}");
         // CFG 1 runs one model pass per step: 40 steps cost about what 20 did at CFG 6.
-        let one = estimate_seconds(Size::new(1024, 1024), &[], 40, 1, false, true, 1.0);
-        let two = estimate_seconds(Size::new(1024, 1024), &[], 20, 1, false, true, 6.0);
+        let one = estimate_seconds(Size::new(1024, 1024), &[], 40, 1, true, 1.0);
+        let two = estimate_seconds(Size::new(1024, 1024), &[], 20, 1, true, 6.0);
         assert!((one - two).abs() < 1.0, "{one} vs {two}");
     }
 
@@ -1590,15 +1480,15 @@ mod tests {
         assert!(r.preserve_dimensions);
         assert_eq!(r.outpaint.unwrap().units, ExpansionUnits::Percent);
         assert_eq!(r.advanced.output_format, Some(OutputFormat::Webp));
-        assert!(r.upscale.is_none() && r.advanced.refine.is_none());
+        assert!(r.upscale.is_none());
 
+        // Older clients: Detailed upscales and their refine effort map to the upscaler model.
         let r: GenerationRequest = serde_json::from_str(
-            r#"{"prompt":"","mode":"upscale","images":["gen:abc"],"upscale":{"method":"detailed","width":3840},"advanced":{"refine":"best"}}"#,
+            r#"{"prompt":"","mode":"upscale","images":["gen:abc"],"upscale":{"method":"detailed","width":3840},"advanced":{"refine":"best","cfg":4,"steps":30}}"#,
         )
         .unwrap();
         assert_eq!(r.mode, Mode::Upscale);
-        assert_eq!(r.upscale.unwrap().method, UpscaleMethod::Detailed);
+        assert_eq!(r.upscale.unwrap().method, UpscaleMethod::Quick);
         assert_eq!(r.upscale.unwrap().width, Some(3840));
-        assert_eq!(r.advanced.refine, Some(RefineMode::Best));
     }
 }

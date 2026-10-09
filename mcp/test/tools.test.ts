@@ -14,7 +14,8 @@ describe("input validation", () => {
     expect(obj("generate_image").safeParse({ prompt: "x", width: 5000, height: 512 }).success).toBe(false);
     expect(obj("generate_image").safeParse({ prompt: "x", aspect_ratio: "16:9" }).success).toBe(true);
     expect(obj("generate_image").safeParse({ prompt: "x", aspect_ratio: "wide" }).success).toBe(false);
-    expect(obj("generate_image").safeParse({ prompt: "x", quality: "ultra" }).success).toBe(true);
+    expect(obj("generate_image").safeParse({ prompt: "x", quality: "quality" }).success).toBe(true);
+    expect(obj("generate_image").safeParse({ prompt: "x", quality: "ultra" }).success).toBe(false);
     expect(obj("generate_image").safeParse({ prompt: "x", quality: "max" }).success).toBe(false);
     expect(obj("generate_image").safeParse({ prompt: "x", seed: -2 }).success).toBe(false);
   });
@@ -36,12 +37,10 @@ describe("input validation", () => {
 });
 
 describe("upscale_image", () => {
-  it("validates factor, size and method", () => {
+  it("validates factor and size", () => {
     expect(obj("upscale_image").safeParse({ image_path: "a.png" }).success).toBe(true);
     expect(obj("upscale_image").safeParse({ image_path: "a.png", scale: 1 }).success).toBe(false);
-    expect(obj("upscale_image").safeParse({ image_path: "a.png", scale: 2, method: "detailed" }).success).toBe(true);
     expect(obj("upscale_image").safeParse({ image_path: "a.png", width: 9000 }).success).toBe(false);
-    expect(obj("upscale_image").safeParse({ image_path: "a.png", method: "ultra" }).success).toBe(false);
   });
   it("scale and width together are rejected before any service call", async () => {
     const ctx = { client: {} as never, cwd: process.cwd(), progress: () => {} };

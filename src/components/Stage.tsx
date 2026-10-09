@@ -11,9 +11,9 @@ import { native } from "../lib/native";
 import {
   addAsReference, cancelJob, focusPrompt, getState, itemSource, removeSessionItem, reusePrompt, selectedItem, selectItem, sessionLabels, sessionLinks, setState, submitRequest, toastError, toastInfo, useStore, type SessionItem,
 } from "../lib/store";
-import type { GenerationRecord, JobView, Mode, Size, UpscaleMethod } from "../lib/types";
+import type { GenerationRecord, JobView, Mode, Size } from "../lib/types";
 import { CompareFrame } from "./Compare";
-import { IconButton, Popover, Seg, useFit } from "./ui";
+import { IconButton, Popover, useFit } from "./ui";
 import { FullscreenButton, ZoomImage } from "./Viewer";
 import { fileManager, shortcut } from "../lib/platform";
 
@@ -158,10 +158,9 @@ function InfoPanel({ g }: { g: GenerationRecord }) {
   );
 }
 
-/** Upscale menu: Quick (upscaler model only) or Detailed (refine at ~2K, then the upscaler model). */
+/** Upscale menu: the upscaler model straight on the image (no diffusion). */
 function UpscaleMenu(props: { source: string; size: Size; original?: Size | null; parentId?: string | null; close: () => void }) {
   const { width: w, height: h } = props.size;
-  const [method, setMethod] = useState<UpscaleMethod>("quick");
   const up = useStore((s) => s.status?.upscaler);
   const via = up?.available ? upscalerLabel(up.model) : "Lanczos";
   const [customW, setCustomW] = useState(Math.min(MAX_UPSCALE_SIDE, w * 2));
@@ -169,22 +168,12 @@ function UpscaleMenu(props: { source: string; size: Size; original?: Size | null
   const custom = sizeForWidth(w, h, customW);
   const customOk = custom.width > w && custom.width <= MAX_UPSCALE_SIDE && custom.height <= MAX_UPSCALE_SIDE && custom.width * custom.height <= MAX_UPSCALE_AREA;
   const go = (t: Size) => {
-    submitRequest(upscaleRequest(props.source, t, method, props.parentId));
+    submitRequest(upscaleRequest(props.source, t, props.parentId));
     props.close();
   };
   return (
     <div style={{ width: 300, padding: 8, display: "flex", flexDirection: "column", gap: 10 }}>
-      <Seg<UpscaleMethod>
-        value={method}
-        options={[
-          { value: "quick", label: "Quick" },
-          { value: "detailed", label: "Detailed" },
-        ]}
-        onChange={setMethod}
-      />
-      <span className="muted">
-        {method === "quick" ? `${via} only: a few seconds, adds no new content.` : `Re-renders fine detail at about 2K (low denoise), then ${via}. About a minute.`}
-      </span>
+      <span className="muted">{via}: a few seconds, adds no new content.</span>
       {targets.map((t) => (
         <button key={t.key} className="btn" onClick={() => go(t)}>
           {t.label} · {t.width}×{t.height}

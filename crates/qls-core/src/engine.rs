@@ -4,7 +4,6 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -19,7 +18,7 @@ use crate::geometry::Size;
 use crate::imaging::{self, LoadedImage};
 use crate::paths;
 use crate::pipeline;
-use crate::planner::{self, GenerationRequest, Mode, OutputFormat, Plan, PlanInputs, ResolutionMode, ResolvedMode, UpscaleMethod};
+use crate::planner::{self, GenerationRequest, Mode, OutputFormat, Plan, PlanInputs, ResolutionMode, ResolvedMode};
 use crate::process::{BackendProgress, BackendStage, ProgressParser, ServerManager, ServerState};
 use crate::sdcpp::{BackendJobStatus, CancelOutcome, SdcppClient, UpscaleRequest};
 use crate::store::{GenerationRecord, InputRecord, PipelineRecord, ReferenceRecord, Store, new_id, now_rfc3339};
@@ -87,9 +86,6 @@ pub enum Event {
 
 pub struct Engine {
     cfg: RwLock<AppConfig>,
-    /// The server should run the Turbo model (the last job's choice; Turbo is the default),
-    /// so starting it ahead of a job loads the model that job will most likely need.
-    prefer_turbo: AtomicBool,
     pub server: Arc<ServerManager>,
     pub store: Arc<Store>,
     /// Private mode: records in memory, files under `private_dir`; wiped by `clear_private`,
@@ -128,13 +124,11 @@ pub fn plan_inputs(cfg: &AppConfig, image_sizes: Vec<Size>, mask: Option<(Size, 
         mask,
         vram_total_mib,
         upscaler: cfg.upscaler_file().map(|_| cfg.upscaler_model.trim().to_string()),
-        refine: cfg.refine_mode,
         server_vae_tiling: cfg.vae_tile_size > 0,
         sage_attention: cfg.uses_sage_attention(),
         speed_factor: None,
         hide_uncalibrated: !crate::speed::trust_uncalibrated(cfg),
         unified_memory: false,
-        turbo_available: cfg.turbo_model().is_some(),
     }
 }
 
@@ -165,7 +159,6 @@ impl Engine {
             installer: crate::installer::Installer::new(),
             backend_version: Mutex::new(None),
             last_activity: Mutex::new(Instant::now()),
-            prefer_turbo: AtomicBool::new(true),
         }))
     }
 
@@ -337,14 +330,7 @@ impl Engine {
             created_at: now_rfc3339(),
             started_at: None,
             finished_at: None,
-            prompt: if upscale && request.prompt.trim().is_empty() {
-                match request.upscale.map(|u| u.method).unwrap_or_default() {
-                    UpscaleMethod::Quick => "Upscale (Quick)".into(),
-                    UpscaleMethod::Detailed => "Upscale (Detailed)".into(),
-                }
-            } else {
-                request.prompt.clone()
-            },
+            prompt: if upscale && request.prompt.trim().is_empty() { "Upscale".into() } else { request.prompt.clone() },
             client: request.client.clone(),
             plan: None,
             seed: request.seed,
@@ -471,16 +457,6 @@ impl Engine {
         Ok((img, rec))
     }
 
-    /// The configuration to start the server with: the Turbo model when the last job used it
-    /// (or no job ran yet) and it is installed, otherwise the active profile's model.
-    pub fn server_config(&self) -> AppConfig {
-        self.server_config_for(&self.config(), self.prefer_turbo.load(Ordering::Relaxed))
-    }
-
-    fn server_config_for(&self, cfg: &AppConfig, turbo: bool) -> AppConfig {
-        turbo.then(|| cfg.with_turbo()).flatten().unwrap_or_else(|| cfg.clone())
-    }
-
     /// How this machine's measured speed compares with the time model (None: not measured).
     fn speed_factor(&self, cfg: &AppConfig) -> Option<f32> {
         self.speed.get(&crate::speed::machine_key(cfg, self.gpu().as_ref())).map(|c| c.factor)
@@ -546,7 +522,7 @@ impl Engine {
         let seed = request.seed.unwrap_or_else(random_seed);
         let mut request = request;
         if plan.mode == ResolvedMode::Upscale && request.prompt.trim().is_empty() {
-            request.prompt = self.upscale_prompt(&request, plan.steps == 0);
+            request.prompt = self.upscale_prompt(&request);
         }
         self.update(id, |j| {
             j.view.plan = Some(plan.clone());
@@ -556,16 +532,13 @@ impl Engine {
 
         // 3. Backend.
         // A job that also starts the server is not a fair speed sample (startup, first load).
-        // Turbo runs on its own diffusion model: switching restarts the server with the other one.
-        self.prefer_turbo.store(plan.turbo, Ordering::Relaxed);
-        let run_cfg = self.server_config_for(&cfg, plan.turbo);
-        let model_loaded = self.server.capabilities().is_some_and(|c| c.model_matches(&run_cfg.profile().diffusion_model));
+        let model_loaded = self.server.capabilities().is_some_and(|c| c.model_matches(&profile.diffusion_model));
         let mut cold_start = false;
         if self.server.status().state != ServerState::Ready || self.server.owned_alive() == Some(false) || !model_loaded {
             cold_start = true;
             self.update(id, |j| j.view.status = JobStatus::StartingBackend);
             self.emit_server();
-            let r = self.server.ensure_ready(&run_cfg).await;
+            let r = self.server.ensure_ready(&cfg).await;
             self.emit_server();
             r?;
         }
@@ -587,7 +560,7 @@ impl Engine {
                 j.view.notes.push(format!("Upscaler model {} not found; enlarged with Lanczos. Put {}.pth in the upscalers folder for sharper results.", cfg.upscaler_model, cfg.upscaler_model))
             });
         }
-        let quick_upscale = plan.upscale.map(|u| u.method == UpscaleMethod::Quick).unwrap_or(false);
+        let quick_upscale = plan.upscale.is_some();
         let icc = images.first().and_then(|i| i.icc_profile.clone());
 
         let (contents, post) = if quick_upscale {
@@ -605,19 +578,6 @@ impl Engine {
             };
             (vec![src.pixels], post)
         } else {
-            let mut images = images;
-            if plan.upscale.is_some() {
-                // Detailed: bring the source to the refine size first (ESRGAN when enlarging).
-                let target = Size::new(plan.content.width, plan.content.height);
-                let src = std::mem::replace(&mut images[0].pixels, image::RgbaImage::new(1, 1));
-                let (enlarged, _) = self.enlarge(id, &client, src, Some(target), esrgan.as_deref()).await?;
-                images[0].pixels = enlarged;
-                self.update(id, |j| {
-                    j.view.status = JobStatus::Preparing;
-                    j.view.stage = None;
-                });
-            }
-
             // 4. Build the request (CPU work).
             let plan2 = plan.clone();
             let prompt = request.prompt.clone();
@@ -658,7 +618,7 @@ impl Engine {
                     }
                 }
                 if self.is_cancelled(id) {
-                    return self.cancel_running(id, &client, &accepted.id, &self.server_config()).await;
+                    return self.cancel_running(id, &client, &accepted.id, &self.config()).await;
                 }
                 if last_poll.elapsed() >= Duration::from_millis(500) {
                     last_poll = Instant::now();
@@ -745,7 +705,7 @@ impl Engine {
                 refine_steps: None,
                 refine_denoise: None,
                 hires_upscaler: None,
-                cache_threshold: plan.cache_threshold,
+                cache_threshold: None,
                 enlarged_from: enlarged_with.is_some().then_some(before),
                 enlarged_with,
             };
@@ -777,15 +737,12 @@ impl Engine {
         Ok(())
     }
 
-    /// Prompt for an upscale request that has none: the source's own prompt for
-    /// text-to-image results, otherwise a neutral description (an edit instruction such
-    /// as "make it darker" would keep pushing the image during the refine).
-    fn upscale_prompt(&self, req: &GenerationRequest, quick: bool) -> String {
+    /// Label of an upscale request that has no prompt: the source's own prompt, if any.
+    fn upscale_prompt(&self, req: &GenerationRequest) -> String {
         let source = req.images.first().and_then(|s| s.strip_prefix("gen:")).and_then(|g| self.gen_store(g).get_generation(g).ok());
         match source {
-            Some(g) if g.mode == "generate" || (quick && !g.prompt.trim().is_empty()) => g.prompt,
-            _ if quick => "Upscaled image".into(),
-            _ => planner::UPSCALE_PROMPT.into(),
+            Some(g) if !g.prompt.trim().is_empty() => g.prompt,
+            _ => "Upscaled image".into(),
         }
     }
 
@@ -958,7 +915,7 @@ impl Engine {
             working_height: plan.working.height,
             model: cfg.profile().model_name(),
             sampler: plan.sampler.clone(),
-            scheduler: plan.scheduler.clone(),
+            scheduler: None,
             steps: plan.steps,
             cfg: plan.cfg,
             strength: plan.strength,
@@ -1093,7 +1050,6 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::RefineMode;
 
     /// End to end on a real iPhone HEIC (QLS_TEST_HEIC, ffmpeg on PATH): import, simulated
     /// edit (left half 2 stops darker), HDR decision and Ultra HDR file. QLS_TEST_OUT keeps it.
@@ -1177,7 +1133,7 @@ mod tests {
         let up = GenerationRequest { mode: Mode::Upscale, ..Default::default() };
         assert!(e.submit(up.clone(), None).is_err());
         let j3 = e.submit(GenerationRequest { images: vec!["gen:x".into()], ..up }, None).unwrap();
-        assert_eq!(j3.prompt, "Upscale (Quick)");
+        assert_eq!(j3.prompt, "Upscale");
         // Closing the desktop app cancels only its own jobs.
         let ui = e.submit(GenerationRequest { prompt: "ui job".into(), client: Some("ui".into()), ..Default::default() }, None).unwrap();
         let mcp = e.submit(GenerationRequest { prompt: "mcp job".into(), client: Some("mcp".into()), ..Default::default() }, None).unwrap();
@@ -1221,14 +1177,11 @@ mod tests {
         let i = plan_inputs(&cfg, vec![], None, Some(16303));
         assert_eq!(i.upscaler, None, "no model file -> Lanczos");
         assert!(i.server_vae_tiling && i.sage_attention);
-        assert_eq!(i.refine, RefineMode::Fast);
         std::fs::write(dir.path().join("4x-UltraSharp.pth"), b"x").unwrap();
         cfg.vae_tile_size = 0;
-        cfg.refine_mode = RefineMode::Best;
         let i = plan_inputs(&cfg, vec![], None, None);
         assert_eq!(i.upscaler.as_deref(), Some("4x-UltraSharp"));
         assert!(!i.server_vae_tiling);
-        assert_eq!(i.refine, RefineMode::Best);
     }
 
     #[test]

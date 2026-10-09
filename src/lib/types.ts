@@ -4,13 +4,15 @@ export type Mode = "auto" | "generate" | "edit" | "inpaint" | "outpaint" | "mult
 export type ResolvedMode = Exclude<Mode, "auto">;
 /** What an inpaint does in the painted area. */
 export type InpaintAction = "edit" | "remove" | "replace" | "add";
-export type Quality = "fast" | "balanced" | "quality" | "ultra" | "turbo";
+/** Presets of the Turbo model (8 steps, no CFG): ~1 MP, ~1.5K, native 2K. */
+export type Quality = "fast" | "balanced" | "quality";
 export type ResolutionMode = "auto" | "source" | "1k" | "1.5k" | "2k" | "custom";
 export type OutputFormat = "png" | "jpeg" | "webp";
 export type Units = "pixels" | "percent";
-/** Effort of a Detailed upscale ("off" is legacy and behaves like fast). */
+/** Refine effort of older versions' two-pass records (gallery details only). */
 export type RefineMode = "off" | "fast" | "best";
-export type UpscaleMethod = "quick" | "detailed";
+/** The upscaler model only (older versions also had "detailed"). */
+export type UpscaleMethod = "quick";
 
 export interface UpscaleSpec { method: UpscaleMethod; scale?: number | null; width?: number | null; height?: number | null }
 
@@ -20,15 +22,11 @@ export interface Rect { x: number; y: number; width: number; height: number }
 export interface OutpaintSpec { left: number; right: number; top: number; bottom: number; units: Units }
 
 export interface Advanced {
-  steps?: number | null;
-  cfg?: number | null;
   sampler?: string | null;
-  scheduler?: string | null;
   strength?: number | null;
   batch_count?: number | null;
   output_format?: OutputFormat | null;
   vae_tiling?: boolean | null;
-  refine?: RefineMode | null;
   /** Keep a HEIC source's HDR gain map (Ultra HDR JPEG); null = on. */
   hdr?: boolean | null;
 }
@@ -71,7 +69,6 @@ export interface Plan {
   steps: number;
   cfg: number;
   sampler: string;
-  scheduler: string | null;
   strength: number | null;
   batch_count: number;
   vae_tiling: boolean;
@@ -81,7 +78,6 @@ export interface Plan {
   optimized_for_vram: boolean;
   /** Calibrated to this machine after its first image; 0 = not measured yet. */
   estimated_seconds: number;
-  cache_threshold: number | null;
   upscaler: string | null;
   upscale: { method: UpscaleMethod; source: Size } | null;
 }
@@ -118,7 +114,8 @@ export interface GenerationRecord {
   steps: number;
   cfg: number;
   strength: number | null;
-  quality: Quality;
+  /** May hold an older version's preset name ("turbo", "ultra"): see `normalizeQuality`. */
+  quality: Quality | string;
   resolution: ResolutionMode;
   references: ReferenceRecord[];
   mask_input_id: string | null;
@@ -178,8 +175,7 @@ export interface StatusResponse {
   gpu: { name: string; vendor: string; unified: boolean; memory_total_mib: number; memory_used_mib: number; memory_free_mib: number; driver_version: string } | null;
   active_job: JobView | null;
   queue: { queued: number; jobs: JobView[] };
-  upscaler?: { model: string; available: boolean; refine_mode: RefineMode };
-  turbo?: { available: boolean };
+  upscaler?: { model: string; available: boolean };
   setup_complete: boolean;
 }
 
@@ -222,7 +218,6 @@ export interface AppConfig {
   upscalersDir: string | null;
   upscalerModel: string;
   upscaleTileSize: number;
-  refineMode: RefineMode;
   extraServerArgs: string[];
   outputDir: string;
   keepServerRunning: boolean;

@@ -154,7 +154,7 @@ whole thing takes a few minutes, and the setup screen shows what Kokon can do wh
 | **macOS** | 26 Tahoe | latest |
 | **Unified memory** | 16 GB: works, but slowly (lightest mode, about 1 megapixel) | 32 GB or more (also gets native 2K) |
 | **Disk** | 15 GB free | 25 GB free |
-| **Time per image** | About 10 minutes for 1024×1024 on a 16 GB M2 Pro; Fast renders at 768×768 and enlarges, which is quicker | Faster on Max/Ultra chips with more memory; Turbo (the default) needs 8 steps instead of 20 |
+| **Time per image** | About 10 minutes for 1024×1024 on a 16 GB M2 Pro; Fast renders at 768×768 and enlarges, which is quicker | Faster on Max/Ultra chips with more memory |
 
 Kokon measures your machine's speed with the first image and shows realistic time estimates
 from then on.
@@ -177,15 +177,16 @@ preset later from Settings → Models → **Set up models…**
 
 | Preset | Diffusion model | Text encoder (in RAM) | Download | Tested on real hardware |
 | --- | --- | --- | --- | --- |
-| 12 GB | Qwen-Image 2.1 Q4_K_M (4.2 GB) | Qwen3-VL 8B Q4_K_M | ~12 GB | ✅ RTX 5070 (12 GB) |
-| 16 GB | Qwen-Image 2.1 Q4_K_M | Qwen3-VL 8B Q4_K_M | ~12 GB | ✅ RTX 5070 Ti |
-| 24 GB | Qwen-Image 2.1 Q8_0 (7.6 GB) | Qwen3-VL 8B Q4_K_M | ~15 GB | not yet |
-| 32 GB+ | Qwen-Image 2.1 Q8_0 | Qwen3-VL 8B Q8_0 (8.7 GB) | ~19 GB | not yet |
+| 12 GB | Qwen-Image 2.1 Turbo Q4_K (4.1 GB) | Qwen3-VL 8B Q4_K_M | ~12 GB | ✅ RTX 5070 (12 GB) |
+| 16 GB | Qwen-Image 2.1 Turbo Q4_K | Qwen3-VL 8B Q4_K_M | ~12 GB | ✅ RTX 5070 Ti |
+| 24 GB | Qwen-Image 2.1 Turbo Q4_K | Qwen3-VL 8B Q4_K_M | ~12 GB | not yet |
+| 32 GB+ | Qwen-Image 2.1 Turbo Q4_K | Qwen3-VL 8B Q8_0 (8.7 GB) | ~16 GB | not yet |
 
 Every preset also gets stable-diffusion.cpp (the CUDA 12 build on NVIDIA, the Vulkan build on AMD and Intel, the Metal build on a Mac), the Qwen-Image 2.1 VAE, the
-Qwen3-VL vision projector, the 8-step Qwen-Image 2.1 Turbo model and, optionally, the 4x-UltraSharp upscaler. The sources are the
-official [Qwen-Image 2.1](https://huggingface.co/Qwen/Qwen-Image-2.1) weights through
-[unsloth/Qwen-Image-2.1-GGUF](https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF),
+Qwen3-VL vision projector and, optionally, the 4x-UltraSharp upscaler. The image model is Qwen's
+official 8-step [Qwen-Image 2.1 Turbo](https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo) through
+[DogukanUrker/Qwen-Image-2.1-Turbo-GGUF](https://huggingface.co/DogukanUrker/Qwen-Image-2.1-Turbo-GGUF);
+the other sources are
 [Qwen/Qwen3-VL-8B-Instruct-GGUF](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF) and
 [Comfy-Org/Qwen-Image-2.1](https://huggingface.co/Comfy-Org/Qwen-Image-2.1).
 
@@ -204,7 +205,7 @@ Other weights, such as fine-tunes, can be selected in Settings → Models.
 | Several photos + a sentence | **Combine** them | Refer to them as “image 1”, “image 2”… and drag to reorder |
 | A brushed area + an action | **Inpaint**: Change, Remove, Replace or Add | Remove needs no prompt |
 | Dragged edges | **Expand** the photo (outpainting) | Or type pixel or percent values |
-| Any result | **Upscale** to 2×, 4K, the source size or a custom width | Quick (seconds) or Detailed (about a minute) |
+| Any result | **Upscale** to 2×, 4K, the source size or a custom width | With the upscaler model, in seconds |
 
 <p align="center">
   <img src="docs/media/screenshot-app.png" alt="The Kokon window: a cat-and-cowboy western showdown built from three generated images, combined, edited and expanded, with its version tree, the compare views and the prompt box" width="860">
@@ -218,9 +219,9 @@ opened in Explorer or Finder. A few things make that loop fast:
   Undo returns to the version the current one came from, and nothing is ever deleted.
 - **Gallery**: every image keeps its full recipe (prompt, seed, settings, pipeline) and reopens
   with one click. The recipe is also embedded in the PNG.
-- **Quality presets**: **Turbo** (the default: ~1 MP in 8 steps with Qwen's official
-  distilled model, about twice as fast), Fast, Balanced, Quality (native 2K) and Ultra (native 2K
-  with the official 40 steps), so you never need to tune steps or guidance.
+- **Quality presets**: **Fast** (the default, ~1 MP), **Balanced** (~1.5K) and **Quality**
+  (native 2K). All run Qwen's official 8-step Turbo model with its own schedule, so you never
+  need to tune steps or guidance.
 
 ## How it works
 
@@ -340,9 +341,8 @@ Invoke-RestMethod -Method Post "http://127.0.0.1:$($i.port)/api/v1/generate" -He
 Simple-operation fields: `prompt`, `image` / `images[]`, `mask`, `action`
 (`edit|remove|replace|add`, inpainting), `width`, `height`, `aspect_ratio`, `quality`
 (`fast|balanced|quality`), `seed`, `output_path`, `preserve_dimensions`, `private`,
-`left/right/top/bottom` + `units` (`pixels|percent`) for outpainting, `scale` and `method`
-(`quick|detailed`) for upscaling. Full requests (`/jobs`) also accept `"mode": "upscale"` with
-`"upscale": {"method", "scale" | "width"/"height"}` and `"advanced": {"refine": "fast|best"}`.
+`left/right/top/bottom` + `units` (`pixels|percent`) for outpainting, `scale` for upscaling.
+Full requests (`/jobs`) also accept `"mode": "upscale"` with `"upscale": {"scale" | "width"/"height"}`.
 
 </details>
 
@@ -532,7 +532,7 @@ or macOS version and the log from `KokonData/logs` (see the table above).
 - [x] macOS on Apple Silicon (beta, Metal)
 - [x] One-click in-app updates on Windows and Mac
 - [ ] AMD and Intel GPUs through Vulkan (beta now; works on NVIDIA, to verify on AMD/Intel)
-- [ ] Fast mode with a turbo LoRA (an edit in about 15 seconds)
+- [x] Qwen's official 8-step Turbo model for every preset
 - [ ] Background removal and transparent cutouts
 - [ ] Batch edits: one instruction for a whole folder
 - [ ] Plugins for Krita, GIMP and Photoshop through the local API
@@ -612,8 +612,8 @@ upscaler are downloaded from their authors and keep their own licenses (see the
 [FAQ](#faq)).
 
 Kokon builds on [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) by
-leejet, [Qwen-Image 2.1](https://huggingface.co/Qwen/Qwen-Image-2.1) by the Qwen team,
-[Unsloth](https://huggingface.co/unsloth)'s GGUF conversions, [Tauri](https://tauri.app) and
+leejet, [Qwen-Image 2.1](https://huggingface.co/Qwen/Qwen-Image-2.1) and its Turbo model by the
+Qwen team, DogukanUrker's Turbo GGUF conversions, [Tauri](https://tauri.app) and
 4x-UltraSharp by Kim2091. Thank you.
 
 <p align="center">

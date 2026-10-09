@@ -169,16 +169,16 @@ pub fn prepare(plan: &Plan, prompt: &str, seed: i64, images: &[LoadedImage], mas
         image_preprocess: Vec::new(),
         sample_params: SampleParams {
             sample_method: Some(plan.sampler.clone()),
-            scheduler: plan.scheduler.clone(),
+            scheduler: None,
             sample_steps: plan.steps,
-            flow_shift: plan.flow_shift,
+            flow_shift: None,
             custom_sigmas: plan.custom_sigmas.clone(),
             guidance: Guidance { txt_cfg: plan.cfg, img_cfg: None },
         },
         vae_tiling_params: vae_tiling_params(plan.vae_tiling, opts.server_vae_tile_size),
         hires: None,
-        cache_mode: plan.cache_threshold.map(|_| "easycache".to_string()),
-        cache_option: plan.cache_threshold.map(|t| format!("threshold={t}")),
+        cache_mode: None,
+        cache_option: None,
         output_format: "png".into(),
         embed_image_metadata: false,
     };
@@ -276,17 +276,7 @@ pub fn prepare(plan: &Plan, prompt: &str, seed: i64, images: &[LoadedImage], mas
                 .round() as u32;
             kind = PostKind::Outpaint { source: src.clone(), feather: feather_final.max(2) };
         }
-        ResolvedMode::Upscale => {
-            // Detailed upscale: plain img2img over the (already enlarged) image.
-            need_images(1)?;
-            if plan.steps == 0 {
-                return Err(AppError::internal("a quick upscale has no diffusion request"));
-            }
-            let canvas = to_canvas(&images[0].pixels, &plan.references[0].canvas);
-            req.init_image = Some(png_b64(&canvas)?);
-            req.strength = plan.strength;
-            req.image_preprocess = vec!["target=init,mode=none".into()];
-        }
+        ResolvedMode::Upscale => return Err(AppError::internal("an upscale has no diffusion request")),
     }
 
     Ok(PreparedJob {
@@ -482,8 +472,7 @@ mod tests {
     use super::*;
     use crate::config::RecommendedSettings;
     use crate::geometry::ExpansionUnits;
-    use crate::config::RefineMode;
-    use crate::planner::{GenerationRequest, Mode, OutpaintSpec, PlanInputs, Quality, ResolutionMode, UpscaleMethod, UpscaleSpec, plan};
+    use crate::planner::{GenerationRequest, Mode, OutpaintSpec, PlanInputs, Quality, ResolutionMode, UpscaleSpec, plan};
     use crate::sdcpp::b64_decode;
 
     fn env(sizes: Vec<Size>) -> PlanInputs {
@@ -516,14 +505,14 @@ mod tests {
         let mut r = req("a cozy mountain cabin");
         r.aspect_ratio = Some("16:9".into());
         r.quality = Quality::Quality;
-        r.advanced.refine = Some(RefineMode::Best);
         let p = plan(&r, &env(vec![]), &RecommendedSettings::default()).unwrap();
         let j = prepare(&p, &r.prompt, 42, &[], None, &esrgan_opts()).unwrap();
         let v = serde_json::to_value(&j.request).unwrap();
         assert_eq!((v["width"].as_u64(), v["height"].as_u64()), (Some(p.working.width as u64), Some(p.working.height as u64)));
         assert!(v.get("hires").map(|h| h.is_null()).unwrap_or(true), "no second pass");
         assert!(v.get("cache_mode").map(|c| c.is_null()).unwrap_or(true));
-        assert_eq!(v["sample_params"]["sample_steps"], 20);
+        assert_eq!(v["sample_params"]["sample_steps"], 8);
+        assert_eq!(v["sample_params"]["custom_sigmas"].as_array().unwrap().len(), 9, "Turbo's schedule");
         assert_eq!(v["sample_params"]["guidance"]["txt_cfg"], 1.0, "official: no CFG");
         assert!(p.working.area() > 2_500_000, "Quality renders toward native 2K: {:?}", p.working);
     }
@@ -549,26 +538,11 @@ mod tests {
     }
 
     #[test]
-    fn detailed_upscale_is_img2img_at_2k() {
+    fn upscales_never_reach_img_gen() {
         let img = photo(1376, 768);
-        let r = GenerationRequest {
-            mode: Mode::Upscale,
-            upscale: Some(UpscaleSpec { method: UpscaleMethod::Detailed, width: Some(5120), height: Some(2880), scale: None }),
-            preserve_dimensions: true,
-            ..Default::default()
-        };
+        let r = GenerationRequest { mode: Mode::Upscale, upscale: Some(UpscaleSpec { width: Some(5120), ..Default::default() }), ..Default::default() };
         let p = plan(&r, &env(vec![img.size()]), &RecommendedSettings::default()).unwrap();
-        let j = prepare(&p, crate::planner::UPSCALE_PROMPT, 9, std::slice::from_ref(&img), None, &esrgan_opts()).unwrap();
-        assert_eq!((j.request.width, j.request.height), (2048, 1152));
-        assert_eq!(decode(j.request.init_image.as_ref().unwrap()).dimensions(), (2048, 1152));
-        assert!(j.request.ref_images.is_empty() && j.request.mask_image.is_none() && j.request.hires.is_none());
-        assert_eq!(j.request.strength, Some(0.3));
-        assert_eq!(j.request.image_preprocess, vec!["target=init,mode=none".to_string()]);
-        assert_eq!(enlarge_target(&j.post), Some(Size::new(5120, 2880)));
-
-        let quick = GenerationRequest { upscale: Some(UpscaleSpec::default()), ..r };
-        let p = plan(&quick, &env(vec![img.size()]), &RecommendedSettings::default()).unwrap();
-        assert!(prepare(&p, "", 9, std::slice::from_ref(&img), None, &esrgan_opts()).is_err(), "quick upscales never reach img_gen");
+        assert!(prepare(&p, "", 9, std::slice::from_ref(&img), None, &esrgan_opts()).is_err(), "the upscaler model only");
     }
 
     #[test]
@@ -683,7 +657,6 @@ mod tests {
         let img = photo(1920, 1080);
         let mut r = req("make it night");
         r.resolution = ResolutionMode::Source;
-        r.advanced.refine = Some(RefineMode::Off);
         let p = plan(&r, &PlanInputs { image_sizes: vec![img.size()], vram_total_mib: Some(16303), ..Default::default() }, &RecommendedSettings::default()).unwrap();
         let j = prepare(&p, &r.prompt, 7, std::slice::from_ref(&img), None, &BackendOptions::default()).unwrap();
         assert_eq!((j.request.width, j.request.height), (1920, 1088));
@@ -879,9 +852,9 @@ mod tests {
         let v = serde_json::to_value(&j.request).unwrap();
         assert!(v.get("ref_images").is_none() && v.get("init_image").is_none());
         assert_eq!(v["seed"], 5);
-        assert_eq!(v["width"], 1536);
-        let out = postprocess(fake_backend(1536, 1536), &j.post).unwrap();
-        assert_eq!(out.dimensions(), (1536, 1536));
+        assert_eq!(v["width"], 1024);
+        let out = postprocess(fake_backend(1024, 1024), &j.post).unwrap();
+        assert_eq!(out.dimensions(), (1024, 1024));
     }
 
     #[test]

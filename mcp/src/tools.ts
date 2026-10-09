@@ -6,8 +6,8 @@ import { allowedRoots, checkInput, checkOutput, PathError } from "./paths.js";
 import { ServiceClient, ServiceError } from "./service.js";
 
 const quality = z
-  .enum(["turbo", "fast", "balanced", "quality", "ultra"])
-  .describe("turbo = ~1 MP in 8 steps with Qwen's distilled Turbo model (the default, fastest; runs as balanced if the Turbo model is not installed); fast = ~1 MP, 20 steps; balanced = ~1.5K, 20 steps; quality = native 2K, 20 steps (slower; edits share 2K with their references); ultra = native 2K, 40 steps (slowest)");
+  .enum(["fast", "balanced", "quality"])
+  .describe("All run Qwen-Image 2.1 Turbo (8 steps): fast = ~1 MP (the default, fastest); balanced = ~1.5K; quality = native 2K (slowest; edits share 2K with their references)");
 const seed = z.number().int().min(-1).max(2_147_483_647).describe("Seed for reproducible results; omit or -1 for random");
 const dim = z.number().int().min(64).max(4096);
 const aspect = z
@@ -24,7 +24,6 @@ const preview = z.boolean().describe("Also return a small JPEG preview in the to
 export const schemas = {
   generate_image: {
     prompt: prompt.describe("What to generate, in natural language"),
-    negative_prompt: z.string().max(2000).optional(),
     width: dim.optional().describe("Output width in pixels (needs height too). Omit to choose automatically."),
     height: dim.optional().describe("Output height in pixels (needs width too)."),
     aspect_ratio: aspect.optional(),
@@ -40,7 +39,6 @@ export const schemas = {
     quality: quality.optional(),
     preserve_dimensions: z.boolean().optional().describe("Keep the input's exact width/height (default true)"),
     seed: seed.optional(),
-    negative_prompt: z.string().max(2000).optional(),
     include_preview: preview.optional(),
   },
   edit_images: {
@@ -85,11 +83,6 @@ export const schemas = {
     scale: z.number().gt(1).max(8).optional().describe("Enlargement factor, e.g. 2 (default 2 when no width/height is given)"),
     width: z.number().int().min(64).max(8192).optional().describe("Target width in pixels; height follows the aspect ratio unless also given"),
     height: z.number().int().min(64).max(8192).optional().describe("Target height in pixels; width follows the aspect ratio unless also given"),
-    method: z
-      .enum(["quick", "detailed"])
-      .optional()
-      .describe("quick = the configured ESRGAN upscaler model only (UltraSharp by default; seconds, adds no new content, default); detailed = re-render fine detail at ~2K with low denoise, then the upscaler model (about a minute)"),
-    prompt: z.string().max(8000).optional().describe("Optional description used by the detailed refine (defaults to the image's own prompt or a neutral one)"),
     output_path: outputPath.optional(),
     include_preview: preview.optional(),
   },
@@ -257,14 +250,13 @@ export const handlers = {
       ctx,
       {
         prompt: a.prompt,
-        negative_prompt: a.negative_prompt,
         mode: "generate",
         images: [],
         width: a.width,
         height: a.height,
         resolution: a.width ? "custom" : "auto",
         aspect_ratio: a.aspect_ratio,
-        quality: a.quality ?? "turbo",
+        quality: a.quality ?? "fast",
         seed: a.seed,
         output_path: out,
         advanced: {},
@@ -279,7 +271,7 @@ export const handlers = {
     const out = a.output_path ? checkOutput(a.output_path, ctx.cwd, r) : undefined;
     return runJob(
       ctx,
-      { prompt: a.prompt, negative_prompt: a.negative_prompt, mode: "edit", images: [img], quality: a.quality ?? "turbo", seed: a.seed, preserve_dimensions: a.preserve_dimensions ?? true, output_path: out, advanced: {} },
+      { prompt: a.prompt, mode: "edit", images: [img], quality: a.quality ?? "fast", seed: a.seed, preserve_dimensions: a.preserve_dimensions ?? true, output_path: out, advanced: {} },
       !!a.include_preview,
     );
   },
@@ -299,7 +291,7 @@ export const handlers = {
         height: a.height,
         resolution: a.width ? "custom" : "auto",
         aspect_ratio: a.aspect_ratio,
-        quality: a.quality ?? "turbo",
+        quality: a.quality ?? "fast",
         seed: a.seed,
         output_path: out,
         advanced: {},
@@ -320,7 +312,7 @@ export const handlers = {
         mode: "outpaint",
         images: [img],
         outpaint: { left: a.left, right: a.right, top: a.top, bottom: a.bottom, units: a.units },
-        quality: a.quality ?? "turbo",
+        quality: a.quality ?? "fast",
         seed: a.seed,
         output_path: out,
         advanced: {},
@@ -337,7 +329,7 @@ export const handlers = {
     if (!a.prompt && a.action !== "remove") throw new PathError("prompt must not be empty (only action 'remove' works without one).");
     return runJob(
       ctx,
-      { prompt: a.prompt, mode: "inpaint", inpaint_action: a.action, images: [img], mask, quality: a.quality ?? "turbo", seed: a.seed, output_path: out, advanced: {} },
+      { prompt: a.prompt, mode: "inpaint", inpaint_action: a.action, images: [img], mask, quality: a.quality ?? "fast", seed: a.seed, output_path: out, advanced: {} },
       !!a.include_preview,
     );
   },
@@ -350,10 +342,10 @@ export const handlers = {
     return runJob(
       ctx,
       {
-        prompt: a.prompt ?? "",
+        prompt: "",
         mode: "upscale",
         images: [img],
-        upscale: { method: a.method ?? "quick", scale: a.scale, width: a.width, height: a.height },
+        upscale: { method: "quick", scale: a.scale, width: a.width, height: a.height },
         output_path: out,
         advanced: {},
       },

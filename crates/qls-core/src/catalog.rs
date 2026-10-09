@@ -1,5 +1,5 @@
 //! What the first-run wizard installs: the stable-diffusion.cpp build the app was verified
-//! with, the official Qwen-Image 2.1 weights, and the VRAM presets that choose between them.
+//! with, the official Qwen-Image 2.1 Turbo weights, and the VRAM presets that choose between them.
 //!
 //! Every file is pinned by URL, size and SHA-256 (from the Hugging Face / GitHub APIs,
 //! 2026-10-08). If a link moves, the wizard reports it and asks the user to download the
@@ -135,32 +135,25 @@ pub fn engine_downloads(backend: GpuBackend) -> Vec<Download> {
     }
 }
 
-const UNSLOTH: &str = "https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF/tree/main";
 const QWEN_TE: &str = "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/tree/main";
 
-/// Official Qwen-Image 2.1 weights, 4-bit (Unsloth GGUF of Qwen/Qwen-Image-2.1).
-pub const DIFFUSION_Q4_K_M: Download = Download {
-    id: "diffusion_q4_k_m",
-    label: "Qwen-Image 2.1 Q4_K_M",
-    kind: FileKind::Model,
-    url: "https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF/resolve/main/qwen-image-2.1-Q4_K_M.gguf",
-    page: UNSLOTH,
-    size: 4_199_565_024,
-    sha256: "631d532e7ca71e8d90a87c71d3699761a812039d22e3370e87498d87754660fe",
-    dest: "models/qwen21/qwen-image-2.1-Q4_K_M.gguf",
-    provides: &[],
-};
+const TURBO_GGUF: &str = "https://huggingface.co/DogukanUrker/Qwen-Image-2.1-Turbo-GGUF";
 
-/// Official weights, 8-bit: closest to the original, for cards with room to spare.
-pub const DIFFUSION_Q8_0: Download = Download {
-    id: "diffusion_q8_0",
-    label: "Qwen-Image 2.1 Q8_0",
+/// The image model: Qwen's official 8-step distilled Qwen-Image 2.1 (Qwen/Qwen-Image-2.1-Turbo,
+/// Qwen Research License like the base model), as a GGUF converted with stable-diffusion.cpp.
+/// Same-seed A/B on an RTX 5070 Ti (2026-10-10): ~2x faster than the 20-step base model at
+/// equal quality, faithful edits. The base Qwen-Image 2.1 weights were dropped on 2026-10-09.
+/// Every preset uses this 4-bit file (user choice, 2026-10-09; the repo's Q4_K was judged
+/// almost identical to its Q8_0).
+pub const TURBO_Q4_K: Download = Download {
+    id: "turbo_q4_k",
+    label: "Qwen-Image 2.1 Turbo Q4_K",
     kind: FileKind::Model,
-    url: "https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF/resolve/main/qwen-image-2.1-Q8_0.gguf",
-    page: UNSLOTH,
-    size: 7_640_860_384,
-    sha256: "c0ed4b2ffd56cbe9c3df1e4a4098045256484ebe94ba5a7e4338d35ec046baa5",
-    dest: "models/qwen21/qwen-image-2.1-Q8_0.gguf",
+    url: "https://huggingface.co/DogukanUrker/Qwen-Image-2.1-Turbo-GGUF/resolve/main/qwen-image-2.1-turbo-Q4_K.gguf",
+    page: TURBO_GGUF,
+    size: 4_050_916_384,
+    sha256: "f8d5611b495848b632f8ae14dc7da6525fe2796eb80998f8dee5e04d0a2f69eb",
+    dest: "models/qwen21/qwen-image-2.1-turbo-Q4_K.gguf",
     provides: &[],
 };
 
@@ -227,23 +220,6 @@ pub const UPSCALER: Download = Download {
     provides: &[],
 };
 
-/// Turbo: Qwen's official 8-step distilled Qwen-Image 2.1 (Qwen/Qwen-Image-2.1-Turbo, Qwen
-/// Research License like the base model), as a GGUF converted with stable-diffusion.cpp.
-/// A separate diffusion model: the server restarts when a job switches between it and the
-/// base model. Same-seed A/B on an RTX 5070 Ti (2026-10-10): ~2x faster than 20-step Fast,
-/// equal quality, more faithful edits than the Viggle LoRA.
-pub const TURBO_Q4_K: Download = Download {
-    id: "turbo",
-    label: "Qwen-Image 2.1 Turbo Q4_K (8 steps)",
-    kind: FileKind::Model,
-    url: "https://huggingface.co/DogukanUrker/Qwen-Image-2.1-Turbo-GGUF/resolve/main/qwen-image-2.1-turbo-Q4_K.gguf",
-    page: "https://huggingface.co/DogukanUrker/Qwen-Image-2.1-Turbo-GGUF",
-    size: 4_050_916_384,
-    sha256: "f8d5611b495848b632f8ae14dc7da6525fe2796eb80998f8dee5e04d0a2f69eb",
-    dest: "models/qwen21/qwen-image-2.1-turbo-Q4_K.gguf",
-    provides: &[],
-};
-
 /// Hardware presets: which weights to download and how to run them, by VRAM.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct Preset {
@@ -256,9 +232,8 @@ pub struct Preset {
     pub unified_label: &'static str,
     /// `summary` for a Mac (no "system RAM": it is the same memory).
     pub unified_summary: &'static str,
+    /// The image model (a Turbo quantization).
     pub diffusion: Download,
-    /// The 8-step Turbo model (the default quality level).
-    pub turbo: Download,
     pub text_encoder: Download,
     pub text_encoder_placement: TextEncoderPlacement,
     /// Measured on real hardware of this class (otherwise only derived).
@@ -275,8 +250,7 @@ pub const PRESETS: &[Preset] = &[
         unified_label: "16–24 GB Mac",
         unified_summary: "4-bit image model and text encoder; images of about 1–1.5 megapixels",
         min_vram_mib: 0,
-        diffusion: DIFFUSION_Q4_K_M,
-        turbo: TURBO_Q4_K,
+        diffusion: TURBO_Q4_K,
         text_encoder: TEXT_ENCODER_Q4_K_M,
         text_encoder_placement: TextEncoderPlacement::Ram,
         verified: true,
@@ -288,8 +262,7 @@ pub const PRESETS: &[Preset] = &[
         unified_label: "32–36 GB Mac",
         unified_summary: "4-bit image model and text encoder; native 2K for Quality",
         min_vram_mib: 14 * 1024,
-        diffusion: DIFFUSION_Q4_K_M,
-        turbo: TURBO_Q4_K,
+        diffusion: TURBO_Q4_K,
         text_encoder: TEXT_ENCODER_Q4_K_M,
         text_encoder_placement: TextEncoderPlacement::Ram,
         verified: true,
@@ -299,27 +272,25 @@ pub const PRESETS: &[Preset] = &[
         id: "24gb",
         label: "24 GB",
         unified_label: "48 GB Mac",
-        unified_summary: "8-bit image model (closest to the original); larger edits fit",
+        unified_summary: "4-bit image model and text encoder; larger edits fit",
         min_vram_mib: 20 * 1024,
-        diffusion: DIFFUSION_Q8_0,
-        turbo: TURBO_Q4_K,
+        diffusion: TURBO_Q4_K,
         text_encoder: TEXT_ENCODER_Q4_K_M,
         text_encoder_placement: TextEncoderPlacement::Ram,
         verified: false,
-        summary: "8-bit model (closest to the original); larger edits fit",
+        summary: "4-bit model; text encoder in system RAM; larger edits fit",
     },
     Preset {
         id: "32gb",
         label: "32 GB+",
         unified_label: "64 GB+ Mac",
-        unified_summary: "8-bit image model and 8-bit text encoder",
+        unified_summary: "4-bit image model and 8-bit text encoder",
         min_vram_mib: 28 * 1024,
-        diffusion: DIFFUSION_Q8_0,
-        turbo: TURBO_Q4_K,
+        diffusion: TURBO_Q4_K,
         text_encoder: TEXT_ENCODER_Q8_0,
         text_encoder_placement: TextEncoderPlacement::Ram,
         verified: false,
-        summary: "8-bit model and 8-bit text encoder",
+        summary: "4-bit model and 8-bit text encoder",
     },
 ];
 
@@ -340,7 +311,7 @@ pub fn recommended_preset(vram_mib: Option<u64>) -> &'static Preset {
 /// Everything a preset needs on `backend`, in download order (small, essential files first).
 pub fn downloads_for(p: &Preset, backend: GpuBackend, with_upscaler: bool) -> Vec<Download> {
     let mut v = engine_downloads(backend);
-    v.extend([VAE, VISION_PROJECTOR, p.text_encoder, p.turbo, p.diffusion]);
+    v.extend([VAE, VISION_PROJECTOR, p.text_encoder, p.diffusion]);
     if with_upscaler {
         v.push(UPSCALER);
     }
@@ -379,7 +350,7 @@ mod tests {
 
     #[test]
     fn catalog_is_well_formed() {
-        let all = [ENGINE_CUDA, CUDA_RUNTIME, ENGINE_VULKAN, ENGINE_METAL, DIFFUSION_Q4_K_M, DIFFUSION_Q8_0, VAE, TEXT_ENCODER_Q4_K_M, TEXT_ENCODER_Q8_0, VISION_PROJECTOR, UPSCALER];
+        let all = [ENGINE_CUDA, CUDA_RUNTIME, ENGINE_VULKAN, ENGINE_METAL, TURBO_Q4_K, VAE, TEXT_ENCODER_Q4_K_M, TEXT_ENCODER_Q8_0, VISION_PROJECTOR, UPSCALER];
         for d in all {
             assert!(d.url.starts_with("https://"), "{}", d.id);
             assert_eq!(d.sha256.len(), 64, "{}", d.id);
@@ -391,9 +362,9 @@ mod tests {
         // The default upscaler matches the one Settings offers first.
         assert!(UPSCALER.dest.ends_with(&format!("{}.pth", crate::config::DEFAULT_UPSCALER)));
         for p in PRESETS {
-            assert_eq!(downloads_for(p, GpuBackend::Cuda, true).len(), 8);
+            assert_eq!(downloads_for(p, GpuBackend::Cuda, true).len(), 7);
             let vk = downloads_for(p, GpuBackend::Vulkan, false);
-            assert_eq!(vk.len(), 6);
+            assert_eq!(vk.len(), 5);
             assert!(vk.iter().all(|d| d.id != "engine_cuda" && d.id != "cuda_runtime"));
         }
     }

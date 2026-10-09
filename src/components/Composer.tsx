@@ -11,12 +11,11 @@ import { AdvancedPanel } from "./Advanced";
 import { AspectGrid, pickAspect, RatioIcon, resolutionLabel, ResolutionMenu } from "./SizeMenus";
 import { Option, Popover, Seg } from "./ui";
 
+// All presets run Qwen-Image 2.1 Turbo (8 steps); they differ in size.
 const QUALITY: { value: Quality; label: string; sub: string }[] = [
-  { value: "turbo", label: "Turbo", sub: "~1 MP, 8 steps · fastest, recommended" },
-  { value: "fast", label: "Fast", sub: "~1 MP, 20 steps" },
-  { value: "balanced", label: "Balanced", sub: "~1.5K, 20 steps" },
-  { value: "quality", label: "Quality", sub: "native 2K, 20 steps · slower" },
-  { value: "ultra", label: "Ultra", sub: "native 2K, 40 steps · slowest" },
+  { value: "fast", label: "Fast", sub: "~1 MP · fastest" },
+  { value: "balanced", label: "Balanced", sub: "~1.5K" },
+  { value: "quality", label: "Quality", sub: "native 2K · slowest" },
 ];
 
 const INPAINT_ACTIONS: { value: InpaintAction; label: string; placeholder: string }[] = [
@@ -285,7 +284,6 @@ function usePlanPreview(): { plan: Plan | null; error: string | null } {
 
 export function Composer() {
   const c = useStore((s) => s.composer);
-  const turboAvailable = useStore((s) => s.status?.turbo?.available ?? false);
   const hasProject = useStore((s) => s.session.length > 0);
   const { plan, error } = usePlanPreview();
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -407,7 +405,7 @@ export function Composer() {
             )}
           >
             {(close) =>
-              QUALITY.map((q) => <Option key={q.value} selected={c.quality === q.value} label={q.label} sub={q.value === "turbo" && !turboAvailable ? "model not installed: runs as Balanced" : q.sub} onClick={() => (updateComposer({ quality: q.value }), close())} />)
+              QUALITY.map((q) => <Option key={q.value} selected={c.quality === q.value} label={q.label} sub={q.sub} onClick={() => (updateComposer({ quality: q.value }), close())} />)
             }
           </Popover>
 

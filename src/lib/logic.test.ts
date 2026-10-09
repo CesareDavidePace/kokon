@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  activeOverrides, buildRequest, compareBase, diffPixels, emptyComposer, expansionPixels, expansionPreset, jobFraction, jobLabel, moveRef, needsPrompt, persistentAdvanced, pipelineSummary,
+  activeOverrides, buildRequest, compareBase, diffPixels, emptyComposer, expansionPixels, expansionPreset, jobFraction, jobLabel, moveRef, needsPrompt, normalizeQuality, persistentAdvanced, pipelineSummary,
   planPipeline, remainingSeconds, sizeForWidth, timeAgo, upscaleRequest, upscaleTargets, versionLabels, type Ref,
   formatBytes, installItemShort, installItemText, installProgress, installStep, installTimeLeft, timelineLinks, undoTarget, aspectLabel, parseRatio, sizeForRatio, expandToRatio, expandToSize, arcLayout,
 } from "./logic";
@@ -22,7 +22,9 @@ describe("advanced overrides", () => {
   const saved = { batch_count: null, cfg: 4, flow_shift: null, hdr: false, output_format: "png" as const, refine: null, sampler: null, scheduler: null, steps: 20, strength: 1, vae_tiling: null };
 
   it("lists only the sampling overrides that are set", () => {
-    expect(activeOverrides(saved)).toEqual(["CFG 4", "Steps 20", "Strength 1"]);
+    // Steps, CFG and scheduler are fixed by Turbo: old values are dropped, never shown.
+    expect(activeOverrides(saved)).toEqual(["Strength 1"]);
+    expect(activeOverrides({ sampler: "heun" })).toEqual(["Sampler heun"]);
     expect(activeOverrides({ output_format: "webp", hdr: true, batch_count: 2 })).toEqual([]);
     expect(activeOverrides({})).toEqual([]);
   });
@@ -30,7 +32,18 @@ describe("advanced overrides", () => {
   it("keeps preferences but never persists sampling overrides", () => {
     expect(persistentAdvanced(saved)).toEqual({ hdr: false, output_format: "png" });
     expect(persistentAdvanced(undefined)).toEqual({});
-    expect(emptyComposer({ advanced: persistentAdvanced(saved) }).advanced.cfg).toBeUndefined();
+    expect((emptyComposer({ advanced: persistentAdvanced(saved) }).advanced as Record<string, unknown>).cfg).toBeUndefined();
+  });
+});
+
+describe("normalizeQuality", () => {
+  it("maps older preset names", () => {
+    expect(emptyComposer().quality).toBe("fast");
+    expect(normalizeQuality("turbo")).toBe("fast");
+    expect(normalizeQuality("ultra")).toBe("quality");
+    expect(normalizeQuality("balanced")).toBe("balanced");
+    expect(normalizeQuality(undefined, "quality")).toBe("quality");
+    expect(emptyComposer({ quality: "turbo" as never }).quality).toBe("fast");
   });
 });
 
@@ -134,8 +147,8 @@ describe("upscaling", () => {
     expect(sizeForWidth(1376, 768, 3000)).toEqual({ width: 3000, height: 1674 });
   });
   it("builds an upscale request without a prompt", () => {
-    const r = upscaleRequest("gen:abc", { width: 2752, height: 1536 }, "detailed", "abc");
-    expect(r).toMatchObject({ mode: "upscale", images: ["gen:abc"], prompt: "", parent_id: "abc", upscale: { method: "detailed", width: 2752, height: 1536 } });
+    const r = upscaleRequest("gen:abc", { width: 2752, height: 1536 }, "abc");
+    expect(r).toMatchObject({ mode: "upscale", images: ["gen:abc"], prompt: "", parent_id: "abc", upscale: { method: "quick", width: 2752, height: 1536 } });
   });
   it("summarises the pipeline for the details panel", () => {
     const g = {

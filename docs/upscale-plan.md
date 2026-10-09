@@ -1,5 +1,8 @@
 # Speed & upscaling: results log and implementation plan
 
+> Historical plan. Since 2026-10-09 the app runs only Qwen-Image 2.1 Turbo (8 steps, CFG 1) and
+> upscaling is the upscaler model only; the Detailed refine and the step presets below are gone.
+
 Status as of 2026-10-06. Hardware: RTX 5070 Ti 16 GB, sd-server/sd-cli in `C:\AI\sdcpp`
 (stable-diffusion.cpp commit 3f8527a), Qwen Image 2.1 UC Q4_K_M + Qwen3VL-8B Q4_K_M TE.
 Benchmark script: `C:\AI\sdcpp\bench\bench-2k.ps1` (`-Only a,b`), outputs + logs in `C:\AI\sdcpp\bench\out`.

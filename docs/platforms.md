@@ -50,7 +50,7 @@ pass. Kokon uses CFG 1, which is one pass per step.
 | --- | --- | --- |
 | **Chip** | Apple M1 or newer (Intel Macs: no) | M-series Pro / Max / Ultra |
 | **macOS** | 26 Tahoe (the engine binary's minimum) | latest |
-| **Unified memory** | 16 GB: works, but slowly (lightest mode, ~1 MP, ~10 min on an M2 Pro) | 32 GB+ (everything stays loaded, Quality 2K); 48 GB+ gets the 8-bit model |
+| **Unified memory** | 16 GB: works, but slowly (lightest mode, ~1 MP, ~10 min on an M2 Pro) | 32 GB+ (everything stays loaded, Quality 2K) |
 | **Disk** | 15 GB free | 25 GB on the internal SSD |
 
 16 GB Macs run in the lightest setup: 1 MP, with each model's weights loaded when it runs and
@@ -61,7 +61,7 @@ screen says so before downloading, and recommends 32 GB and a Pro/Max/Ultra chip
 **Fast on a Mac renders smaller** (2026-10-09): on unified memory, Fast at Auto resolution
 renders at most 768² (`planner::UNIFIED_FAST_AREA`) and the upscaler model enlarges the result
 to the size Fast renders on a PC (1 MP). Sampling cost grows faster than the area, so this is
-well under half the sampling time. Balanced, Quality, Ultra and explicit sizes are unchanged.
+well under half the sampling time. Balanced, Quality and explicit sizes are unchanged.
 
 ### Why macOS paging does not help here (verified in the source, 2026-10-09)
 
@@ -105,12 +105,12 @@ VAE 0.25 GB ≈ 10.7 GB.
 | 16 GB | ~10.7 GB | ~4.5 GB | 4–6 GB card | lightest, 1 MP |
 | 24 GB | ~16 GB | ~9.8 GB | 10 GB card | 12 GB preset |
 | 32 GB | ~21 GB | ~15 GB | 16 GB card | 16 GB preset (2K) |
-| 48 GB | ~32 GB | ~26 GB | 24 GB+ card | 24 GB preset (Q8 model) |
+| 48 GB | ~32 GB | ~26 GB | 24 GB+ card | 24 GB preset |
 | 64 GB+ | ~48 GB | ~42 GB | 32 GB+ card | 32 GB+ preset |
 
 ### Expected speed
 
-These are **estimates, not measured**, for 1 MP, 20 steps, CFG 1. They are derived from the
+These are **estimates, not measured**, for 1 MP, 20 steps, CFG 1 (the base model; Turbo runs 8 steps, so roughly 40 % of the sampling time). They are derived from the
 M5 16 GB measurement (about 38 s per model pass at 1024², with the same engine build) and
 llama.cpp compute ratios. Our test machines: M2 Pro 16 GB (19-core GPU, 200 GB/s) about
 15–25 s per step, 6–9 min per image; M4 Pro 24 GB (20-core, 273 GB/s) about 12–18 s per
@@ -165,8 +165,8 @@ so nobody with a base chip is surprised.
 
 ### Speed roadmap for Macs
 
-1. ✅ **Turbo**: Qwen's official 8-step model, now the default quality; the largest gain on
-   every platform. See the Turbo notes in `docs/engineering-notes.md`. Mac speed not measured yet.
+1. ✅ **Turbo**: Qwen's official 8-step model, the only image model since 2026-10-09; the
+   largest gain on every platform. See the Turbo notes in `docs/engineering-notes.md`. Mac speed not measured yet.
 2. ✅ Honest requirements: 16 GB works but slowly; 32 GB+ and a Pro/Max/Ultra chip recommended.
 3. ✅ Fast renders at 768² on Macs and enlarges (above).
 4. **Later: an MLX engine.** Apple's MLX framework (through [mflux](https://github.com/filipstrand/mflux))

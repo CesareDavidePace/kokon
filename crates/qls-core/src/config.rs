@@ -26,7 +26,7 @@ pub const UPSCALER_CHOICES: &[(&str, &str, &str)] = &[
 pub const DEFAULT_UPSCALER: &str = UPSCALER_CHOICES[0].0;
 /// Default before schema 2; configs still on it are moved to [`DEFAULT_UPSCALER`].
 const OLD_DEFAULT_UPSCALER: &str = "RealESRGAN_x4plus";
-const SCHEMA_VERSION: u32 = 6;
+const SCHEMA_VERSION: u32 = 7;
 /// Profile id of the official Qwen-Image 2.1 weights (the default since schema 5).
 pub const OFFICIAL_PROFILE_ID: &str = "qwen-image-2.1";
 
@@ -107,8 +107,8 @@ impl GpuBackend {
     }
 }
 
-/// Effort of a Detailed upscale (low-denoise re-render at ~2K before the upscaler model).
-/// Generation itself always runs in one pass (two-pass refine removed 2026-10-06).
+/// Effort of the refine pass of older versions (two-pass generation, removed 2026-10-06;
+/// Detailed upscale, removed 2026-10-09). Kept to read their gallery records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum RefineMode {
@@ -121,66 +121,27 @@ pub enum RefineMode {
     Best,
 }
 
+/// Per-model planning settings. Sampling itself is fixed by the Turbo model: its 8-step
+/// schedule (`planner::TURBO_SIGMAS`) at CFG 1.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RecommendedSettings {
     pub sampler: String,
-    pub scheduler: Option<String>,
-    /// 1.0 = no classifier-free guidance: one model pass per step, negative prompt unused.
-    pub cfg: f32,
-    /// CFG for modes that start from an image (edit, multi-reference, inpaint, outpaint,
-    /// Detailed upscale).
-    pub cfg_edit: f32,
-    pub steps_fast: u32,
-    pub steps_balanced: u32,
-    pub steps_quality: u32,
-    pub steps_ultra: u32,
     /// Pixel area used by Auto resolution at each quality level.
     pub area_fast: u64,
     pub area_balanced: u64,
     pub area_quality: u64,
-    pub area_ultra: u64,
     pub align: u32,
     pub max_side: u32,
     pub max_references: u32,
-    pub negative_prompt: String,
-    /// Detailed upscale: largest re-render area and effective steps per effort.
-    pub hires_max_area: u64,
-    pub hires_steps_fast: u32,
-    pub hires_steps_best: u32,
-    /// EasyCache reuse threshold of a Fast Detailed upscale.
-    pub easycache_threshold: f32,
 }
 
 impl Default for RecommendedSettings {
     fn default() -> Self {
-        // Official Qwen-Image 2.1 settings (QwenLM/Qwen-Image-2.1 README, diffusers
-        // QwenImage21Pipeline): no CFG ("meant to be sampled without guidance"), 40 steps,
-        // native 2K buckets; flow-matching Euler, whose resolution-dependent schedule
-        // sd-server selects automatically. Only Ultra runs the official 40 steps; the other
-        // presets use 20 (judged enough by the user, 2026-10-09) and differ in size.
-        Self {
-            sampler: "euler".into(),
-            scheduler: None,
-            cfg: 1.0,
-            cfg_edit: 1.0,
-            steps_fast: 20,
-            steps_balanced: 20,
-            steps_quality: 20,
-            steps_ultra: 40,
-            area_fast: 1024 * 1024,
-            area_balanced: 1536 * 1536,
-            area_quality: 2048 * 2048,
-            area_ultra: 2048 * 2048,
-            align: 32,
-            max_side: 4096,
-            max_references: 10,
-            negative_prompt: String::new(),
-            hires_max_area: 2048 * 1152,
-            hires_steps_fast: 6,
-            hires_steps_best: 8,
-            easycache_threshold: 0.2,
-        }
+        // Official Qwen-Image 2.1 Turbo settings (Qwen/Qwen-Image-2.1-Turbo model card): its
+        // saved 8-step schedule with flow-matching Euler, no CFG, native 2K buckets. The
+        // presets differ only in size: ~1 MP, 1.5K and native 2K.
+        Self { sampler: "euler".into(), area_fast: 1024 * 1024, area_balanced: 1536 * 1536, area_quality: 2048 * 2048, align: 32, max_side: 4096, max_references: 10 }
     }
 }
 
@@ -223,14 +184,14 @@ impl Default for ModelProfile {
 }
 
 impl ModelProfile {
-    /// The official Qwen-Image 2.1 weights a hardware preset downloads (Unsloth GGUF of
-    /// Qwen/Qwen-Image-2.1, Qwen's own Qwen3-VL GGUF, the 2.1 VAE).
+    /// The official weights a hardware preset downloads (GGUF of Qwen/Qwen-Image-2.1-Turbo,
+    /// Qwen's own Qwen3-VL GGUF, the 2.1 VAE).
     pub fn official(sdcpp_dir: &Path, preset: &crate::catalog::Preset) -> Self {
         use crate::catalog::{VAE, VISION_PROJECTOR};
         let quant = preset.diffusion.dest.rsplit('-').next().unwrap_or("").trim_end_matches(".gguf");
         Self {
             id: OFFICIAL_PROFILE_ID.into(),
-            display_name: format!("Qwen-Image 2.1 {quant} (official)"),
+            display_name: format!("Qwen-Image 2.1 Turbo {quant} (official)"),
             diffusion_model: preset.diffusion.path(sdcpp_dir),
             vae: VAE.path(sdcpp_dir),
             text_encoder: preset.text_encoder.path(sdcpp_dir),
@@ -300,8 +261,6 @@ pub struct AppConfig {
     pub upscaler_model: String,
     /// ESRGAN tile size in pixels; 0 = backend default (128).
     pub upscale_tile_size: u32,
-    /// Default effort of a Detailed upscale.
-    pub refine_mode: RefineMode,
     pub extra_server_args: Vec<String>,
     pub output_dir: PathBuf,
     pub keep_server_running: bool,
@@ -340,7 +299,6 @@ impl Default for AppConfig {
             upscalers_dir: None,
             upscaler_model: DEFAULT_UPSCALER.into(),
             upscale_tile_size: 0,
-            refine_mode: RefineMode::Fast,
             extra_server_args: vec![],
             output_dir: default_output_dir(),
             keep_server_running: false,
@@ -449,57 +407,18 @@ impl AppConfig {
                     if c.schema_version < 2 && c.upscaler_model.trim() == OLD_DEFAULT_UPSCALER {
                         c.upscaler_model = DEFAULT_UPSCALER.into();
                     }
-                    if c.schema_version < 3 {
-                        // Presets saved with the old defaults move to the new ones; edited values stay.
+                    if c.schema_version < 7 {
+                        // Turbo only (2026-10-09): the official profile moves from the base
+                        // Qwen-Image 2.1 weights to the preset's Turbo model, and every profile
+                        // gets the new presets (the old step/CFG settings no longer exist).
+                        let preset = c.preset();
                         for p in &mut c.profiles {
-                            let r = &mut p.recommended_settings;
-                            if r.steps_balanced == 30 {
-                                r.steps_balanced = 20;
+                            if p.id == OFFICIAL_PROFILE_ID {
+                                let official = ModelProfile::official(&c.sdcpp_dir, preset);
+                                p.display_name = official.display_name;
+                                p.diffusion_model = official.diffusion_model;
                             }
-                            if r.steps_quality == 40 {
-                                r.steps_quality = 20;
-                            }
-                            if r.area_quality == 1536 * 1536 {
-                                r.area_quality = 2_000_000;
-                            }
-                        }
-                    }
-                    if c.schema_version < 4 {
-                        // Old defaults came from sd.cpp's example (CFG 6, edits 4, 20 steps);
-                        // move them to the official settings. Edited values stay.
-                        for p in &mut c.profiles {
-                            let r = &mut p.recommended_settings;
-                            if r.cfg == 6.0 {
-                                r.cfg = 1.0;
-                            }
-                            if r.cfg_edit == 4.0 {
-                                r.cfg_edit = 1.0;
-                            }
-                            if r.steps_balanced == 20 {
-                                r.steps_balanced = 40;
-                            }
-                            if r.steps_quality == 20 {
-                                r.steps_quality = 40;
-                            }
-                            if r.area_quality == 2_000_000 {
-                                r.area_quality = 2048 * 2048;
-                            }
-                        }
-                    }
-                    if c.schema_version < 6 {
-                        // 20 steps for Balanced and Quality, Balanced at 1.5K (Ultra takes the
-                        // official 40 steps). Edited values stay.
-                        for p in &mut c.profiles {
-                            let r = &mut p.recommended_settings;
-                            if r.steps_balanced == 40 {
-                                r.steps_balanced = 20;
-                            }
-                            if r.steps_quality == 40 {
-                                r.steps_quality = 20;
-                            }
-                            if r.area_balanced == 1024 * 1024 {
-                                r.area_balanced = 1536 * 1536;
-                            }
+                            p.recommended_settings = RecommendedSettings::default();
                         }
                     }
                     // Paths into the data folder of the app's old name (models installed by the
@@ -620,22 +539,6 @@ impl AppConfig {
         }
     }
 
-    /// The Turbo model of the hardware preset, if it is installed.
-    pub fn turbo_model(&self) -> Option<PathBuf> {
-        let t = self.preset().turbo;
-        t.is_present(&self.sdcpp_dir).then(|| t.path(&self.sdcpp_dir))
-    }
-
-    /// This configuration with the server running the Turbo model instead of the active
-    /// profile's diffusion model (same encoder, VAE and launch flags). None if not installed.
-    pub fn with_turbo(&self) -> Option<AppConfig> {
-        let path = self.turbo_model()?;
-        let mut c = self.clone();
-        let id = c.active_profile.clone();
-        c.profiles.iter_mut().find(|p| p.id == id)?.diffusion_model = path;
-        Some(c)
-    }
-
     /// The configured ESRGAN model file, if present. sd-server resolves names the same
     /// way: `<dir>/<name>.<ext>`, top level only.
     pub fn upscaler_file(&self) -> Option<PathBuf> {
@@ -682,8 +585,8 @@ mod tests {
         let c = AppConfig::default();
         let p = c.profile();
         assert_eq!(p.id, OFFICIAL_PROFILE_ID);
-        assert_eq!(p.display_name, "Qwen-Image 2.1 Q4_K_M (official)");
-        assert!(p.diffusion_model.ends_with("qwen-image-2.1-Q4_K_M.gguf"));
+        assert_eq!(p.display_name, "Qwen-Image 2.1 Turbo Q4_K (official)");
+        assert!(p.diffusion_model.ends_with("qwen-image-2.1-turbo-Q4_K.gguf"));
         assert!(p.diffusion_model.starts_with(default_sdcpp_dir()));
         assert_eq!(c.hardware_preset, "16gb");
         assert_eq!(c.planning_vram_mib(Some(16303)), Some(16303));
@@ -693,7 +596,6 @@ mod tests {
         assert!(!c.keep_server_running);
         assert!(c.validate().is_ok());
         assert_eq!(p.files().len(), 4);
-        assert_eq!(c.refine_mode, RefineMode::Fast);
         assert_eq!(c.upscaler_model, "4x-UltraSharp");
         assert_eq!(c.upscalers_dir(), default_sdcpp_dir().join("models").join("upscalers"));
     }
@@ -740,14 +642,14 @@ mod tests {
         let off = c.profiles.iter().find(|p| p.id == OFFICIAL_PROFILE_ID).unwrap();
         // Catalog paths are joined per component, so the separator is the platform's own.
         let sd = |f: &str| crate::catalog::join_rel(Path::new(r"D:\sd"), &format!("models/qwen21/{f}"));
-        assert_eq!(off.diffusion_model, sd("qwen-image-2.1-Q4_K_M.gguf"));
+        assert_eq!(off.diffusion_model, sd("qwen-image-2.1-turbo-Q4_K.gguf"));
         // Saved again, nothing is added twice.
         c.save_to(&p).unwrap();
         assert_eq!(AppConfig::load_from(&p).profiles.len(), 2);
         // A file without profiles uses its own folder and preset.
         std::fs::write(&p, r#"{"sdcppDir":"D:\\sd","hardwarePreset":"24gb"}"#).unwrap();
         let c = AppConfig::load_from(&p);
-        assert_eq!(c.profile().diffusion_model, sd("qwen-image-2.1-Q8_0.gguf"));
+        assert_eq!(c.profile().diffusion_model, sd("qwen-image-2.1-turbo-Q4_K.gguf"));
     }
 
     #[test]
@@ -776,13 +678,13 @@ mod tests {
     #[test]
     fn presets_switch_weights_and_keep_tuning() {
         let mut c = AppConfig::default();
-        c.profiles[0].recommended_settings.steps_fast = 12;
+        c.profiles[0].recommended_settings.area_fast = 768 * 768;
         c.apply_preset(crate::catalog::preset("32gb").unwrap());
         let p = c.profile();
-        assert!(p.diffusion_model.ends_with("qwen-image-2.1-Q8_0.gguf"));
+        assert!(p.diffusion_model.ends_with("qwen-image-2.1-turbo-Q4_K.gguf"), "4-bit Turbo on every preset");
         assert!(p.text_encoder.ends_with("Qwen3VL-8B-Instruct-Q8_0.gguf"));
-        assert_eq!(p.display_name, "Qwen-Image 2.1 Q8_0 (official)");
-        assert_eq!(p.recommended_settings.steps_fast, 12);
+        assert_eq!(p.display_name, "Qwen-Image 2.1 Turbo Q4_K (official)");
+        assert_eq!(p.recommended_settings.area_fast, 768 * 768);
         assert_eq!((c.hardware_preset.as_str(), c.profiles.len()), ("32gb", 1));
         c.vram_override_mib = 12_288;
         assert_eq!(c.planning_vram_mib(Some(16303)), Some(12_288));
@@ -807,35 +709,24 @@ mod tests {
     }
 
     #[test]
-    fn old_quality_presets_are_migrated() {
+    fn base_model_installs_move_to_turbo() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("config.json");
-        let old = r#"{"schemaVersion":2,"profiles":[{"id":"a","recommendedSettings":{"steps_balanced":30,"steps_quality":40,"area_quality":2359296}}]}"#;
+        let old = r#"{"schemaVersion":6,"sdcppDir":"D:\\sd","hardwarePreset":"24gb","activeProfile":"qwen-image-2.1","profiles":[
+            {"id":"qwen-image-2.1","displayName":"Qwen-Image 2.1 Q8_0 (official)","diffusionModel":"D:\\sd\\models\\qwen21\\qwen-image-2.1-Q8_0.gguf","backendArgs":["--x"],
+             "recommendedSettings":{"steps_fast":20,"steps_ultra":40,"cfg":1.0,"area_ultra":4194304,"area_fast":1048576}},
+            {"id":"mine","diffusionModel":"D:\\sd\\mine.gguf","recommendedSettings":{"area_quality":1000000}}]}"#;
         std::fs::write(&p, old).unwrap();
-        let r = AppConfig::load_from(&p).profiles[0].recommended_settings.clone();
-        // Schema 3, 4 and 6 run in sequence and end on the current presets.
-        assert_eq!((r.steps_balanced, r.steps_quality, r.area_quality, r.cfg_edit), (20, 20, 2048 * 2048, 1.0));
-        // Values the user changed are kept.
-        let custom = r#"{"schemaVersion":2,"profiles":[{"id":"a","recommendedSettings":{"steps_balanced":25,"steps_quality":50}}]}"#;
-        std::fs::write(&p, custom).unwrap();
-        let r = AppConfig::load_from(&p).profiles[0].recommended_settings.clone();
-        assert_eq!((r.steps_balanced, r.steps_quality), (25, 50));
-    }
-
-    #[test]
-    fn sdcpp_example_settings_move_to_official() {
-        let dir = tempfile::tempdir().unwrap();
-        let p = dir.path().join("config.json");
-        let old = r#"{"schemaVersion":3,"profiles":[{"id":"a","recommendedSettings":{"cfg":6.0,"cfg_edit":4.0,"steps_fast":20,"steps_balanced":20,"steps_quality":20,"area_quality":2000000}}]}"#;
-        std::fs::write(&p, old).unwrap();
-        let r = AppConfig::load_from(&p).profiles[0].recommended_settings.clone();
-        assert_eq!((r.cfg, r.cfg_edit), (1.0, 1.0));
-        assert_eq!((r.steps_fast, r.steps_balanced, r.steps_quality, r.area_quality), (20, 20, 20, 2048 * 2048));
-        assert_eq!(r, RecommendedSettings::default());
-        let custom = r#"{"schemaVersion":3,"profiles":[{"id":"a","recommendedSettings":{"cfg":3.0,"cfg_edit":2.5,"steps_balanced":28}}]}"#;
-        std::fs::write(&p, custom).unwrap();
-        let r = AppConfig::load_from(&p).profiles[0].recommended_settings.clone();
-        assert_eq!((r.cfg, r.cfg_edit, r.steps_balanced), (3.0, 2.5, 28));
+        let c = AppConfig::load_from(&p);
+        let off = c.profile();
+        assert_eq!(off.diffusion_model, crate::catalog::join_rel(Path::new(r"D:\sd"), "models/qwen21/qwen-image-2.1-turbo-Q4_K.gguf"));
+        assert_eq!(off.display_name, "Qwen-Image 2.1 Turbo Q4_K (official)");
+        assert_eq!(off.backend_args, vec!["--x".to_string()], "launch flags stay");
+        assert_eq!(off.recommended_settings, RecommendedSettings::default());
+        let mine = c.profiles.iter().find(|p| p.id == "mine").unwrap();
+        assert_eq!(mine.diffusion_model, PathBuf::from(r"D:\sd\mine.gguf"), "other profiles keep their model");
+        assert_eq!(mine.recommended_settings, RecommendedSettings::default());
+        assert_eq!(c.schema_version, SCHEMA_VERSION);
     }
 
     #[test]
@@ -850,8 +741,7 @@ mod tests {
         assert!(c.upscaler_file().is_none());
         // Older config files without the new fields keep loading with defaults.
         let old: AppConfig = serde_json::from_str(r#"{"serverPort": 41000, "vaeTileSize": 512}"#).unwrap();
-        assert_eq!(old.refine_mode, RefineMode::Fast);
-        assert_eq!(old.profile().recommended_settings.hires_max_area, 2048 * 1152);
+        assert_eq!(old.profile().recommended_settings.area_quality, 2048 * 2048);
     }
 
     #[test]

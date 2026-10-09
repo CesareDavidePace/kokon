@@ -4,8 +4,8 @@ import type { Advanced, OutputFormat, Plan } from "../lib/types";
 import { Seg, Switch } from "./ui";
 
 // Verified against sd-server 3f8527a capabilities; replaced by the live list when loaded.
+// Steps, CFG and scheduler are fixed by the Turbo model's 8-step schedule (no CFG).
 const FALLBACK_SAMPLERS = ["euler", "euler_a", "heun", "dpm2", "dpm++2s_a", "dpm++2m", "dpm++2mv2", "ipndm", "ipndm_v", "lcm", "ddim_trailing", "tcd", "res_multistep", "res_2s", "er_sde"];
-const FALLBACK_SCHEDULERS = ["discrete", "karras", "exponential", "ays", "gits", "sgm_uniform", "simple", "smoothstep", "kl_optimal", "lcm", "beta", "flux"];
 
 function NumField(props: { label: string; value: number | null | undefined; placeholder: string; min: number; max: number; step?: number; onChange: (v: number | null) => void }) {
   return (
@@ -32,7 +32,6 @@ function NumField(props: { label: string; value: number | null | undefined; plac
 export function AdvancedPanel({ plan }: { plan: Plan | null }) {
   const c = useStore((s) => s.composer);
   const samplers = useStore((s) => (s.status?.server as { samplers?: string[] } | undefined)?.samplers);
-  const schedulers = useStore((s) => (s.status?.server as { schedulers?: string[] } | undefined)?.schedulers);
   const a = c.advanced;
   const setA = (patch: Partial<Advanced>) => updateComposer({ advanced: { ...a, ...patch } });
   const editLike = plan && (plan.mode === "inpaint" || plan.mode === "outpaint" || plan.mode === "edit");
@@ -56,25 +55,11 @@ export function AdvancedPanel({ plan }: { plan: Plan | null }) {
         </div>
       </label>
 
-      <NumField label="Steps" value={a.steps} placeholder={String(plan?.steps ?? "Auto")} min={1} max={150} onChange={(v) => setA({ steps: v })} />
-      <NumField label="CFG" value={a.cfg} placeholder={String(plan?.cfg ?? "Auto")} min={0} max={30} step={0.5} onChange={(v) => setA({ cfg: v })} />
-
       <label className="field-row">
         <span>Sampler</span>
         <select className="select" value={a.sampler ?? ""} onChange={(e) => setA({ sampler: e.target.value || null })}>
           <option value="">Default ({plan?.sampler ?? "euler"})</option>
           {(samplers?.length ? samplers : FALLBACK_SAMPLERS).map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="field-row">
-        <span>Scheduler</span>
-        <select className="select" value={a.scheduler ?? ""} onChange={(e) => setA({ scheduler: e.target.value || null })}>
-          <option value="">Default (model)</option>
-          {(schedulers?.length ? schedulers : FALLBACK_SCHEDULERS).map((s) => (
             <option key={s} value={s}>
               {s}
             </option>
@@ -122,12 +107,7 @@ export function AdvancedPanel({ plan }: { plan: Plan | null }) {
         <Switch on={a.vae_tiling ?? plan?.vae_tiling ?? false} onChange={(v) => setA({ vae_tiling: v })} label="VAE tiling" />
       </div>
 
-      <label className="field">
-        <span>Negative prompt</span>
-        <textarea className="input" rows={2} value={c.negative} placeholder="Optional; used only when CFG is above 1" onChange={(e) => updateComposer({ negative: e.target.value })} />
-      </label>
-
-      <button className="btn" onClick={() => updateComposer({ advanced: {}, seed: null, negative: "" })}>
+      <button className="btn" onClick={() => updateComposer({ advanced: {}, seed: null })}>
         <RotateCcw size={14} /> Reset to automatic
       </button>
     </>

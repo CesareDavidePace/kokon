@@ -79,16 +79,15 @@ Details and the reasoning are in [platforms.md](platforms.md); the short version
   marked in color on a second reference and prompts "the area marked in red in `<image2>`"
   (the official 2.1 way to point at a region). Removals blur the content out of `<image1>`
   first so the model rebuilds background instead of copying the object back.
-- Recommended settings follow the official Qwen-Image 2.1 release (QwenLM/Qwen-Image-2.1
-  README, diffusers `QwenImage21Pipeline`): `euler`, **no CFG** (1.0, "meant to be sampled
-  without guidance"), 40 steps, native 2K sizes; sd-server picks the same resolution-dependent
-  flow schedule (exponential shift 0.5–0.9, terminal 0.02). sd.cpp's own docs use CFG 6, which
+- Sampling follows the official Qwen-Image 2.1 Turbo release (see Turbo below): `euler`,
+  **no CFG**, its saved 8-step schedule, native 2K sizes. sd.cpp's own docs use CFG 6, which
   runs a second, unconditional model pass every step; the app used that until 2026-10-07.
-  At CFG 1 the negative prompt is ignored.
-  Presets (since 2026-10-09; 20 steps judged enough, only Ultra keeps the official 40):
-  Fast 20 steps at ~1 MP; Balanced 20 steps at ~1.5K (1536²); Quality 20 steps and Ultra
-  40 steps at the official 2K buckets (2048², 2752×1536…; edits share that budget with their
-  reference images, so they land near 2 MP on 16 GB).
+  At CFG 1 the negative prompt is ignored, so the UI no longer offers one (the API still
+  accepts it and notes that it was ignored).
+  Presets (since 2026-10-09, Turbo only): **Fast** ~1 MP (the default), **Balanced** ~1.5K
+  (1536²), **Quality** at the official 2K buckets (2048², 2752×1536…; edits share that budget
+  with their reference images, so they land near 2 MP on 16 GB). Older preset names map on
+  load: `turbo` → Fast, `ultra` → Quality.
 - Default launch (CUDA; other engines above): `--backend cuda0 --params-backend te=cpu --fa --sage-attn --vae-tiling
   --vae-tile-size 768 --vae-tile-overlap 0.125 --max-vram -1` plus `--hires-upscalers-dir`
   when the upscalers folder exists (text-encoder weights in RAM, computed on the GPU). Measured
@@ -108,7 +107,7 @@ Details and the reasoning are in [platforms.md](platforms.md); the short version
 ## Resolution and upscaling policy
 
 Every job runs a single diffusion pass at the working size (Auto: ~1 MP for Fast, ~1.5K for
-Balanced, native 2K for Quality and Ultra; or the 1K/1.5K/2K/Source/Custom choice), capped by the VRAM token budget
+Balanced, native 2K for Quality; or the 1K/1.5K/2K/Source/Custom choice), capped by the VRAM token budget
 that the target shares with its reference images. The earlier two-pass mode (≈1 MP render →
 ESRGAN → low-denoise refine at 2K) was removed on 2026-10-06: in A/B tests the refine made
 edits look worse than a single pass.
@@ -120,24 +119,24 @@ the exact size; Lanczos is only used for shrinking or factors below 1.1×.
 On Apple Silicon, Fast at Auto resolution renders at most 768² (`planner::UNIFIED_FAST_AREA`)
 and is enlarged to the 1 MP output, because Mac GPUs are several times slower.
 
-### Turbo (the default quality, 2026-10-10)
+### Turbo (the only image model since 2026-10-09)
 
-Quality level **Turbo** = ~1 MP in 8 steps on Qwen's official distilled model
+Every job runs Qwen's official 8-step distilled model
 ([Qwen/Qwen-Image-2.1-Turbo](https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo), released
 2026-10-09, Qwen Research License like the base), as the stable-diffusion.cpp conversion
-[DogukanUrker/Qwen-Image-2.1-Turbo-GGUF](https://huggingface.co/DogukanUrker/Qwen-Image-2.1-Turbo-GGUF)
-Q4_K (4.05 GB, `catalog::TURBO_Q4_K`, part of every preset). t2i and edits.
+[DogukanUrker/Qwen-Image-2.1-Turbo-GGUF](https://huggingface.co/DogukanUrker/Qwen-Image-2.1-Turbo-GGUF):
+Q4_K (4.05 GB, `catalog::TURBO_Q4_K`) on every preset (the larger presets differ in working
+size and text encoder only). t2i and edits. The base Qwen-Image 2.1 weights are no
+longer downloaded; config schema 7 points the official profile at the preset's Turbo file (the
+old base file stays on disk until the user deletes it).
 
-- It is a separate diffusion model. `AppConfig::with_turbo` swaps it into the active profile;
-  the engine restarts the server when a job needs the other model (`Engine::server_config_for`),
-  and starts the server with the model of the last job (Turbo before any job). Switching costs a
-  full server start (encoder included), so mixing Turbo and other levels is slow.
 - Schedule: `planner::TURBO_SIGMAS` = `sample_sigmas` of the checkpoint's model_index.json
   ([1, .978453, .95418, .926626, .89508, .845148, .704534, .414568, 0], fixed at every
   resolution), sent as `sample_params.custom_sigmas` (used verbatim, steps = len − 1). sd.cpp's
-  default Qwen schedule shifts by resolution and has a 0.02 terminal shift. CFG is forced to 1;
-  Advanced steps/CFG are ignored.
-- Not installed (configs from before Turbo): Turbo requests run as Balanced with a note.
+  default Qwen schedule shifts by resolution and has a 0.02 terminal shift. CFG is always 1.
+  Steps, CFG and scheduler are not settable (Qwen evaluated no other schedule); the sampler is.
+- Turbo goes no further than native 2K: Qwen trained and published 2K buckets only, and 2048²
+  is the measured VRAM limit on 16 GB. Larger outputs come from the upscaler model.
 - **Same-seed A/B, RTX 5070 Ti, 1024², 3 t2i + 3 edits** (`scripts/dev/compare-fast-modes.py`):
   Fast (20 steps) 19.1 s t2i / 23.8 s edit; Viggle v0.3 LoRA (6 steps) 10.1 / 13.6 s; official
   Turbo (8 steps) 9.5 / 13.1 s. ~4.5 s per image are fixed (encode, 2.7 s decode), so the
@@ -151,10 +150,12 @@ Q4_K (4.05 GB, `catalog::TURBO_Q4_K`, part of every preset). t2i and edits.
   weights, `proj_out.weight [4,64,4096]` = one output head per step), would need an sd.cpp
   patch. LightX2V Lightning for 2.1: not released (issue #1548).
 - Open: Turbo Q6_K / Q8_0 vs Q4_K (the comparison script has `official8_q6_k`,
-  `official8_q8_0`); Turbo above 1 MP.
+  `official8_q8_0`); Turbo at 1.5K and 2K on real prompts.
 
-The **Upscale** action has two methods: **Quick** (ESRGAN only) and **Detailed** (a low-denoise
-0.3 img2img pass at about 2K, then ESRGAN to the target).
+The **Upscale** action runs the upscaler model (ESRGAN) straight on the image. The Detailed
+method (a low-denoise img2img pass at about 2K first) was removed on 2026-10-09: Turbo's
+schedule leaves only 1–2 steps at strength 0.3. Requests with `"method": "detailed"` run as
+the upscaler model only.
 
 ## HDR
 
@@ -177,8 +178,7 @@ path so it can be fetched by hand.
 
 In `%APPDATA%\Kokon\config.json`: `hardwarePreset` (`12gb|16gb|24gb|32gb`, written by the
 setup screen), `vramOverrideMib` (plan sizes as if the GPU had this much VRAM; 0 = detect;
-for testing), `refineMode` (`fast|best`, Detailed upscale effort; `off` is legacy),
-`upscalersDir` (null = default folder), `upscalerModel` (`4x-UltraSharp`; configs on the old
+for testing), `upscalersDir` (null = default folder), `upscalerModel` (`4x-UltraSharp`; configs on the old
 `RealESRGAN_x4plus` default move to it), `upscaleTileSize` (0 = backend default 128),
 `prefixCacheType`, `eagerLoad`, `sageAttention`.
 

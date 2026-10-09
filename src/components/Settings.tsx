@@ -5,7 +5,7 @@ import { api } from "../lib/api";
 import { native } from "../lib/native";
 import { getState, refreshStatus, setState, toastError, toastInfo } from "../lib/store";
 import { UPSCALERS } from "../lib/logic";
-import type { AppConfig, Check, ModelProfile, RefineMode, SetupReport, TextEncoderPlacement } from "../lib/types";
+import type { AppConfig, Check, ModelProfile, SetupReport, TextEncoderPlacement } from "../lib/types";
 import { IconButton, Seg, Switch } from "./ui";
 import { autoCheckEnabled, checkForUpdate } from "../lib/updates";
 
@@ -352,20 +352,6 @@ export function Settings() {
                   <Switch on={cfg.eagerLoad} onChange={(v) => set({ eagerLoad: v })} />
                 </div>
               )}
-              <div className="field">
-                <span>Detailed upscale</span>
-                <Seg<RefineMode>
-                  value={cfg.refineMode === "best" ? "best" : "fast"}
-                  options={[
-                    { value: "fast", label: "Fast" },
-                    { value: "best", label: "Best" },
-                  ]}
-                  onChange={(v) => set({ refineMode: v })}
-                />
-                <span className="muted">
-                  Only for Upscale → Detailed, which re-renders fine detail at about 2K before the upscaler model. Fast: 6 steps with caching. Best: 8 steps, no cache. Generation always renders in one pass and is then enlarged with the upscaler model.
-                </span>
-              </div>
               <label className="field-row">
                 <span>ESRGAN tile size (px, 0 = default 128)</span>
                 <input className="input" type="number" min={0} max={1024} step={64} style={{ width: 90 }} value={cfg.upscaleTileSize} onChange={(e) => set({ upscaleTileSize: Math.max(0, Math.round(Number(e.target.value) || 0)) })} />

@@ -188,8 +188,7 @@ async fn status(State(s): St) -> Json<Value> {
             "schedulers": srv.capabilities.as_ref().map(|c| c.schedulers.clone()).unwrap_or_default(),
             "upscale": srv.capabilities.as_ref().map(|c| c.upscale),
         },
-        "upscaler": { "model": cfg.upscaler_model, "available": cfg.upscaler_file().is_some(), "refine_mode": cfg.refine_mode },
-        "turbo": { "available": cfg.turbo_model().is_some() },
+        "upscaler": { "model": cfg.upscaler_model, "available": cfg.upscaler_file().is_some() },
         "profile": { "id": cfg.profile().id, "display_name": cfg.profile().display_name },
         "gpu": gpu,
         "active_job": s.engine.active_job(),
@@ -335,7 +334,7 @@ async fn put_config(State(s): St, Json(cfg): Json<AppConfig>) -> ApiResult<Json<
 }
 
 async fn backend_start(State(s): St) -> ApiResult<Json<Value>> {
-    let cfg = s.engine.server_config();
+    let cfg = s.engine.config();
     let engine = s.engine.clone();
     engine.emit_server();
     let r = engine.server.ensure_ready(&cfg).await;
@@ -405,7 +404,7 @@ async fn diagnostics_json(State(s): St) -> ApiResult<Json<Value>> {
             let _ = writeln!(text, "{label}: {} ({})", p.display(), if p.is_file() { "ok" } else { "MISSING" });
         }
         let _ = writeln!(text, "Device: {}, text encoder: {:?}, VRAM reserve: {} GiB, flash attention: {}, sage attention: {}", cfg.device, cfg.text_encoder_placement, cfg.vram_reserve_gib, cfg.flash_attention, cfg.sage_attention);
-        let _ = writeln!(text, "VAE tile size: {}, refine: {:?}, upscale tile size: {}", cfg.vae_tile_size, cfg.refine_mode, cfg.upscale_tile_size);
+        let _ = writeln!(text, "VAE tile size: {}, upscale tile size: {}", cfg.vae_tile_size, cfg.upscale_tile_size);
         let up = diagnostics::upscaler_check(&cfg);
         let _ = writeln!(text, "ESRGAN upscaler: {}", up.detail);
         let _ = writeln!(text, "Ports: server {}, service {}", cfg.server_port, cfg.service_port);
@@ -581,7 +580,7 @@ async fn op_inpaint(State(s): St, Query(q): Query<OpQ>, Json(op): Json<SimpleOp>
 async fn op_outpaint(State(s): St, Query(q): Query<OpQ>, Json(op): Json<SimpleOp>) -> ApiResult<Json<JobView>> {
     run_simple(s, Mode::Outpaint, op, q.wait.unwrap_or(true)).await
 }
-/// `{"image": "...", "scale": 2 | "width"/"height", "method": "quick"|"detailed", "prompt"?}`
+/// `{"image": "...", "scale": 2 | "width"/"height", "prompt"?}`: the upscaler model only.
 async fn op_upscale(State(s): St, Query(q): Query<OpQ>, Json(op): Json<SimpleOp>) -> ApiResult<Json<JobView>> {
     run_simple(s, Mode::Upscale, op, q.wait.unwrap_or(true)).await
 }

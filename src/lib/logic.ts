@@ -1,6 +1,6 @@
 // Pure UI logic (unit-tested in logic.test.ts).
 
-import type { Advanced, GenerationRecord, GenerationRequest, InpaintAction, InputRecord, InstallItem, JobView, Mode, OutpaintSpec, Plan, Quality, ResolutionMode, Size, UpscaleMethod } from "./types";
+import type { Advanced, GenerationRecord, GenerationRequest, InpaintAction, InputRecord, InstallItem, JobView, Mode, OutpaintSpec, Plan, Quality, ResolutionMode, Size } from "./types";
 
 export interface Ref {
   key: string;
@@ -15,7 +15,6 @@ export interface Ref {
 
 export interface Composer {
   prompt: string;
-  negative: string;
   refs: Ref[];
   /** Mask painted on refs[0] (input id of the mask PNG). */
   mask: { inputId: string; refKey: string } | null;
@@ -32,16 +31,23 @@ export interface Composer {
   advanced: Advanced;
 }
 
+/** A preset name from any version: older ones also had "turbo" (now Fast) and "ultra" (now Quality). */
+export function normalizeQuality(q: unknown, fallback: Quality = "fast"): Quality {
+  if (q === "fast" || q === "balanced" || q === "quality") return q;
+  if (q === "turbo") return "fast";
+  if (q === "ultra") return "quality";
+  return fallback;
+}
+
 export const emptyComposer = (prefs?: Partial<Composer>): Composer => ({
   prompt: "",
-  negative: "",
   refs: [],
   mask: null,
   inpaintAction: "edit",
   outpaint: null,
   mode: "auto",
   aspect: prefs?.aspect ?? "auto",
-  quality: prefs?.quality ?? "turbo",
+  quality: normalizeQuality(prefs?.quality),
   resolution: prefs?.resolution ?? "auto",
   customWidth: prefs?.customWidth ?? 1024,
   customHeight: prefs?.customHeight ?? 1024,
@@ -84,7 +90,6 @@ export function buildRequest(c: Composer, parentId?: string | null): GenerationR
   const shaped = !maskValid && !hasOutpaint(c.outpaint);
   return {
     prompt: c.prompt.trim(),
-    negative_prompt: c.negative.trim() || null,
     mode: c.mode,
     images: c.mode === "generate" ? [] : c.refs.map((r) => r.source),
     mask: maskValid ? `input:${c.mask!.inputId}` : null,
@@ -110,13 +115,15 @@ export function needsPrompt(c: Composer): boolean {
 }
 
 /** Advanced fields that change how the model samples. They last for the session only: a value
- * typed once (e.g. CFG 4 during a test) must not silently override the presets after a restart.
- * `flow_shift` is no longer in the UI but may still sit in old saved preferences. */
-const SAMPLING_OVERRIDES = ["steps", "cfg", "sampler", "scheduler", "strength", "flow_shift"];
+ * typed once must not silently override the presets after a restart. */
+const SAMPLING_OVERRIDES = ["sampler", "strength"];
+/** Fields of older versions that Turbo's fixed schedule no longer uses (may sit in saved
+ * preferences, projects and gallery records): dropped everywhere. */
+const REMOVED_ADVANCED = ["steps", "cfg", "scheduler", "flow_shift", "refine"];
 
-/** Labels of the sampling overrides currently set, e.g. ["CFG 4", "Steps 20"]. */
+/** Labels of the sampling overrides currently set, e.g. ["Sampler heun", "Strength 0.8"]. */
 export function activeOverrides(a: Advanced): string[] {
-  const label: Record<string, string> = { steps: "Steps", cfg: "CFG", sampler: "Sampler", scheduler: "Scheduler", strength: "Strength", flow_shift: "Flow shift" };
+  const label: Record<string, string> = { sampler: "Sampler", strength: "Strength" };
   return Object.entries(cleanAdvanced(a))
     .filter(([k]) => SAMPLING_OVERRIDES.includes(k))
     .map(([k, v]) => `${label[k]} ${v}`);
@@ -132,7 +139,7 @@ export function persistentAdvanced(a: Advanced | undefined): Advanced {
 function cleanAdvanced(a: Advanced): Advanced {
   const out: Advanced = {};
   for (const [k, v] of Object.entries(a)) {
-    if (v !== null && v !== undefined && v !== "") (out as Record<string, unknown>)[k] = v;
+    if (v !== null && v !== undefined && v !== "" && !REMOVED_ADVANCED.includes(k)) (out as Record<string, unknown>)[k] = v;
   }
   return out;
 }
@@ -144,18 +151,17 @@ export function composerFromRecord(g: GenerationRecord, base: Composer): Compose
   const c: Composer = {
     ...base,
     prompt: g.prompt,
-    negative: g.negative_prompt ?? "",
     refs,
     mask: g.mask_input_id && refs[0] ? { inputId: g.mask_input_id, refKey: refs[0].key } : null,
     inpaintAction: req?.inpaint_action ?? "edit",
     outpaint: g.outpaint ? { ...g.outpaint, units: "pixels" } : null,
     // Upscales are started from the image toolbar, not the composer.
     mode: req?.mode && req.mode !== "upscale" ? req.mode : "auto",
-    quality: g.quality ?? base.quality,
+    quality: normalizeQuality(g.quality, base.quality),
     resolution: req?.resolution ?? base.resolution,
     aspect: req?.aspect_ratio ?? "auto",
     seed: null,
-    advanced: req?.advanced ?? {},
+    advanced: cleanAdvanced(req?.advanced ?? {}),
   };
   if (req?.width && req?.height) {
     c.customWidth = req.width;
@@ -372,18 +378,18 @@ export function upscaleTargets(w: number, h: number, source?: Size | null): Upsc
   return out;
 }
 
-export function upscaleRequest(source: string, target: Size, method: UpscaleMethod, parentId?: string | null): GenerationRequest {
+export function upscaleRequest(source: string, target: Size, parentId?: string | null): GenerationRequest {
   return {
     prompt: "",
     mode: "upscale",
     images: [source],
-    quality: "balanced",
+    quality: "fast",
     resolution: "auto",
     preserve_dimensions: true,
     advanced: {},
     client: "ui",
     parent_id: parentId ?? null,
-    upscale: { method, width: target.width, height: target.height },
+    upscale: { method: "quick", width: target.width, height: target.height },
   };
 }
 

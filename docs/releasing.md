@@ -38,14 +38,21 @@ How to publish a version that installed copies update to, on Windows and macOS.
    `node scripts/release/updater.mjs manifest --notes "What changed, in one or two lines"`
 5. **Publish** (the tag must be `v` + the version):
    ```bash
-   gh release create v0.9.1 --title "Kokon 0.9.1" --notes "…" \
-     "dist-release/Kokon Setup.exe" dist-release/Kokon_0.9.1_aarch64.dmg \
-     dist-release/Kokon_0.9.1_x64-setup.exe dist-release/Kokon_0.9.1_aarch64.app.tar.gz \
-     dist-release/latest.json
+   gh release create v0.9.1 --draft --target master --title "Kokon 0.9.1" --notes-file notes.md \
+     dist-release/Kokon_0.9.1_x64-setup.exe dist-release/Kokon_0.9.1_aarch64.dmg \
+     dist-release/Kokon_0.9.1_aarch64.app.tar.gz dist-release/latest.json
    ```
-   `Kokon Setup.exe` and the `.dmg` are for people downloading by hand. The `_x64-setup.exe`
-   and `.app.tar.gz` are what the updater downloads; `latest.json` points to them. A release
-   marked *pre-release* is not "latest", so the updater ignores it.
+   - **What people download:** `Kokon_<version>_x64-setup.exe` on Windows (`Kokon Setup.exe`
+     in dist-release is an identical copy, not uploaded) and the `.dmg` on a Mac.
+   - **What the updater downloads:** the `_x64-setup.exe` and the `.app.tar.gz`, which
+     `latest.json` points to.
+   - Put the installer's SHA-256 in the notes.
+   - A release marked *pre-release* is not "latest", so the updater ignores it.
+   - Review the draft on GitHub, then press **Publish**.
+6. **Adding the other platform later** (e.g. the Mac build after the Windows one):
+   1. Copy its files and its `updater-<platform>.json` into the same `dist-release/`.
+   2. Run the manifest step again.
+   3. Upload with `gh release upload v0.9.1 <files> dist-release/latest.json --clobber`.
 
 ## Testing an update
 

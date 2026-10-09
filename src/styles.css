@@ -444,3 +444,38 @@ pre.diag { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font
 /* a thumbnail dragged from the timeline */
 .drag-ghost { position: fixed; z-index: 100; width: 56px; height: 56px; object-fit: cover; border-radius: 10px; pointer-events: none; transform: translate(-50%, -60%) rotate(-3deg); box-shadow: var(--shadow); opacity: 0.85; }
 .drag-ghost.over { opacity: 1; transform: translate(-50%, -60%) scale(1.08); }
+
+/* Welcome (first launch), showcase (while downloading), ready tips (end of setup). */
+.kokon-mark { display: inline-flex; color: var(--text); }
+.kokon-mark svg { display: block; }
+.welcome { width: min(620px, 92vw); max-height: 90vh; overflow-y: auto; background: var(--bg); border-radius: 22px; box-shadow: var(--shadow); padding: 36px 36px 26px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 14px; animation: welcome-in 0.35s ease-out; }
+.welcome h1 { font-size: 26px; letter-spacing: -0.02em; margin: 4px 0 0; }
+.welcome-lead { margin: 0; color: var(--text-2); font-size: 14px; line-height: 1.55; max-width: 500px; text-wrap: balance; }
+.welcome-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; margin: 8px 0 6px; text-align: left; }
+.welcome-item { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; background: var(--surface); border-radius: 14px; font-size: 13px; line-height: 1.45; }
+.welcome-item svg { margin-bottom: 4px; }
+.welcome-item strong { font-size: 14px; }
+.welcome-item span { color: var(--text-2); }
+.welcome .btn.big { min-width: 200px; justify-content: center; }
+.welcome-foot { font-size: 12px; }
+@keyframes welcome-in { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+@media (max-width: 560px) { .welcome-grid { grid-template-columns: 1fr; } .welcome { padding: 28px 20px 20px; } }
+
+.showcase { display: flex; flex-direction: column; gap: 10px; padding: 16px; border: 1px solid var(--border); border-radius: 14px; }
+.showcase-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; }
+.showcase-media { position: relative; aspect-ratio: 2 / 1; border-radius: 10px; overflow: hidden; background: var(--surface); }
+.showcase-media img, .showcase-media video { width: 100%; height: 100%; object-fit: contain; display: block; animation: welcome-fade 0.4s ease-out; }
+.showcase-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--bg); color: var(--text); box-shadow: var(--shadow); opacity: 0; transition: opacity 0.15s; }
+.showcase-media:hover .showcase-nav { opacity: 0.92; }
+.showcase-nav.prev { left: 10px; }
+.showcase-nav.next { right: 10px; }
+.showcase-caption { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.showcase-caption span { color: var(--text-2); }
+.showcase-dots { display: flex; gap: 6px; justify-content: center; }
+.showcase-dots button { width: 6px; height: 6px; padding: 0; border-radius: 50%; background: var(--surface-3); }
+.showcase-dots button.on { background: var(--text); }
+@keyframes welcome-fade { from { opacity: 0; } to { opacity: 1; } }
+
+.ready-tips { display: flex; flex-direction: column; gap: 8px; padding: 16px 18px; background: var(--surface); border-radius: 14px; font-size: 13px; line-height: 1.5; }
+.ready-tips ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
+@media (prefers-reduced-motion: reduce) { .welcome, .showcase-media img, .showcase-media video { animation: none; } }

@@ -16,6 +16,7 @@ import { ProjectTitle, Sidebar } from "./components/Sidebar";
 import { Stage } from "./components/Stage";
 import { IconButton } from "./components/ui";
 import { shortcut } from "./lib/platform";
+import { Welcome } from "./components/Welcome";
 
 const IMAGE_EXT = /\.(png|jpe?g|webp|bmp|gif|tiff?|heic|heif)$/i;
 
@@ -150,7 +151,9 @@ export default function App() {
         startEvents();
         const cfg = await api.config();
         const st = await refreshStatus();
-        setState({ needsSetup: !cfg.setupComplete });
+        // First launch: the welcome screen, once (Settings → General shows it again).
+        const welcomeSeen = !!(cfg.ui as Record<string, unknown> | null)?.welcomeSeen;
+        setState({ needsSetup: !cfg.setupComplete, ...(welcomeSeen ? {} : { overlay: "welcome" }) });
         setBoot("ok");
         // Preload the model so the first generation starts immediately.
         if (cfg.setupComplete && st && st.server.state === "stopped") api.startBackend().then(refreshStatus, () => refreshStatus());
@@ -295,6 +298,7 @@ export default function App() {
         {!needsSetup && overlay !== "inpaint" && overlay !== "expand" && overlay !== "gallery" && <Composer />}
       </div>
       {overlay === "settings" && <SettingsDialog />}
+      {overlay === "welcome" && <Welcome />}
       <Toasts />
     </div>
   );

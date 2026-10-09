@@ -6,6 +6,7 @@ import { native } from "../lib/native";
 import { refreshStatus, setState, toastError, useStore } from "../lib/store";
 import type { GpuBackend, HardwareReport, InstallItem, InstallStatus, SetupReport } from "../lib/types";
 import { Seg, Switch } from "./ui";
+import { ReadyTips, Showcase } from "./Welcome";
 
 const gb = (mib: number) => `${Math.round(mib / 1024)} GB`;
 
@@ -319,6 +320,8 @@ export function Setup() {
                 <span>{hw.current === chosen?.id || !chosen ? "Everything is installed." : `The ${chosen.label} files are already here.`}</span>
               </div>
             )}
+            {presetInstalled && !running && !setupDone && <ReadyTips />}
+            {(running || paused) && <Showcase />}
 
             {/* What gets installed. */}
             <div className="field">

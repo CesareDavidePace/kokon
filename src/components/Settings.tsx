@@ -173,6 +173,12 @@ export function Settings() {
                 <input className="input" type="number" min={0} max={1440} style={{ width: 90 }} value={cfg.idleUnloadMinutes} onChange={(e) => set({ idleUnloadMinutes: Math.max(0, Number(e.target.value) || 0) })} />
               </label>
               <span className="muted" style={{ marginTop: -10 }}>Applies to MCP and API use without the desktop window. 0 keeps it loaded.</span>
+              <div className="field-row">
+                <span>Welcome screen: what Kokon is and how it keeps your work private</span>
+                <button className="btn" onClick={() => setState({ overlay: "welcome" })}>
+                  Show
+                </button>
+              </div>
             </>
           )}
 

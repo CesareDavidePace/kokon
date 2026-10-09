@@ -14,7 +14,8 @@ describe("input validation", () => {
     expect(obj("generate_image").safeParse({ prompt: "x", width: 5000, height: 512 }).success).toBe(false);
     expect(obj("generate_image").safeParse({ prompt: "x", aspect_ratio: "16:9" }).success).toBe(true);
     expect(obj("generate_image").safeParse({ prompt: "x", aspect_ratio: "wide" }).success).toBe(false);
-    expect(obj("generate_image").safeParse({ prompt: "x", quality: "ultra" }).success).toBe(false);
+    expect(obj("generate_image").safeParse({ prompt: "x", quality: "ultra" }).success).toBe(true);
+    expect(obj("generate_image").safeParse({ prompt: "x", quality: "max" }).success).toBe(false);
     expect(obj("generate_image").safeParse({ prompt: "x", seed: -2 }).success).toBe(false);
   });
   it("edit_images limits and order", () => {

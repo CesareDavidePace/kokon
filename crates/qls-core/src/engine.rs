@@ -167,7 +167,8 @@ impl Engine {
         new.save()?;
         let mut g = self.cfg.write().unwrap();
         let restart = crate::process::build_server_args(&g, g.profile()) != crate::process::build_server_args(&new, new.profile())
-            || g.sdcpp_dir != new.sdcpp_dir;
+            || g.sdcpp_dir != new.sdcpp_dir
+            || g.gpu_backend != new.gpu_backend;
         *g = new;
         *self.backend_version.lock().unwrap() = None;
         Ok(restart)
@@ -461,7 +462,7 @@ impl Engine {
     /// Dry run: the plan a request would get (used by the UI to show working sizes).
     pub fn preview_plan(&self, req: &GenerationRequest, sizes: Vec<Size>, mask: Option<(Size, Option<crate::geometry::Rect>, f64)>) -> AppResult<Plan> {
         let cfg = self.config();
-        let vram = cfg.planning_vram_mib(self.gpu().map(|g| g.memory_total_mib));
+        let vram = cfg.planning_vram_mib(self.gpu().map(|g| g.planning_mib()));
         planner::plan(req, &plan_inputs(&cfg, sizes, mask, vram), &cfg.profile().recommended_settings)
     }
 
@@ -506,7 +507,7 @@ impl Engine {
         // 2. Plan.
         let cfg = self.config();
         let profile = cfg.profile().clone();
-        let vram = cfg.planning_vram_mib(self.gpu().map(|g| g.memory_total_mib));
+        let vram = cfg.planning_vram_mib(self.gpu().map(|g| g.planning_mib()));
         let mask_info = mask.as_ref().map(|(m, _)| (Size::new(m.width(), m.height()), imaging::mask_bbox(m, 16), imaging::mask_coverage(m, 16)));
         let plan_inputs = plan_inputs(&cfg, images.iter().map(|i| i.size()).collect(), mask_info, vram);
         let plan = planner::plan(&request, &plan_inputs, &profile.recommended_settings)?;

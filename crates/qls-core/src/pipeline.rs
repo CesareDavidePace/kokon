@@ -522,7 +522,7 @@ mod tests {
         assert_eq!((v["width"].as_u64(), v["height"].as_u64()), (Some(p.working.width as u64), Some(p.working.height as u64)));
         assert!(v.get("hires").map(|h| h.is_null()).unwrap_or(true), "no second pass");
         assert!(v.get("cache_mode").map(|c| c.is_null()).unwrap_or(true));
-        assert_eq!(v["sample_params"]["sample_steps"], 40);
+        assert_eq!(v["sample_params"]["sample_steps"], 20);
         assert_eq!(v["sample_params"]["guidance"]["txt_cfg"], 1.0, "official: no CFG");
         assert!(p.working.area() > 2_500_000, "Quality renders toward native 2K: {:?}", p.working);
     }
@@ -858,7 +858,7 @@ mod tests {
         let r = req("a red fox");
         let p = plan(&r, &PlanInputs { vram_total_mib: Some(16303), ..Default::default() }, &RecommendedSettings::default()).unwrap();
         let j = prepare(&p, &r.prompt, 5, &[], None, &BackendOptions::default()).unwrap();
-        let mut noisy = fake_backend(1024, 1024);
+        let mut noisy = fake_backend(p.working.width, p.working.height);
         noisy.put_pixel(3, 3, Rgba([1, 2, 3, 250]));
         let out = postprocess(noisy.clone(), &j.post).unwrap();
         assert!(out.pixels().all(|p| p[3] == 255));
@@ -878,9 +878,9 @@ mod tests {
         let v = serde_json::to_value(&j.request).unwrap();
         assert!(v.get("ref_images").is_none() && v.get("init_image").is_none());
         assert_eq!(v["seed"], 5);
-        assert_eq!(v["width"], 1024);
-        let out = postprocess(fake_backend(1024, 1024), &j.post).unwrap();
-        assert_eq!(out.dimensions(), (1024, 1024));
+        assert_eq!(v["width"], 1536);
+        let out = postprocess(fake_backend(1536, 1536), &j.post).unwrap();
+        assert_eq!(out.dimensions(), (1536, 1536));
     }
 
     #[test]

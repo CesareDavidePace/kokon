@@ -15,6 +15,7 @@ import { Setup } from "./components/Setup";
 import { ProjectTitle, Sidebar } from "./components/Sidebar";
 import { Stage } from "./components/Stage";
 import { IconButton } from "./components/ui";
+import { shortcut } from "./lib/platform";
 
 const IMAGE_EXT = /\.(png|jpe?g|webp|bmp|gif|tiff?|heic|heif)$/i;
 
@@ -68,10 +69,10 @@ function HistoryButtons() {
   if (!canUndo && !canRedo) return null;
   return (
     <>
-      <IconButton title="Undo: back to the previous version (Ctrl+Z)" onClick={undoVersion} disabled={!canUndo}>
+      <IconButton title={`Undo: back to the previous version (${shortcut("Z")})`} onClick={undoVersion} disabled={!canUndo}>
         <Undo2 size={18} />
       </IconButton>
-      <IconButton title="Redo (Ctrl+Y)" onClick={redoVersion} disabled={!canRedo}>
+      <IconButton title={`Redo (${shortcut("Y")})`} onClick={redoVersion} disabled={!canRedo}>
         <Redo2 size={18} />
       </IconButton>
     </>

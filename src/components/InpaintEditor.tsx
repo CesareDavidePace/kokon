@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { api, urls } from "../lib/api";
 import { focusPrompt, getState, setState, toastError, updateComposer, useStore } from "../lib/store";
 import { IconButton } from "./ui";
+import { shortcut } from "../lib/platform";
 
 type Op =
   | { kind: "stroke"; erase: boolean; size: number; points: [number, number][] }
@@ -253,10 +254,10 @@ export function InpaintEditor() {
           </label>
         </div>
         <div className="group">
-          <IconButton title="Undo (Ctrl+Z)" onClick={undo} disabled={!ops.length}>
+          <IconButton title={`Undo (${shortcut("Z")})`} onClick={undo} disabled={!ops.length}>
             <Undo2 size={17} />
           </IconButton>
-          <IconButton title="Redo (Ctrl+Y)" onClick={redoOp} disabled={!redo.length}>
+          <IconButton title={`Redo (${shortcut("Y")})`} onClick={redoOp} disabled={!redo.length}>
             <Redo2 size={17} />
           </IconButton>
           <IconButton title="Invert mask" onClick={() => push({ kind: "invert" })}>

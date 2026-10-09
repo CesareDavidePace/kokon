@@ -180,18 +180,97 @@ export const MODE_LABEL: Record<Mode, string> = {
   upscale: "Upscale",
 };
 
-/** Version names within a project: imported images are "Original" ("Original 2", ...), and
- * results and pending jobs are numbered v1, v2... in project order. */
-export function versionLabels(items: { key: string; kind: "gen" | "input" | "job" }[]): Record<string, string> {
+/** Short names within a project. Every image that starts something new (a new image, a new
+ * seed of one, an import) gets the next number: "1", "2"… Everything made from it (edits,
+ * edits of edits, combinations led by it, upscales) is numbered within it: "1.1", "1.2"…
+ * `from`/`variant` as in timelineLinks. */
+export function versionLabels(items: { key: string; source: string | null; from: string[]; variant?: boolean }[]): Record<string, string> {
+  const links = timelineLinks(items);
   const out: Record<string, string> = {};
-  let v = 0;
-  let inputs = 0;
+  const family: Record<string, string> = {};
+  const count: Record<string, number> = {};
+  let images = 0;
   for (const it of items) {
-    if (it.kind === "input") {
-      inputs++;
-      out[it.key] = inputs === 1 ? "Original" : `Original ${inputs}`;
-    } else out[it.key] = `v${++v}`;
+    const parent = links[it.key].parents[0];
+    if (!parent || it.variant) {
+      const n = String(++images);
+      family[it.key] = n;
+      out[it.key] = n;
+    } else {
+      const f = family[parent];
+      family[it.key] = f;
+      count[f] = (count[f] ?? 0) + 1;
+      out[it.key] = `${f}.${count[f]}`;
+    }
   }
+  return out;
+}
+
+export interface ArcPlace {
+  /** 0 = lowest level; an arc sits above every shorter arc it spans or overlaps. */
+  lane: number;
+  /** Horizontal shift of each end from its thumbnail's centre, so arcs meeting at one
+   * thumbnail do not share a point. */
+  dx1: number;
+  dx2: number;
+}
+
+/** Places arcs between items at positions `a` -> `b` (indexes along the timeline). */
+export function arcLayout(arcs: { a: number; b: number }[], spread = 8, maxShift = 16): ArcPlace[] {
+  const lanes: { lo: number; hi: number }[][] = [];
+  const order = arcs.map((_, i) => i).sort((i, j) => Math.abs(arcs[i].b - arcs[i].a) - Math.abs(arcs[j].b - arcs[j].a) || Math.min(arcs[i].a, arcs[i].b) - Math.min(arcs[j].a, arcs[j].b));
+  const out: ArcPlace[] = arcs.map(() => ({ lane: 0, dx1: 0, dx2: 0 }));
+  for (const i of order) {
+    const lo = Math.min(arcs[i].a, arcs[i].b);
+    const hi = Math.max(arcs[i].a, arcs[i].b);
+    let lane = 0;
+    while (lanes[lane]?.some((s) => lo <= s.hi && s.lo <= hi)) lane++;
+    (lanes[lane] ??= []).push({ lo, hi });
+    out[i].lane = lane;
+  }
+  // Ends at the same item, ordered by where the other end lies (left to right), spread out.
+  const ends = new Map<number, { arc: number; end: "dx1" | "dx2"; other: number }[]>();
+  arcs.forEach((r, i) => {
+    for (const [at, end, other] of [[r.a, "dx1", r.b], [r.b, "dx2", r.a]] as const) {
+      if (!ends.has(at)) ends.set(at, []);
+      ends.get(at)!.push({ arc: i, end, other });
+    }
+  });
+  for (const list of ends.values()) {
+    list.sort((p, q) => p.other - q.other);
+    const step = list.length > 1 ? Math.min(spread, (2 * maxShift) / (list.length - 1)) : 0;
+    list.forEach((e, k) => (out[e.arc][e.end] = (k - (list.length - 1) / 2) * step));
+  }
+  return out;
+}
+
+/** "Image 1.2" for a short name, for sentences and headings. */
+export const imageName = (label: string | undefined) => (label ? `Image ${label}` : "Image");
+
+/** How a version joins the timeline: "start" begins a new line (a new image or an import),
+ * "next" continues from the version just before it, "variant" is the version before made
+ * again with a new seed, "branch" comes from an earlier version, "combine" from several. */
+export type LinkKind = "start" | "next" | "variant" | "branch" | "combine";
+
+export interface TimelineLink {
+  kind: LinkKind;
+  /** Keys of the versions this one was made from (in reference order). */
+  parents: string[];
+}
+
+/** Links between versions. `from` are the "gen:<id>"/"input:<id>" sources an item was made
+ * from; `variant` marks a new seed of `from[0]` rather than an edit of it. Sources that are
+ * not in the project are ignored. */
+export function timelineLinks(items: { key: string; source: string | null; from: string[]; variant?: boolean }[]): Record<string, TimelineLink> {
+  const bySource = new Map<string, string>();
+  const out: Record<string, TimelineLink> = {};
+  items.forEach((it, i) => {
+    const parents = [...new Set(it.from.map((f) => bySource.get(f)).filter((k): k is string => !!k && k !== it.key))];
+    const prev = items[i - 1]?.key;
+    const kind: LinkKind = !parents.length ? "start" : parents.length > 1 ? "combine" : parents[0] !== prev ? "branch" : it.variant ? "variant" : "next";
+    out[it.key] = { kind, parents };
+    if (it.source) bySource.set(it.source, it.key);
+  });
   return out;
 }
 
@@ -439,7 +518,55 @@ export function installTimeLeft(remaining: number, bytesPerSec: number): string 
   return s < 60 ? "less than a minute left" : `about ${Math.ceil(s / 60)} min left`;
 }
 
-export const ASPECTS = ["auto", "1:1", "4:3", "3:4", "16:9", "9:16", "custom"] as const;
+/** Aspect ratios offered in the menus (landscape, then its portrait twin). */
+export const ASPECTS = ["1:1", "5:4", "4:5", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "2:1", "1:2", "21:9", "9:21"] as const;
+
+/** "16:9" -> 1.777…; null when it is not a usable ratio (the service accepts 1:8 to 8:1). */
+export function parseRatio(s: string): number | null {
+  const m = /^\s*(\d+(?:\.\d+)?)\s*[:x×/]\s*(\d+(?:\.\d+)?)\s*$/i.exec(s);
+  if (!m) return null;
+  const r = Number(m[1]) / Number(m[2]);
+  return Number.isFinite(r) && r >= 0.125 && r <= 8 ? r : null;
+}
+
+const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
+
+/** Readable ratio of a size: "16:9" when it is (within 1 %) a common ratio, the reduced
+ * fraction when that is short ("7:5"), else "1.85:1". */
+export function aspectLabel(w: number, h: number): string {
+  if (w <= 0 || h <= 0) return "";
+  const r = w / h;
+  const known = ASPECTS.find((a) => Math.abs(parseRatio(a)! / r - 1) < 0.01);
+  if (known) return known;
+  const g = gcd(Math.round(w), Math.round(h));
+  const a = Math.round(w) / g;
+  const b = Math.round(h) / g;
+  if (a <= 32 && b <= 32) return `${a}:${b}`;
+  return r >= 1 ? `${r.toFixed(2)}:1` : `1:${(1 / r).toFixed(2)}`;
+}
+
+/** Width × height with ratio `r` and about the given pixel area, rounded to multiples of 16. */
+export function sizeForRatio(r: number, area: number, max = 4096): Size {
+  const r16 = (v: number) => Math.max(64, Math.min(max, Math.round(v / 16) * 16));
+  return { width: r16(Math.sqrt(area * r)), height: r16(Math.sqrt(area / r)) };
+}
+
+/** Expansion (source pixels, centred) that turns a w×h image into ratio `r` without cropping. */
+export function expandToRatio(w: number, h: number, r: number): OutpaintSpec {
+  if (w / h < r) {
+    const extra = Math.max(0, Math.round(h * r) - w);
+    return { left: Math.floor(extra / 2), right: extra - Math.floor(extra / 2), top: 0, bottom: 0, units: "pixels" };
+  }
+  const extra = Math.max(0, Math.round(w / r) - h);
+  return { left: 0, right: 0, top: Math.floor(extra / 2), bottom: extra - Math.floor(extra / 2), units: "pixels" };
+}
+
+/** Expansion (centred) to an exact final size; a side smaller than the source stays as it is. */
+export function expandToSize(w: number, h: number, W: number, H: number): OutpaintSpec {
+  const ex = Math.max(0, Math.round(W) - w);
+  const ey = Math.max(0, Math.round(H) - h);
+  return { left: Math.floor(ex / 2), right: ex - Math.floor(ex / 2), top: Math.floor(ey / 2), bottom: ey - Math.floor(ey / 2), units: "pixels" };
+}
 
 /** Expansion presets in source pixels. */
 export function expansionPreset(kind: "left" | "right" | "top" | "bottom" | "landscape" | "portrait" | "square", w: number, h: number, cur: OutpaintSpec): OutpaintSpec {

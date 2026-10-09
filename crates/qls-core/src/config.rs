@@ -26,7 +26,7 @@ pub const UPSCALER_CHOICES: &[(&str, &str, &str)] = &[
 pub const DEFAULT_UPSCALER: &str = UPSCALER_CHOICES[0].0;
 /// Default before schema 2; configs still on it are moved to [`DEFAULT_UPSCALER`].
 const OLD_DEFAULT_UPSCALER: &str = "RealESRGAN_x4plus";
-const SCHEMA_VERSION: u32 = 5;
+const SCHEMA_VERSION: u32 = 6;
 /// Profile id of the official Qwen-Image 2.1 weights (the default since schema 5).
 pub const OFFICIAL_PROFILE_ID: &str = "qwen-image-2.1";
 
@@ -51,6 +51,59 @@ pub enum TextEncoderPlacement {
     Cpu,
     /// Let stable-diffusion.cpp's auto-fit decide.
     Auto,
+    /// Every model's weights reloaded from disk when needed (`--params-backend disk`).
+    /// Least memory, slower; for Macs with 16 GB of unified memory.
+    Disk,
+}
+
+/// Which stable-diffusion.cpp build runs the model. Each build lives in its own folder, so
+/// switching back and forth needs no re-download.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GpuBackend {
+    /// NVIDIA (CUDA 12 build). The verified path.
+    Cuda,
+    /// AMD, Intel and NVIDIA through Vulkan. Works on NVIDIA; AMD/Intel unverified.
+    Vulkan,
+    /// Apple Silicon (Metal build, macOS 26+). Beta.
+    Metal,
+}
+
+impl Default for GpuBackend {
+    /// The engine of this platform when nothing is configured.
+    fn default() -> Self {
+        if cfg!(target_os = "macos") { GpuBackend::Metal } else { GpuBackend::Cuda }
+    }
+}
+
+impl GpuBackend {
+    /// ggml device-name prefix (`cuda0`, `vulkan0`).
+    pub fn device_prefix(self) -> &'static str {
+        match self {
+            GpuBackend::Cuda => "cuda",
+            GpuBackend::Vulkan => "vulkan",
+            GpuBackend::Metal => "metal",
+        }
+    }
+
+    /// Folder of this build, relative to the stable-diffusion.cpp folder ("" = the folder
+    /// itself, where the CUDA build has always been).
+    pub fn engine_subdir(self) -> &'static str {
+        match self {
+            GpuBackend::Cuda => "",
+            GpuBackend::Vulkan => "engine-vulkan",
+            GpuBackend::Metal => "engine-metal",
+        }
+    }
+
+    /// Engine for a GPU vendor as reported by `diagnostics::query_gpus`.
+    pub fn for_vendor(vendor: &str) -> Self {
+        match vendor {
+            "nvidia" => GpuBackend::Cuda,
+            "apple" => GpuBackend::Metal,
+            _ => GpuBackend::Vulkan,
+        }
+    }
 }
 
 /// Effort of a Detailed upscale (low-denoise re-render at ~2K before the upscaler model).
@@ -80,10 +133,12 @@ pub struct RecommendedSettings {
     pub steps_fast: u32,
     pub steps_balanced: u32,
     pub steps_quality: u32,
+    pub steps_ultra: u32,
     /// Pixel area used by Auto resolution at each quality level.
     pub area_fast: u64,
     pub area_balanced: u64,
     pub area_quality: u64,
+    pub area_ultra: u64,
     pub align: u32,
     pub max_side: u32,
     pub max_references: u32,
@@ -101,18 +156,21 @@ impl Default for RecommendedSettings {
         // Official Qwen-Image 2.1 settings (QwenLM/Qwen-Image-2.1 README, diffusers
         // QwenImage21Pipeline): no CFG ("meant to be sampled without guidance"), 40 steps,
         // native 2K buckets; flow-matching Euler, whose resolution-dependent schedule
-        // sd-server selects automatically. Fast halves the steps for speed (not official).
+        // sd-server selects automatically. Only Ultra runs the official 40 steps; the other
+        // presets use 20 (judged enough by the user, 2026-10-09) and differ in size.
         Self {
             sampler: "euler".into(),
             scheduler: None,
             cfg: 1.0,
             cfg_edit: 1.0,
             steps_fast: 20,
-            steps_balanced: 40,
-            steps_quality: 40,
+            steps_balanced: 20,
+            steps_quality: 20,
+            steps_ultra: 40,
             area_fast: 1024 * 1024,
-            area_balanced: 1024 * 1024,
+            area_balanced: 1536 * 1536,
             area_quality: 2048 * 2048,
+            area_ultra: 2048 * 2048,
             align: 32,
             max_side: 4096,
             max_references: 10,
@@ -205,18 +263,22 @@ impl ModelProfile {
 pub struct AppConfig {
     pub schema_version: u32,
     pub sdcpp_dir: PathBuf,
+    /// stable-diffusion.cpp build that runs the model.
+    pub gpu_backend: GpuBackend,
     pub server_port: u16,
     pub service_port: u16,
     pub active_profile: String,
     pub profiles: Vec<ModelProfile>,
     /// ggml device name for diffusion + VAE, e.g. "cuda0" (see `sd-server --list-devices`).
+    /// A name of another engine (e.g. "cuda0" with Vulkan) means device 0 of the active one.
     pub device: String,
     pub text_encoder_placement: TextEncoderPlacement,
     /// VRAM kept free, in GiB (passed as a negative `--max-vram`).
     pub vram_reserve_gib: f32,
     pub flash_attention: bool,
     /// Native CUDA SageAttention in the diffusion model (`--sage-attn`); ~1.5x faster
-    /// steps at 2K on an RTX 5070 Ti with near-identical output.
+    /// steps at 2K on an RTX 5070 Ti with near-identical output. CUDA only (SM80+);
+    /// ignored by other engines.
     pub sage_attention: bool,
     /// VAE tile size in pixels (`--vae-tiling --vae-tile-size N`); 0 disables tiling.
     /// Untiled 2K decodes need ~18 GB, OOM and retry with 256px tiles (~22 s); 768px
@@ -263,6 +325,7 @@ impl Default for AppConfig {
             profiles: vec![ModelProfile::official(&sdcpp, crate::catalog::preset(crate::catalog::DEFAULT_PRESET).unwrap())],
             active_profile: OFFICIAL_PROFILE_ID.into(),
             sdcpp_dir: sdcpp,
+            gpu_backend: GpuBackend::default(),
             server_port: DEFAULT_SERVER_PORT,
             service_port: DEFAULT_SERVICE_PORT,
             device: "cuda0".into(),
@@ -422,6 +485,22 @@ impl AppConfig {
                             }
                         }
                     }
+                    if c.schema_version < 6 {
+                        // 20 steps for Balanced and Quality, Balanced at 1.5K (Ultra takes the
+                        // official 40 steps). Edited values stay.
+                        for p in &mut c.profiles {
+                            let r = &mut p.recommended_settings;
+                            if r.steps_balanced == 40 {
+                                r.steps_balanced = 20;
+                            }
+                            if r.steps_quality == 40 {
+                                r.steps_quality = 20;
+                            }
+                            if r.area_balanced == 1024 * 1024 {
+                                r.area_balanced = 1536 * 1536;
+                            }
+                        }
+                    }
                     // Paths into the data folder of the app's old name (models installed by the
                     // setup screen) follow the folder to its new name.
                     if std::env::var("QLS_DATA_DIR").is_err() {
@@ -505,8 +584,36 @@ impl AppConfig {
         if self.vram_override_mib > 0 { Some(self.vram_override_mib) } else { detected }
     }
 
+    /// Folder of the active stable-diffusion.cpp build.
+    pub fn engine_dir(&self) -> PathBuf {
+        match self.gpu_backend.engine_subdir() {
+            "" => self.sdcpp_dir.clone(),
+            sub => self.sdcpp_dir.join(sub),
+        }
+    }
+
     pub fn server_exe(&self) -> PathBuf {
-        self.sdcpp_dir.join("sd-server.exe")
+        self.engine_dir().join(if cfg!(windows) { "sd-server.exe" } else { "sd-server" })
+    }
+
+    /// The configured device when it belongs to the active engine, else its first GPU.
+    pub fn effective_device(&self) -> String {
+        let dev = self.device.trim().to_ascii_lowercase();
+        if self.gpu_backend == GpuBackend::Metal {
+            // sd-server resolves "metal" to the Mac's GPU (ggml names it MTL0).
+            return "metal".into();
+        }
+        let prefix = self.gpu_backend.device_prefix();
+        match dev.strip_prefix(prefix) {
+            Some(i) if !i.is_empty() && i.chars().all(|c| c.is_ascii_digit()) => dev,
+            // Engines number their devices independently: fall back to the first one.
+            _ => format!("{prefix}0"),
+        }
+    }
+
+    /// SageAttention is requested and the engine supports it.
+    pub fn uses_sage_attention(&self) -> bool {
+        self.sage_attention && self.gpu_backend == GpuBackend::Cuda
     }
 
     pub fn upscalers_dir(&self) -> PathBuf {
@@ -576,6 +683,37 @@ mod tests {
         assert_eq!(c.refine_mode, RefineMode::Fast);
         assert_eq!(c.upscaler_model, "4x-UltraSharp");
         assert_eq!(c.upscalers_dir(), default_sdcpp_dir().join("models").join("upscalers"));
+    }
+
+    #[test]
+    fn engine_choice_sets_folder_device_and_flags() {
+        let mut c = AppConfig::default();
+        c.gpu_backend = GpuBackend::Cuda;
+        assert_eq!(c.engine_dir(), c.sdcpp_dir);
+        assert_eq!(c.effective_device(), "cuda0");
+        assert!(c.uses_sage_attention());
+        c.gpu_backend = GpuBackend::Vulkan;
+        assert_eq!(c.engine_dir(), c.sdcpp_dir.join("engine-vulkan"));
+        assert!(c.server_exe().starts_with(c.sdcpp_dir.join("engine-vulkan")));
+        assert_eq!(c.effective_device(), "vulkan0", "a CUDA device name maps to the first Vulkan GPU");
+        c.device = "Vulkan1".into();
+        assert_eq!(c.effective_device(), "vulkan1");
+        c.device = "vulkan".into();
+        assert_eq!(c.effective_device(), "vulkan0");
+        assert!(!c.uses_sage_attention(), "SageAttention is CUDA only");
+        assert_eq!(GpuBackend::for_vendor("nvidia"), GpuBackend::Cuda);
+        assert_eq!(GpuBackend::for_vendor("amd"), GpuBackend::Vulkan);
+        assert_eq!(GpuBackend::for_vendor("apple"), GpuBackend::Metal);
+        c.gpu_backend = GpuBackend::Metal;
+        c.device = "cuda0".into();
+        assert_eq!(c.effective_device(), "metal");
+        assert_eq!(c.engine_dir(), c.sdcpp_dir.join("engine-metal"));
+        assert!(!c.uses_sage_attention());
+        // Configs written before the field existed keep this platform's engine.
+        let old: AppConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(old.gpu_backend, if cfg!(target_os = "macos") { GpuBackend::Metal } else { GpuBackend::Cuda });
+        let json = serde_json::to_string(&c).unwrap();
+        assert!(json.contains(r#""gpuBackend":"metal""#));
     }
 
     #[test]
@@ -660,8 +798,8 @@ mod tests {
         let old = r#"{"schemaVersion":2,"profiles":[{"id":"a","recommendedSettings":{"steps_balanced":30,"steps_quality":40,"area_quality":2359296}}]}"#;
         std::fs::write(&p, old).unwrap();
         let r = AppConfig::load_from(&p).profiles[0].recommended_settings.clone();
-        // Schema 3 then schema 4 run in sequence and end on the official settings.
-        assert_eq!((r.steps_balanced, r.steps_quality, r.area_quality, r.cfg_edit), (40, 40, 2048 * 2048, 1.0));
+        // Schema 3, 4 and 6 run in sequence and end on the current presets.
+        assert_eq!((r.steps_balanced, r.steps_quality, r.area_quality, r.cfg_edit), (20, 20, 2048 * 2048, 1.0));
         // Values the user changed are kept.
         let custom = r#"{"schemaVersion":2,"profiles":[{"id":"a","recommendedSettings":{"steps_balanced":25,"steps_quality":50}}]}"#;
         std::fs::write(&p, custom).unwrap();
@@ -677,7 +815,7 @@ mod tests {
         std::fs::write(&p, old).unwrap();
         let r = AppConfig::load_from(&p).profiles[0].recommended_settings.clone();
         assert_eq!((r.cfg, r.cfg_edit), (1.0, 1.0));
-        assert_eq!((r.steps_fast, r.steps_balanced, r.steps_quality, r.area_quality), (20, 40, 40, 2048 * 2048));
+        assert_eq!((r.steps_fast, r.steps_balanced, r.steps_quality, r.area_quality), (20, 20, 20, 2048 * 2048));
         assert_eq!(r, RecommendedSettings::default());
         let custom = r#"{"schemaVersion":3,"profiles":[{"id":"a","recommendedSettings":{"cfg":3.0,"cfg_edit":2.5,"steps_balanced":28}}]}"#;
         std::fs::write(&p, custom).unwrap();

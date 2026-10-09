@@ -135,6 +135,7 @@ pub enum Quality {
     #[default]
     Balanced,
     Quality,
+    Ultra,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -489,6 +490,7 @@ pub fn resolution_area(mode: ResolutionMode, quality: Quality, rec: &Recommended
             Quality::Fast => rec.area_fast,
             Quality::Balanced => rec.area_balanced,
             Quality::Quality => rec.area_quality,
+            Quality::Ultra => rec.area_ultra,
         }),
         ResolutionMode::K1 => Some(1024 * 1024),
         ResolutionMode::K15 => Some(1536 * 1536),
@@ -511,6 +513,21 @@ pub fn token_budget(vram_total_mib: Option<u64>) -> u64 {
         16_384.0 + (gib - 20.0) * 1_024.0
     };
     tokens.clamp(4_096.0, 24_576.0) as u64
+}
+
+/// Apple Silicon: the VRAM-equivalent to plan with on a Mac with `ram_mib` of unified
+/// memory, so presets and working sizes follow the same rules as a discrete GPU.
+///
+/// Metal lets the GPU wire about 2/3 of unified memory (about 3/4 from 64 GB up; macOS's
+/// `recommendedMaxWorkingSetSize`, the rest stays for the system). The GPU budgets above
+/// assume the text encoder sits in *separate* system RAM; on a Mac it shares the same pool,
+/// so its weights (`text_encoder_mib`, encoder + vision projector) come off the top.
+/// Not yet measured on a Mac: 16 GB → ~4.5 GiB (lightest preset, 1 MP only),
+/// 24 GB → ~9.8 GiB (12 GB preset), 32 GB → ~15 GiB (16 GB preset, 2K),
+/// 64 GB → ~42 GiB (32 GB+ preset).
+pub fn unified_memory_planning_mib(ram_mib: u64, text_encoder_mib: u64) -> u64 {
+    let gpu_share = if ram_mib >= 64 * 1024 { ram_mib * 3 / 4 } else { ram_mib * 2 / 3 };
+    gpu_share.saturating_sub(text_encoder_mib)
 }
 
 pub const PIXELS_PER_TOKEN: u64 = 256; // 8x VAE downscale, 2x2 patches
@@ -561,6 +578,7 @@ fn steps_for(q: Quality, rec: &RecommendedSettings) -> u32 {
         Quality::Fast => rec.steps_fast,
         Quality::Balanced => rec.steps_balanced,
         Quality::Quality => rec.steps_quality,
+        Quality::Ultra => rec.steps_ultra,
     }
 }
 
@@ -960,6 +978,20 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn unified_memory_maps_to_presets() {
+        use crate::catalog::{TEXT_ENCODER_Q4_K_M, VISION_PROJECTOR, recommended_preset};
+        let te = (TEXT_ENCODER_Q4_K_M.size + VISION_PROJECTOR.size) / (1024 * 1024);
+        let mac = |gb: u64| unified_memory_planning_mib(gb * 1024, te);
+        assert!(mac(16) < 6 * 1024, "16 GB: only the smallest working sizes");
+        assert_eq!(token_budget(Some(mac(16))), 4_096);
+        assert_eq!(recommended_preset(Some(mac(24))).id, "12gb");
+        assert_eq!(recommended_preset(Some(mac(32))).id, "16gb");
+        assert_eq!(recommended_preset(Some(mac(48))).id, "24gb");
+        assert_eq!(recommended_preset(Some(mac(64))).id, "32gb");
+        assert_eq!(unified_memory_planning_mib(4096, te), 0, "never underflows");
+    }
+
     use super::*;
 
     fn rec() -> RecommendedSettings {
@@ -977,10 +1009,10 @@ mod tests {
         let p = plan(&req("a lighthouse at dusk"), &inputs(&[]), &rec()).unwrap();
         assert_eq!(p.mode, ResolvedMode::Generate);
         assert!(p.auto_mode);
-        assert_eq!(p.output, Size::new(1024, 1024));
-        assert_eq!(p.working, Size::new(1024, 1024));
-        assert_eq!((p.steps, p.cfg, p.sampler.as_str()), (40, 1.0, "euler"), "official: 40 steps, no CFG");
-        assert!(!p.vae_tiling);
+        assert_eq!(p.output, Size::new(1536, 1536), "Balanced = 1.5K");
+        assert_eq!(p.working, Size::new(1536, 1536));
+        assert_eq!((p.steps, p.cfg, p.sampler.as_str()), (20, 1.0, "euler"), "20 steps, no CFG (official)");
+        assert!(p.vae_tiling, "decodes above ~1.5 MP are tiled");
         assert!(p.references.is_empty());
     }
 
@@ -1000,7 +1032,7 @@ mod tests {
     #[test]
     fn prompt_implies_aspect() {
         let p = plan(&req("Generate a hero image for the landing page, 16:9"), &inputs(&[]), &rec()).unwrap();
-        assert_eq!(p.output, Size::new(1376, 768));
+        assert_eq!(p.output, Size::new(2048, 1152));
         let p = plan(&req("a phone wallpaper of mountains"), &inputs(&[]), &rec()).unwrap();
         assert!(p.output.height > p.output.width);
         let p = plan(&req("a poster, 1280x720"), &inputs(&[]), &rec()).unwrap();
@@ -1020,15 +1052,21 @@ mod tests {
         r.resolution = ResolutionMode::Auto;
         r.quality = Quality::Fast;
         let p = plan(&r, &inputs(&[]), &rec()).unwrap();
-        assert_eq!(p.steps, 20, "Fast halves the official 40 steps");
+        assert_eq!(p.steps, 20);
         assert!(p.output.area() <= 1_100_000);
         r.quality = Quality::Balanced;
-        assert_eq!(plan(&r, &inputs(&[]), &rec()).unwrap().steps, 40);
+        let p = plan(&r, &inputs(&[]), &rec()).unwrap();
+        assert_eq!(p.steps, 20);
+        assert!(p.output.area() > 1_100_000 && p.output.area() <= 1536 * 1536 * 102 / 100, "Balanced = about 1.5K");
         r.quality = Quality::Quality;
         let p = plan(&r, &inputs(&[]), &rec()).unwrap();
-        assert_eq!(p.steps, 40);
+        assert_eq!(p.steps, 20);
         assert_eq!(p.working, Size::new(2752, 1536), "Quality = official native 2K bucket");
         assert_eq!(p.output, p.working);
+        r.quality = Quality::Ultra;
+        let p = plan(&r, &inputs(&[]), &rec()).unwrap();
+        assert_eq!(p.steps, 40, "Ultra = official 40 steps");
+        assert_eq!(p.working, Size::new(2752, 1536));
     }
 
     #[test]
@@ -1087,7 +1125,7 @@ mod tests {
         // Any refine setting, any size: one diffusion pass, no cache.
         for refine in [RefineMode::Off, RefineMode::Fast, RefineMode::Best] {
             for (res, aspect) in [(ResolutionMode::Auto, "16:9"), (ResolutionMode::K15, "1:1"), (ResolutionMode::K2, "9:16")] {
-                for q in [Quality::Fast, Quality::Balanced, Quality::Quality] {
+                for q in [Quality::Fast, Quality::Balanced, Quality::Quality, Quality::Ultra] {
                     let mut r = req("a cozy mountain cabin");
                     r.aspect_ratio = Some(aspect.into());
                     r.resolution = res;
@@ -1129,13 +1167,13 @@ mod tests {
     fn edits_are_one_pass_and_enlarged_to_the_source() {
         let i = PlanInputs { image_sizes: vec![Size::new(5120, 2880)], ..env(true, RefineMode::Fast) };
         let mut r = req("make it a dark version");
-        r.quality = Quality::Balanced;
+        r.quality = Quality::Fast;
         let p = plan(&r, &i, &rec()).unwrap();
         assert_eq!(p.mode, ResolvedMode::Edit);
         assert_eq!(p.working, Size::new(1376, 768));
         assert_eq!(p.references[0].canvas.canvas, p.working);
         assert_eq!(p.output, Size::new(5120, 2880));
-        assert_eq!((p.steps, p.cfg), (40, 1.0));
+        assert_eq!((p.steps, p.cfg), (20, 1.0));
         let esrgan = p.estimated_seconds;
         let p2 = plan(&r, &PlanInputs { upscaler: None, ..i.clone() }, &rec()).unwrap();
         assert!(esrgan > p2.estimated_seconds, "the enlargement is included in the estimate");
@@ -1148,7 +1186,7 @@ mod tests {
         r.quality = Quality::Quality;
         let i = PlanInputs { image_sizes: vec![Size::new(5712, 4284)], ..env(true, RefineMode::Best) };
         let p = plan(&r, &i, &rec()).unwrap();
-        assert_eq!((p.steps, p.cfg, p.cache_threshold), (40, 1.0, None));
+        assert_eq!((p.steps, p.cfg, p.cache_threshold), (20, 1.0, None));
         // Native 2K plus a 2K reference exceeds 16 GB: both get half the budget (~2 MP each).
         // Each side rounds to 32 px, so allow the same 5 % slack as many_references_share_the_budget.
         assert!((1_850_000..=2_202_010).contains(&p.working.area()), "{:?}", p.working);

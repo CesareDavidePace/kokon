@@ -36,8 +36,14 @@ pub fn build_server_args(cfg: &AppConfig, profile: &ModelProfile) -> Vec<String>
         a.push("--llm_vision".into());
         a.push(p(v));
     }
-    let dev = cfg.device.to_ascii_lowercase();
-    match cfg.text_encoder_placement {
+    let dev = cfg.effective_device();
+    let metal = cfg.gpu_backend == crate::config::GpuBackend::Metal;
+    let mut placement = cfg.text_encoder_placement;
+    if metal && placement == TextEncoderPlacement::Ram {
+        // Unified memory: "system RAM" is the GPU's memory too, so a CPU copy only costs.
+        placement = TextEncoderPlacement::Gpu;
+    }
+    match placement {
         TextEncoderPlacement::Ram => {
             // Weights in RAM, compute on the GPU. Explicit --params-backend disables
             // auto-fit, so DiT/VAE weights live on their compute device.
@@ -46,11 +52,17 @@ pub fn build_server_args(cfg: &AppConfig, profile: &ModelProfile) -> Vec<String>
         TextEncoderPlacement::Gpu => a.extend(["--backend".into(), dev.clone()]),
         TextEncoderPlacement::Cpu => a.extend(["--backend".into(), format!("diffusion={dev},vae={dev},te=cpu")]),
         TextEncoderPlacement::Auto => a.extend(["--backend".into(), format!("diffusion={dev},vae={dev}"), "--auto-fit".into(), "on".into()]),
+        TextEncoderPlacement::Disk => a.extend(["--backend".into(), dev.clone(), "--params-backend".into(), "disk".into()]),
+    }
+    if metal {
+        // Weights mapped from the files instead of copied (fixed for Metal upstream in #2037,
+        // part of the pinned build): about 10 GB less peak memory on Apple Silicon.
+        a.push("--mmap".into());
     }
     if cfg.flash_attention {
         a.push("--fa".into());
     }
-    if cfg.sage_attention {
+    if cfg.uses_sage_attention() {
         // Falls back to flash/default attention for layers it can't handle.
         a.push("--sage-attn".into());
     }
@@ -68,7 +80,7 @@ pub fn build_server_args(cfg: &AppConfig, profile: &ModelProfile) -> Vec<String>
         "off" => a.extend(["--model-args".into(), "qwen_image_2_1_prefix_cache=false".into()]),
         t => a.extend(["--model-args".into(), format!("qwen_image_2_1_prefix_cache_type={t}")]),
     }
-    if cfg.eager_load {
+    if cfg.eager_load && placement != TextEncoderPlacement::Disk {
         a.push("--eager-load".into());
     }
     // ESRGAN models for the hires refine and `/sdcpp/v1/upscale`; the server scans the
@@ -314,7 +326,9 @@ pub struct ServerManager {
     lines_tx: broadcast::Sender<String>,
 }
 
+#[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+#[cfg(windows)]
 const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
 
 impl ServerManager {
@@ -453,8 +467,8 @@ impl ServerManager {
         let exe = cfg.server_exe();
         if !exe.is_file() {
             return Err(fail(
-                AppError::new(ErrorCode::MissingModel, format!("sd-server.exe was not found in {}.", cfg.sdcpp_dir.display()))
-                    .suggest("Set the stable-diffusion.cpp folder in Settings."),
+                AppError::new(ErrorCode::MissingModel, format!("sd-server was not found in {}.", cfg.engine_dir().display()))
+                    .suggest("Install it from Settings → Models → Set up models…, or set the stable-diffusion.cpp folder in Settings."),
             ));
         }
         for (label, path, required) in profile.files() {
@@ -822,6 +836,31 @@ mod tests {
     }
 
     #[test]
+    fn vulkan_launch() {
+        let mut cfg = AppConfig::default();
+        cfg.gpu_backend = crate::config::GpuBackend::Vulkan;
+        let s = build_server_args(&cfg, cfg.profile()).join(" ");
+        assert!(s.contains("--backend vulkan0 --params-backend te=cpu"), "{s}");
+        assert!(s.contains("--fa"));
+        assert!(!s.contains("--sage-attn"), "SageAttention is CUDA only");
+        assert!(s.contains("qwen_image_2_1_prefix_cache_type=q8_0"));
+    }
+
+    #[test]
+    fn metal_launch() {
+        let mut cfg = AppConfig::default();
+        cfg.gpu_backend = crate::config::GpuBackend::Metal;
+        let s = build_server_args(&cfg, cfg.profile()).join(" ");
+        assert!(s.contains("--backend metal --mmap --fa"), "RAM placement runs everything on the GPU: {s}");
+        assert!(!s.contains("--params-backend") && !s.contains("--sage-attn"));
+        assert!(s.contains("--mmap") && s.contains("--eager-load"));
+        cfg.text_encoder_placement = TextEncoderPlacement::Disk;
+        let s = build_server_args(&cfg, cfg.profile()).join(" ");
+        assert!(s.contains("--backend metal --params-backend disk"), "{s}");
+        assert!(!s.contains("--eager-load"), "nothing to preload when weights stream from disk");
+    }
+
+    #[test]
     fn step_bar_parsing() {
         assert_eq!(parse_step_bar("  |=====>                                            | 2/20 - 1.99s/it"), Some((2, 20, Some(1.99))));
         assert_eq!(parse_step_bar("|====| 4/8 - 2.00it/s"), Some((4, 8, Some(0.5))));
@@ -889,5 +928,8 @@ mod tests {
             parse_device_list(out),
             vec![("CUDA0".into(), "NVIDIA GeForce RTX 5070 Ti".into()), ("CPU".into(), "AMD Ryzen 7 7700 8-Core Processor".into())]
         );
+        // ggml's Vulkan backend (device names as ggml registers them; not yet captured from a real run).
+        let out = "ggml_vulkan: Found 1 Vulkan devices:\nggml_vulkan: 0 = AMD Radeon RX 7800 XT (AMD proprietary driver) | uma: 0 | fp16: 1\nVulkan0\tAMD Radeon RX 7800 XT\nCPU\tAMD Ryzen 7 7700\n";
+        assert_eq!(parse_device_list(out)[0], ("Vulkan0".into(), "AMD Radeon RX 7800 XT".into()));
     }
 }

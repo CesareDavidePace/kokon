@@ -55,7 +55,7 @@ Double-click or F2 to rename`}
                 <span className="proj-title">{p.title}</span>
               )}
               <span className="proj-sub">
-                {p.count} {p.count === 1 ? "version" : "versions"} · {timeAgo(p.updatedAt)}
+                {p.count} {p.count === 1 ? "image" : "images"} · {timeAgo(p.updatedAt)}
               </span>
             </span>
             <button

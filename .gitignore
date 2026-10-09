@@ -12,3 +12,5 @@ node_modules
 __pycache__/
 /docs/media/raw
 /docs/media/*.mp4
+/src-tauri/binaries/*-apple-darwin
+/target/mac-check

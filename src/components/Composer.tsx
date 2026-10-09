@@ -1,19 +1,21 @@
-import { ArrowUp, Brush, ChevronDown, Expand, FolderOpen, Gauge, ImagePlus, RectangleHorizontal, RectangleVertical, SlidersHorizontal, Sparkles, Square, X } from "lucide-react";
+import { ArrowUp, Brush, ChevronDown, Expand, FolderOpen, Gauge, ImagePlus, Maximize, Pencil, SlidersHorizontal, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, urls } from "../lib/api";
-import { activeOverrides, buildRequest, expansionPixels, formatDuration, hasOutpaint, moveRef, needsPrompt, versionLabels, type Ref } from "../lib/logic";
+import { activeOverrides, aspectLabel, buildRequest, expansionPixels, formatDuration, hasOutpaint, imageName, moveRef, needsPrompt, parseRatio, type Ref } from "../lib/logic";
 import { native } from "../lib/native";
 import {
-  addAsReference, addInputs, getState, itemSource, selectedItem, selectItem, setState, submitComposer, toastError, updateComposer, useStore, type SessionItem,
+  addAsReference, addInputs, editShownImage, getState, itemSource, selectedItem, sessionLabels, setState, startNewImage, submitComposer, toastError, updateComposer, useStore, type SessionItem,
 } from "../lib/store";
 import type { InpaintAction, Plan, Quality } from "../lib/types";
 import { AdvancedPanel } from "./Advanced";
+import { AspectGrid, pickAspect, RatioIcon, resolutionLabel, ResolutionMenu } from "./SizeMenus";
 import { Option, Popover, Seg } from "./ui";
 
 const QUALITY: { value: Quality; label: string; sub: string }[] = [
   { value: "fast", label: "Fast", sub: "~1 MP, 20 steps" },
-  { value: "balanced", label: "Balanced", sub: "~1 MP, 40 steps · recommended" },
-  { value: "quality", label: "Quality", sub: "native 2K, 40 steps · slower" },
+  { value: "balanced", label: "Balanced", sub: "~1.5K, 20 steps · recommended" },
+  { value: "quality", label: "Quality", sub: "native 2K, 20 steps · slower" },
+  { value: "ultra", label: "Ultra", sub: "native 2K, 40 steps · slowest" },
 ];
 
 const INPAINT_ACTIONS: { value: InpaintAction; label: string; placeholder: string }[] = [
@@ -24,14 +26,6 @@ const INPAINT_ACTIONS: { value: InpaintAction; label: string; placeholder: strin
 ];
 
 const INPAINT_VERB: Record<InpaintAction, string> = { edit: "Changing", remove: "Clearing", replace: "Replacing", add: "Adding to" };
-
-const ASPECT_ICON: Record<string, React.ReactNode> = {
-  "1:1": <Square size={15} />,
-  "4:3": <RectangleHorizontal size={15} />,
-  "16:9": <RectangleHorizontal size={15} />,
-  "3:4": <RectangleVertical size={15} />,
-  "9:16": <RectangleVertical size={15} />,
-};
 
 export async function importPaths(paths: string[]) {
   const recs = [];
@@ -45,15 +39,15 @@ export async function importPaths(paths: string[]) {
   addInputs(recs);
 }
 
-/** Version name of a reference when it is part of the project ("v2", "Original"). */
+/** Name of a reference when it is part of the project ("Image 1.2"). */
 function useRefNames() {
   const session = useStore((s) => s.session);
   return useMemo(() => {
-    const labels = versionLabels(session);
+    const labels = sessionLabels(session);
     const bySource = new Map<string, string>();
     for (const i of session) {
       const s = itemSource(i);
-      if (s) bySource.set(s, labels[i.key]);
+      if (s) bySource.set(s, imageName(labels[i.key]));
     }
     return (r: Ref) => bySource.get(r.source) ?? null;
   }, [session]);
@@ -128,35 +122,45 @@ function RefStrip() {
   );
 }
 
+/** Edit image | New image: whether the prompt changes an image or makes a new one. */
+function ModeSwitch({ editing }: { editing: boolean }) {
+  const sel = useStore(selectedItem);
+  const session = useStore((s) => s.session);
+  const img = sel && (sel.gen || sel.input) ? sel : [...session].reverse().find((i) => i.gen || i.input);
+  const name = img ? imageName(sessionLabels(session)[img.key]).toLowerCase() : "";
+  return (
+    <div className="mode-switch" role="radiogroup" aria-label="What the prompt does">
+      <button className={editing ? "" : "on"} role="radio" aria-checked={!editing} onClick={() => editing && startNewImage()} title="Make a new image from the prompt alone; your images stay in the timeline">
+        <Sparkles size={14} /> New image
+      </button>
+      <button className={editing ? "on" : ""} role="radio" aria-checked={editing} onClick={() => !editing && editShownImage()} title={editing ? "The prompt edits this image" : `Edit ${name}, the image shown`}>
+        <Pencil size={14} /> Edit image
+      </button>
+    </div>
+  );
+}
+
 /** Says, in words, what the prompt is going to do, and offers the tools for that image. */
 function TargetBar() {
   const c = useStore((s) => s.composer);
-  const sel = useStore(selectedItem);
   const session = useStore((s) => s.session);
   const nameOf = useRefNames();
 
   if (!c.refs.length) {
-    const img = sel && (sel.gen || sel.input) ? sel : [...session].reverse().find((i) => i.gen || i.input);
-    if (!img) return null;
+    if (!session.some((i) => i.gen || i.input)) return null;
     return (
       <div className="target create">
-        <span className="target-icon">
-          <Sparkles size={15} />
-        </span>
+        <ModeSwitch editing={false} />
         <span className="target-text">
           <span className="what">New image</span>
           <span className="sub">Made from the prompt alone</span>
         </span>
-        <span className="spacer" />
-        <button className="tool" onClick={() => selectItem(img.key)}>
-          Edit {versionLabels(session)[img.key]} instead
-        </button>
       </div>
     );
   }
 
   const first = c.refs[0];
-  const name = nameOf(first) ?? (first.source.startsWith("gen:") ? "this result" : first.name);
+  const name = nameOf(first)?.toLowerCase() ?? (first.source.startsWith("gen:") ? "this result" : first.name);
   const outPx = hasOutpaint(c.outpaint) ? expansionPixels(c.outpaint!, first.width, first.height) : null;
   const what =
     c.refs.length > 1 ? `Combining ${c.refs.length} images` : c.mask ? `${INPAINT_VERB[c.inpaintAction]} the painted area of ${name}` : outPx ? `Expanding ${name}` : `Editing ${name}`;
@@ -169,6 +173,7 @@ function TargetBar() {
 
   return (
     <div className="target">
+      <ModeSwitch editing />
       <RefStrip />
       <span className="target-text">
         <span className="what">{what}</span>
@@ -195,9 +200,6 @@ function TargetBar() {
           </button>
         )}
       </span>
-      <button className="tool" title="Create a new image from the prompt instead" onClick={() => updateComposer({ refs: [], mask: null, outpaint: null })}>
-        New image
-      </button>
     </div>
   );
 }
@@ -206,7 +208,7 @@ function TargetBar() {
 function AddImage() {
   const session = useStore((s) => s.session);
   const refs = useStore((s) => s.composer.refs);
-  const labels = useMemo(() => versionLabels(session), [session]);
+  const labels = useMemo(() => sessionLabels(session), [session]);
   const used = new Set(refs.map((r) => r.source));
   const candidates = session.filter((i) => {
     const s = itemSource(i);
@@ -233,10 +235,10 @@ function AddImage() {
     >
       {(close) => (
         <div className="add-menu">
-          <div className="label">{refs.length ? "Add a version as reference" : "Edit a version"}</div>
+          <div className="label">{refs.length ? "Add an image as reference" : "Edit an image"}</div>
           <div className="add-grid">
             {candidates.map((it: SessionItem) => (
-              <button key={it.key} title={it.gen?.prompt ?? labels[it.key]} onClick={() => (addAsReference(it), close())}>
+              <button key={it.key} title={it.gen?.prompt ?? imageName(labels[it.key])} onClick={() => (addAsReference(it), close())}>
                 <img src={urls.sourceThumb(itemSource(it)!)} alt="" draggable={false} />
                 <span>{labels[it.key]}</span>
               </button>
@@ -323,7 +325,12 @@ export function Composer() {
         .filter(Boolean)
         .join("\n")
     : "";
-  const shaped = c.resolution !== "custom" && !c.mask && !outPx;
+  const shaped = !c.mask && !outPx;
+  const custom = c.resolution === "custom";
+  const aspectText = custom ? aspectLabel(c.customWidth, c.customHeight) : c.aspect === "auto" ? (plan ? plan.aspect_label : "Auto") : c.aspect;
+  const aspectRatioNow = custom
+    ? c.customWidth / c.customHeight
+    : (parseRatio(c.aspect) ?? (plan ? plan.output.width / plan.output.height : 1));
 
   return (
     <div className="composer-wrap">
@@ -360,24 +367,31 @@ export function Composer() {
 
           {shaped && (
             <Popover
+              className="wide"
               trigger={(open, toggle) => (
                 <button className={`pill ${open ? "on" : ""}`} onClick={toggle} title="Aspect ratio">
-                  {ASPECT_ICON[c.aspect] ?? <RectangleHorizontal size={15} />}
-                  {c.aspect === "auto" ? (plan ? plan.aspect_label : "Auto") : c.aspect}
+                  <RatioIcon ratio={aspectRatioNow} size={15} />
+                  {aspectText}
                   <ChevronDown size={13} />
                 </button>
               )}
             >
-              {(close) => (
-                <>
-                  {["auto", "1:1", "4:3", "3:4", "16:9", "9:16"].map((a) => (
-                    <Option key={a} selected={c.aspect === a} label={a === "auto" ? "Auto" : a} sub={a === "auto" ? (hasImages ? "Same as image 1" : "From the prompt") : undefined} icon={ASPECT_ICON[a]} onClick={() => (updateComposer({ aspect: a }), close())} />
-                  ))}
-                  <Option label="Custom size…" icon={<SlidersHorizontal size={15} />} onClick={() => (updateComposer({ resolution: "custom" }), close())} />
-                </>
-              )}
+              {(close) => <AspectGrid value={custom ? aspectLabel(c.customWidth, c.customHeight) : c.aspect} onPick={(r) => (pickAspect(r), close())} auto={{ sub: hasImages ? "Same as image 1" : "From the prompt, else square" }} />}
             </Popover>
           )}
+
+          <Popover
+            className="wide"
+            trigger={(open, toggle) => (
+              <button className={`pill ${open ? "on" : ""}`} onClick={toggle} title="Resolution">
+                <Maximize size={14} />
+                {resolutionLabel(c.resolution, c.customWidth, c.customHeight)}
+                <ChevronDown size={13} />
+              </button>
+            )}
+          >
+            {(close) => <ResolutionMenu plan={plan} close={close} />}
+          </Popover>
 
           <Popover
             trigger={(open, toggle) => (

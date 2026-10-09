@@ -1,4 +1,5 @@
-//! Decoding through Windows Imaging Component, for formats the `image` crate lacks (HEIC).
+//! Decoding through the operating system, for formats the `image` crate lacks (HEIC):
+//! Windows Imaging Component on Windows, `sips` on macOS.
 //! HEIC needs Microsoft's "HEIF Image Extensions" + "HEVC Video Extensions" (Store).
 
 use image::RgbaImage;
@@ -85,9 +86,38 @@ impl Drop for ComGuard {
     }
 }
 
-#[cfg(not(windows))]
+/// macOS: the system's own converter (`sips`, which applies the file's rotation) to PNG,
+/// keeping the embedded ICC profile.
+#[cfg(target_os = "macos")]
+pub fn decode(bytes: &[u8]) -> Result<WicImage, String> {
+    use image::ImageDecoder;
+    let dir = std::env::temp_dir().join(format!("kokon-heic-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let result = (|| {
+        let (src, dst) = (dir.join("in.heic"), dir.join("out.png"));
+        std::fs::write(&src, bytes).map_err(|e| e.to_string())?;
+        let out = std::process::Command::new("/usr/bin/sips")
+            .args(["-s", "format", "png"])
+            .arg(&src)
+            .arg("--out")
+            .arg(&dst)
+            .output()
+            .map_err(|e| format!("Cannot run sips: {e}"))?;
+        if !out.status.success() {
+            return Err(format!("macOS could not convert the image: {}", String::from_utf8_lossy(&out.stderr).trim()));
+        }
+        let mut dec = image::codecs::png::PngDecoder::new(std::io::BufReader::new(std::fs::File::open(&dst).map_err(|e| e.to_string())?)).map_err(|e| e.to_string())?;
+        let icc_profile = dec.icc_profile().ok().flatten();
+        let pixels = image::DynamicImage::from_decoder(dec).map_err(|e| e.to_string())?.to_rgba8();
+        Ok(WicImage { pixels, icc_profile })
+    })();
+    let _ = std::fs::remove_dir_all(&dir);
+    result
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn decode(_bytes: &[u8]) -> Result<WicImage, String> {
-    Err("HEIC images can only be opened on Windows.".into())
+    Err("HEIC images can only be opened on Windows and macOS.".into())
 }
 
 #[cfg(test)]

@@ -124,13 +124,17 @@ is checked against its SHA-256 checksum. On a fast connection the whole thing ta
 | | Minimum | Recommended |
 | --- | --- | --- |
 | **OS** | Windows 10 64-bit | Windows 11 |
-| **GPU** | NVIDIA, 12 GB VRAM (RTX 3060 12 GB, 4070) | NVIDIA, 16 GB+ VRAM (RTX 4080, 5070 Ti, 5080, 4090, 5090) |
+| **GPU** | NVIDIA, 12 GB VRAM (RTX 3060 12 GB, 4070) · AMD / Intel 12 GB+ through Vulkan (beta) | NVIDIA, 16 GB+ VRAM (RTX 4080, 5070 Ti, 5080, 4090, 5090) |
 | **RAM** | 16 GB | 32 GB |
 | **Disk** | 15 GB free | 25 GB free on an SSD |
-| **Time per edit** <!-- TODO re-measure at CFG 1 before launch --> | Fast mode: about half of Balanced | About 1 minute at Balanced on a 16 GB RTX 5070 Ti |
+| **Time per edit** <!-- TODO re-measure at CFG 1 before launch; RTX 5070 12 GB not timed yet --> | A little slower than the RTX 5070 Ti on a 12 GB RTX 5070 | About 1 minute at Balanced on a 16 GB RTX 5070 Ti |
 
 > [!NOTE]
-> Kokon needs an NVIDIA GPU for now. AMD and Intel support (Vulkan) is on the [roadmap](#roadmap).
+> NVIDIA cards run on the CUDA engine, the fastest and tested path. AMD and Intel cards use the
+> **Vulkan engine (beta)**: it works on NVIDIA, but nobody has tried it on a real AMD or Intel
+> card yet, so please [report how it goes](https://github.com/GabrieleLozupone/kokon/issues).
+> Vulkan is slower than CUDA, and its first image takes longer. Apple Silicon Macs are in
+> testing ([platforms](docs/platforms.md)).
 
 <details>
 <summary><b>Model presets: what gets downloaded</b></summary>
@@ -140,12 +144,12 @@ The setup screen picks a preset from your VRAM. You can change it later from Set
 
 | Preset | Diffusion model | Text encoder (in RAM) | Download | Tested on real hardware |
 | --- | --- | --- | --- | --- |
-| 12 GB | Qwen-Image 2.1 Q4_K_M (4.2 GB) | Qwen3-VL 8B Q4_K_M | ~12 GB | in beta (emulated on a 16 GB card) |
+| 12 GB | Qwen-Image 2.1 Q4_K_M (4.2 GB) | Qwen3-VL 8B Q4_K_M | ~12 GB | ✅ RTX 5070 (12 GB) |
 | 16 GB | Qwen-Image 2.1 Q4_K_M | Qwen3-VL 8B Q4_K_M | ~12 GB | ✅ RTX 5070 Ti |
 | 24 GB | Qwen-Image 2.1 Q8_0 (7.6 GB) | Qwen3-VL 8B Q4_K_M | ~15 GB | not yet |
 | 32 GB+ | Qwen-Image 2.1 Q8_0 | Qwen3-VL 8B Q8_0 (8.7 GB) | ~19 GB | not yet |
 
-Every preset also gets stable-diffusion.cpp (CUDA 12 build), the Qwen-Image 2.1 VAE, the
+Every preset also gets stable-diffusion.cpp (the CUDA 12 build on NVIDIA, the Vulkan build on AMD and Intel), the Qwen-Image 2.1 VAE, the
 Qwen3-VL vision projector and, optionally, the 4x-UltraSharp upscaler. The sources are the
 official [Qwen-Image 2.1](https://huggingface.co/Qwen/Qwen-Image-2.1) weights through
 [unsloth/Qwen-Image-2.1-GGUF](https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF),
@@ -181,8 +185,8 @@ opened in Explorer. A few things make that loop fast:
   Undo returns to the version the current one came from, and nothing is ever deleted.
 - **Gallery**: every image keeps its full recipe (prompt, seed, settings, pipeline) and reopens
   with one click. The recipe is also embedded in the PNG.
-- **Quality presets**: Fast, Balanced and Quality (native 2K). They follow the official
-  Qwen-Image 2.1 settings, so you never need to tune steps or guidance.
+- **Quality presets**: Fast, Balanced, Quality (native 2K) and Ultra (native 2K with the
+  official 40 steps), so you never need to tune steps or guidance.
 
 ## How it works
 
@@ -325,7 +329,7 @@ If you want full control over every node, ComfyUI is the better tool.
 | Picks size and memory settings for you | ✅ | ❌ | partly | partly |
 | Brush edits the model can see | ✅ | depends on the workflow | ✅ | rarely |
 | MCP server for AI agents | ✅ | community nodes | ❌ | ❌ |
-| AMD / Intel GPUs | 🔜 [roadmap](#roadmap) | ✅ | ✅ | varies |
+| AMD / Intel GPUs | beta (Vulkan) | ✅ | ✅ | varies |
 | Custom pipelines, node graphs | ❌ | ✅ | partly | ❌ |
 | Painting and layers | ❌ | ❌ | ✅ | ❌ |
 
@@ -353,8 +357,13 @@ Only once, to download the models. After that Kokon works fully offline.
 <summary><b>Does it work on AMD or Intel GPUs, or on a Mac?</b></summary>
 <br>
 
-Not yet. stable-diffusion.cpp also runs on Vulkan and Metal, so AMD and Intel support is the
-next big item on the [roadmap](#roadmap), with macOS and Linux after that.
+AMD and Intel: in beta. The setup screen installs stable-diffusion.cpp's Vulkan build for
+them, which uses the graphics driver you already have. It works on NVIDIA cards, but it has not
+been verified on a real AMD or Intel card yet; integrated graphics are not supported. Please
+[open an issue](https://github.com/GabrieleLozupone/kokon/issues) with your card and how it went.
+
+Mac: Apple Silicon support is in testing. See [docs/platforms.md](docs/platforms.md) for the
+planned requirements (24 GB of unified memory recommended).
 
 </details>
 
@@ -447,11 +456,11 @@ the log from `%LOCALAPPDATA%\KokonData\logs`.
 - [x] MCP server and local HTTP API
 - [x] Before/after, version undo, private mode, HEIC and HDR
 - [ ] Fast mode with a turbo LoRA (an edit in about 15 seconds)
-- [ ] AMD and Intel GPUs through Vulkan
+- [ ] AMD and Intel GPUs through Vulkan (beta now; works on NVIDIA, to verify on AMD/Intel)
 - [ ] Background removal and transparent cutouts
 - [ ] Batch edits: one instruction for a whole folder
 - [ ] Plugins for Krita, GIMP and Photoshop through the local API
-- [ ] macOS and Linux
+- [ ] macOS on Apple Silicon (in testing), then Linux
 
 Have an idea? [Start a discussion](https://github.com/GabrieleLozupone/kokon/discussions) or 👍 an existing one.
 

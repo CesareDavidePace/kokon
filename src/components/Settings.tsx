@@ -226,6 +226,11 @@ export function Settings() {
 
           {tab === "performance" && (
             <>
+              <div className="field">
+                <span>Engine</span>
+                <span>{{ cuda: "CUDA (NVIDIA)", vulkan: "Vulkan", metal: "Metal (Apple Silicon, beta)" }[cfg.gpuBackend]}</span>
+                <span className="muted">To switch engine, use Models → Set up models…: it downloads the other engine if needed. Both can stay installed.</span>
+              </div>
               <label className="field-row">
                 <span>GPU device</span>
                 <select className="select" value={cfg.device} onChange={(e) => set({ device: e.target.value })}>
@@ -246,11 +251,12 @@ export function Settings() {
                     { value: "gpu", label: "GPU" },
                     { value: "cpu", label: "CPU" },
                     { value: "auto", label: "Auto" },
+                    { value: "disk", label: "Disk" },
                   ]}
                   onChange={(v) => set({ textEncoderPlacement: v })}
                 />
                 <span className="muted">
-                  RAM (recommended): weights in system memory, computed on the GPU. CPU uses the least VRAM but makes image editing several times slower.
+                  RAM (recommended): weights in system memory, computed on the GPU. CPU uses the least VRAM but makes image editing several times slower. Disk reads all weights from disk when needed: least memory, slower (for 16 GB Macs). On a Mac, RAM and GPU are the same memory.
                 </span>
               </div>
               <label className="field-row">
@@ -263,7 +269,7 @@ export function Settings() {
               </div>
               <div className="field-row">
                 <span>SageAttention (faster sampling)</span>
-                <Switch on={cfg.sageAttention} onChange={(v) => set({ sageAttention: v })} />
+                <Switch on={cfg.sageAttention && cfg.gpuBackend === "cuda"} onChange={(v) => set({ sageAttention: v })} disabled={cfg.gpuBackend !== "cuda"} />
               </div>
               <label className="field-row">
                 <span>VAE tile size (px, 0 = off)</span>

@@ -82,8 +82,8 @@ export function Seg<T extends string>(props: { value: T; options: { value: T; la
   );
 }
 
-export function Switch(props: { on: boolean; onChange: (v: boolean) => void; label?: string }) {
-  return <button className={`switch ${props.on ? "on" : ""}`} role="switch" aria-checked={props.on} aria-label={props.label} onClick={() => props.onChange(!props.on)} />;
+export function Switch(props: { on: boolean; onChange: (v: boolean) => void; label?: string; disabled?: boolean }) {
+  return <button className={`switch ${props.on ? "on" : ""}`} role="switch" aria-checked={props.on} aria-label={props.label} disabled={props.disabled} onClick={() => props.onChange(!props.on)} />;
 }
 
 /** Text that turns into a field while renaming: Enter or leaving saves, Escape cancels. */

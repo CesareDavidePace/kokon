@@ -4,10 +4,24 @@ import { api } from "../lib/api";
 import { formatBytes, installItemShort, installProgress, installStep, installTimeLeft } from "../lib/logic";
 import { native } from "../lib/native";
 import { refreshStatus, setState, toastError, useStore } from "../lib/store";
-import type { HardwareReport, InstallItem, InstallStatus, SetupReport } from "../lib/types";
+import type { GpuBackend, HardwareReport, InstallItem, InstallStatus, SetupReport } from "../lib/types";
 import { Seg, Switch } from "./ui";
 
 const gb = (mib: number) => `${Math.round(mib / 1024)} GB`;
+
+function engineOptions(vendor: string | null): { value: GpuBackend; label: string }[] {
+  if (vendor === "apple") return [{ value: "metal", label: "Metal (beta)" }];
+  const vulkan = { value: "vulkan" as GpuBackend, label: vendor === "nvidia" ? "Vulkan" : "Vulkan (beta)" };
+  return vendor === "nvidia" ? [{ value: "cuda", label: "CUDA" }, vulkan] : [vulkan];
+}
+
+function engineNote(b: GpuBackend, nvidia: boolean): string {
+  if (b === "cuda") return "NVIDIA's CUDA build: the fastest and tested path. Recommended.";
+  if (b === "metal") return "Beta. Runs on the Mac's GPU through Metal. Needs macOS 26 or newer.";
+  return nvidia
+    ? "The same model through Vulkan: works on NVIDIA, but slower than CUDA (no SageAttention) and the first image takes longer. Useful to try the AMD / Intel path; both engines can stay installed."
+    : "Beta. AMD and Intel cards run the model through Vulkan, with the graphics driver you already have. Not yet tested on a real AMD or Intel card: please report how it goes.";
+}
 
 function ItemIcon({ it }: { it: InstallItem }) {
   switch (it.state) {
@@ -72,17 +86,19 @@ export function Setup() {
   const [report, setReport] = useState<SetupReport | null>(null);
   const [inst, setInst] = useState<InstallStatus | null>(null);
   const [preset, setPreset] = useState<string | null>(null);
+  const [backend, setBackend] = useState<GpuBackend | null>(null);
   const [upscaler, setUpscaler] = useState(true);
   const [showFiles, setShowFiles] = useState(false);
   const [checking, setChecking] = useState(false);
   const wasRunning = useRef(false);
   const setupDone = useStore((s) => s.status?.setup_complete ?? false);
 
-  const refresh = async () => {
+  const refresh = async (engine: GpuBackend | null = backend) => {
     setChecking(true);
     try {
-      const [h, r, i] = await Promise.all([api.hardware(), api.setup(), api.installStatus()]);
+      const [h, r, i] = await Promise.all([api.hardware(engine ?? undefined), api.setup(), api.installStatus()]);
       setHw(h);
+      setBackend(h.backend);
       setReport(r);
       setInst(i);
       setPreset((p) => p ?? (i.running && i.preset ? i.preset : h.recommended));
@@ -125,7 +141,7 @@ export function Setup() {
   const install = async () => {
     if (!preset) return;
     try {
-      setInst(await api.install(preset, upscaler));
+      setInst(await api.install(preset, upscaler, backend ?? hw?.backend ?? "cuda"));
     } catch (e) {
       toastError(e);
     }
@@ -179,19 +195,30 @@ export function Setup() {
         ) : (
           <>
             <div className="setup-card setup-gpu">
-              <strong>{hw.gpu ? hw.gpu.name : "No NVIDIA GPU found"}</strong>
+              <strong>{hw.gpu ? hw.gpu.name : "No graphics card found"}</strong>
               <span className="muted">
-                {vram ? `${gb(vram)} VRAM${hw.vram_simulated ? " (simulated)" : ""} · ` : ""}
-                {gb(hw.ram_total_mib)} RAM{hw.gpu ? ` · driver ${hw.gpu.driver_version}` : ""}
+                {hw.gpu?.unified
+                  ? `${gb(hw.gpu.memory_total_mib)} unified memory${hw.vram_simulated ? ` (planning as ${gb(vram ?? 0)})` : ""}`
+                  : `${vram ? `${gb(vram)} VRAM${hw.vram_simulated ? " (simulated)" : ""} · ` : ""}${gb(hw.ram_total_mib)} RAM`}{hw.gpu?.driver_version ? ` · driver ${hw.gpu.driver_version}` : ""}
               </span>
             </div>
-            {!hw.nvidia && (
+            {!hw.gpu && (
               <div className="setup-note">
-                This version needs an NVIDIA GPU (RTX 20 series or newer) with at least 12 GB of VRAM and a recent driver. Support for AMD and Intel cards (Vulkan) is planned.
+                Kokon needs a graphics card with at least 12 GB of VRAM: NVIDIA (RTX 20 series or newer), or AMD / Intel through Vulkan (beta), or a Mac with Apple Silicon. Make sure its driver is installed.
               </div>
             )}
-            {vram !== null && vram < 11 * 1024 && <div className="setup-note">Your GPU has {gb(vram)} of VRAM. 12 GB is the smallest size this app is made for; it may fail or run slowly.</div>}
-            {hw.ram_total_mib < 15 * 1024 && <div className="setup-note">The text encoder runs from system RAM; with {gb(hw.ram_total_mib)} of RAM, 16 GB or more is recommended.</div>}
+            {hw.gpu?.unified ? (
+              hw.gpu.memory_total_mib < 23 * 1024 && (
+                <div className="setup-note">
+                  With {gb(hw.gpu.memory_total_mib)} of unified memory Kokon runs in its lightest mode: model weights are read from disk as needed and images are made at about 1 megapixel. Expect several minutes per image; 24 GB or more is recommended. Close other apps while generating.
+                </div>
+              )
+            ) : (
+              <>
+                {vram !== null && vram < 11 * 1024 && <div className="setup-note">Your GPU has {gb(vram)} of VRAM. 12 GB is the smallest size this app is made for; it may fail or run slowly.</div>}
+                {hw.ram_total_mib < 15 * 1024 && <div className="setup-note">The text encoder runs from system RAM; with {gb(hw.ram_total_mib)} of RAM, 16 GB or more is recommended.</div>}
+              </>
+            )}
 
             {running || paused ? (
               <div className="muted">
@@ -199,6 +226,20 @@ export function Setup() {
               </div>
             ) : (
               <>
+                {hw.gpu && (
+                  <div className="field">
+                    <span>Engine</span>
+                    <Seg<GpuBackend>
+                      value={backend ?? hw.backend}
+                      options={engineOptions(hw.vendor)}
+                      onChange={(b) => {
+                        setBackend(b);
+                        refresh(b);
+                      }}
+                    />
+                    <span className="muted">{engineNote(backend ?? hw.backend, hw.nvidia)}</span>
+                  </div>
+                )}
                 <div className="field">
                   <span>Preset for your graphics card</span>
                   <Seg<string> value={preset ?? hw.recommended} options={hw.presets.map((p) => ({ value: p.id, label: p.label }))} onChange={setPreset} />
@@ -297,10 +338,10 @@ export function Setup() {
               <Download size={16} /> {failed.length ? "Try again" : `Install · ${formatBytes(toDownload)}`}
             </button>
           )}
-          {hw && presetInstalled && !running && chosen && hw.current !== chosen.id && (
-            // Files of another preset are already here: switch to it without downloading.
+          {hw && presetInstalled && !running && chosen && (hw.current !== chosen.id || hw.current_backend !== hw.backend) && (
+            // Files of another preset or engine are already here: switch without downloading.
             <button className="btn" onClick={install}>
-              Use the {chosen.label} preset
+              {hw.current_backend !== hw.backend ? `Use ${{ cuda: "CUDA", vulkan: "Vulkan", metal: "Metal" }[hw.backend]} with the ${chosen.label} preset` : `Use the ${chosen.label} preset`}
             </button>
           )}
           {(ready || presetInstalled) && !running && (
@@ -312,7 +353,7 @@ export function Setup() {
           <button className="btn ghost" onClick={() => setState({ overlay: "settings" })} disabled={running}>
             <Settings2 size={14} /> Settings
           </button>
-          <button className="btn ghost" onClick={refresh} disabled={checking || running}>
+          <button className="btn ghost" onClick={() => refresh()} disabled={checking || running}>
             <RefreshCw size={14} /> Check again
           </button>
         </div>

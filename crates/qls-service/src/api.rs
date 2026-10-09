@@ -18,7 +18,7 @@ use axum::{
 use futures_util::stream::Stream;
 use qls_core::{
     catalog,
-    config::AppConfig,
+    config::{AppConfig, GpuBackend},
     diagnostics,
     engine::{APP_VERSION, JobView},
     error::{AppError, ErrorCode},
@@ -206,20 +206,29 @@ async fn setup(State(s): St) -> ApiResult<Json<Value>> {
 
 /// What the setup wizard shows: the GPU, the recommended preset and, per preset, which files
 /// are installed in the configured folder and how much is left to download.
-async fn setup_hardware(State(s): St) -> ApiResult<Json<Value>> {
+#[derive(Deserialize)]
+struct HardwareQ {
+    /// Engine to list the downloads for; default: the configured one.
+    backend: Option<GpuBackend>,
+}
+
+async fn setup_hardware(State(s): St, Query(q): Query<HardwareQ>) -> ApiResult<Json<Value>> {
     let engine = s.engine.clone();
     let v = tokio::task::spawn_blocking(move || {
         let cfg = engine.config();
         let gpu = engine.gpu();
-        let detected = gpu.as_ref().map(|g| g.memory_total_mib);
+        let detected = gpu.as_ref().map(|g| g.planning_mib());
         let vram = cfg.planning_vram_mib(detected);
         let mut sys = sysinfo::System::new();
         sys.refresh_memory();
         let dir = cfg.sdcpp_dir.clone();
+        let vendor = gpu.as_ref().map(|g| g.vendor.clone());
+        let recommended_backend = vendor.as_deref().map(GpuBackend::for_vendor).unwrap_or_default();
+        let backend = q.backend.unwrap_or(if cfg.setup_complete { cfg.gpu_backend } else { recommended_backend });
         let presets: Vec<Value> = catalog::PRESETS
             .iter()
             .map(|p| {
-                let files = catalog::downloads_for(p, true);
+                let files = catalog::downloads_for(p, backend, true);
                 let (download, disk) = installer::space_needed(&dir, &files);
                 json!({
                     "id": p.id, "label": p.label, "summary": p.summary, "verified": p.verified, "min_vram_mib": p.min_vram_mib,
@@ -229,12 +238,16 @@ async fn setup_hardware(State(s): St) -> ApiResult<Json<Value>> {
             .collect();
         json!({
             "gpu": gpu,
-            "nvidia": gpu.is_some(),
+            "nvidia": vendor.as_deref() == Some("nvidia"),
+            "vendor": vendor,
+            "backend": backend,
+            "recommended_backend": recommended_backend,
             "vram_mib": vram,
             "vram_simulated": cfg.vram_override_mib > 0,
             "ram_total_mib": sys.total_memory() / (1024 * 1024),
             "recommended": catalog::recommended_preset(vram).id,
             "current": cfg.hardware_preset,
+            "current_backend": cfg.gpu_backend,
             "presets": presets,
             "sdcpp_dir": dir,
             "default_sdcpp_dir": qls_core::config::default_sdcpp_dir(),
@@ -250,6 +263,8 @@ async fn setup_hardware(State(s): St) -> ApiResult<Json<Value>> {
 #[derive(Deserialize)]
 struct InstallBody {
     preset: String,
+    /// Engine to install; default: the configured one.
+    backend: Option<GpuBackend>,
     #[serde(default = "yes")]
     upscaler: bool,
 }
@@ -263,6 +278,7 @@ fn yes() -> bool {
 async fn install_start(State(s): St, Json(b): Json<InstallBody>) -> ApiResult<Json<Value>> {
     let preset = catalog::preset(&b.preset).ok_or_else(|| AppError::invalid(format!("Unknown preset {}.", b.preset)))?;
     let cfg = s.engine.config();
+    let backend = b.backend.unwrap_or(cfg.gpu_backend);
     // A running server keeps its DLLs open; the engine zip may need to replace them.
     let st = s.engine.server.status();
     if st.owned && st.state != qls_core::process::ServerState::Stopped {
@@ -273,17 +289,23 @@ async fn install_start(State(s): St, Json(b): Json<InstallBody>) -> ApiResult<Js
         s.engine.emit_server();
     }
     let engine = s.engine.clone();
+    // Below ~8 GiB of planning memory (a 16 GB Mac) only streaming weights from disk fits.
+    let small_unified = s.engine.gpu().is_some_and(|g| g.unified && g.planning_mib() < 8 * 1024);
     let on_finish = Box::new(move |complete: bool| {
         if !complete {
             return;
         }
         let mut c = engine.config();
         c.apply_preset(preset);
+        c.gpu_backend = backend;
+        if backend == GpuBackend::Metal && small_unified {
+            c.text_encoder_placement = qls_core::config::TextEncoderPlacement::Disk;
+        }
         if let Err(e) = engine.set_config(c) {
             tracing::error!("could not save the installed preset: {}", e.message);
         }
     });
-    s.engine.installer.start(cfg.sdcpp_dir.clone(), preset.id, catalog::downloads_for(preset, b.upscaler), on_finish)?;
+    s.engine.installer.start(cfg.sdcpp_dir.clone(), preset.id, catalog::downloads_for(preset, backend, b.upscaler), on_finish)?;
     Ok(Json(serde_json::to_value(s.engine.installer.status()).unwrap()))
 }
 

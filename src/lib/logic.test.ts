@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   activeOverrides, buildRequest, compareBase, diffPixels, emptyComposer, expansionPixels, expansionPreset, jobFraction, jobLabel, moveRef, needsPrompt, persistentAdvanced, pipelineSummary,
   planPipeline, remainingSeconds, sizeForWidth, timeAgo, upscaleRequest, upscaleTargets, versionLabels, type Ref,
-  formatBytes, installItemShort, installItemText, installProgress, installStep, installTimeLeft, undoTarget,
+  formatBytes, installItemShort, installItemText, installProgress, installStep, installTimeLeft, timelineLinks, undoTarget, aspectLabel, parseRatio, sizeForRatio, expandToRatio, expandToSize, arcLayout,
 } from "./logic";
 import type { GenerationRecord, InstallItem, JobView, Plan } from "./types";
 
@@ -193,15 +193,21 @@ describe("before / after comparison", () => {
 });
 
 describe("project versions", () => {
-  it("names imports Original and numbers results and pending jobs", () => {
+  it("numbers each new image, and the images made from it within it", () => {
+    // import, edit, edit; new image, its edit; new seed of the new image; edit of the first
+    // import again; combine led by the second image; a pending edit of 1.1.
     const items = [
-      { key: "a", kind: "input" as const },
-      { key: "b", kind: "gen" as const },
-      { key: "c", kind: "job" as const },
-      { key: "d", kind: "input" as const },
-      { key: "e", kind: "gen" as const },
+      { key: "a", source: "input:a", from: [] },
+      { key: "b", source: "gen:b", from: ["input:a"] },
+      { key: "c", source: "gen:c", from: ["gen:b"] },
+      { key: "d", source: "gen:d", from: [] },
+      { key: "e", source: "gen:e", from: ["gen:d"] },
+      { key: "f", source: "gen:f", from: ["gen:d"], variant: true },
+      { key: "g", source: "gen:g", from: ["input:a"] },
+      { key: "h", source: "gen:h", from: ["gen:d", "gen:c"] },
+      { key: "i", source: null, from: ["gen:b"] },
     ];
-    expect(versionLabels(items)).toEqual({ a: "Original", b: "v1", c: "v2", d: "Original 2", e: "v3" });
+    expect(versionLabels(items)).toEqual({ a: "1", b: "1.1", c: "1.2", d: "2", e: "2.1", f: "3", g: "1.3", h: "2.2", i: "1.4" });
   });
 
   it("formats project age", () => {
@@ -262,5 +268,88 @@ describe("undo between versions", () => {
     expect(undoTarget(items, "t2i")).toBe("v3");
     expect(undoTarget(items, "orig")).toBeNull();
     expect(undoTarget(items, "missing")).toBeNull();
+  });
+});
+
+describe("timeline links", () => {
+  // Original -> v1 (edit) -> v2 (edit); v3 new image; v4 edits v3; v5 edits v1 again;
+  // v6 combines v2 and v4; v7 is a new seed of v3; v8 comes from a file outside the project.
+  const items = [
+    { key: "orig", source: "input:a", from: [] },
+    { key: "v1", source: "gen:1", from: ["input:a"] },
+    { key: "v2", source: "gen:2", from: ["gen:1"] },
+    { key: "v3", source: "gen:3", from: [] },
+    { key: "v4", source: "gen:4", from: ["gen:3"] },
+    { key: "v5", source: "gen:5", from: ["gen:1"] },
+    { key: "v6", source: null, from: ["gen:2", "gen:4"] },
+    { key: "v7", source: "gen:7", from: ["gen:3"], variant: true },
+    { key: "v8", source: "gen:8", from: ["C:\elsewhere.png"] },
+  ];
+  const l = timelineLinks(items);
+  it("continues a line, and breaks it for a new image", () => {
+    expect(l.orig).toEqual({ kind: "start", parents: [] });
+    expect(l.v1).toEqual({ kind: "next", parents: ["orig"] });
+    expect(l.v2.kind).toBe("next");
+    expect(l.v3.kind).toBe("start");
+    expect(l.v4).toEqual({ kind: "next", parents: ["v3"] });
+  });
+  it("joins versions made from earlier or several versions", () => {
+    expect(l.v5).toEqual({ kind: "branch", parents: ["v1"] });
+    expect(l.v6).toEqual({ kind: "combine", parents: ["v2", "v4"] });
+    expect(l.v7).toEqual({ kind: "branch", parents: ["v3"] });
+    expect(l.v8.kind).toBe("start");
+  });
+  it("marks a new seed of the version just before", () => {
+    const v = timelineLinks([
+      { key: "a", source: "gen:1", from: [] },
+      { key: "b", source: "gen:2", from: ["gen:1"], variant: true },
+    ]);
+    expect(v.b).toEqual({ kind: "variant", parents: ["a"] });
+  });
+});
+
+describe("aspect ratios", () => {
+  it("parses ratios within the service's 1:8 to 8:1 range", () => {
+    expect(parseRatio("16:9")).toBeCloseTo(16 / 9);
+    expect(parseRatio("2.35 : 1")).toBeCloseTo(2.35);
+    expect(parseRatio("1920x1080")).toBeCloseTo(16 / 9);
+    expect(parseRatio("10:1")).toBeNull();
+    expect(parseRatio("wide")).toBeNull();
+  });
+  it("names sizes by their ratio", () => {
+    expect(aspectLabel(1920, 1080)).toBe("16:9");
+    expect(aspectLabel(2752, 1536)).toBe("16:9");
+    expect(aspectLabel(1400, 1000)).toBe("7:5");
+    expect(aspectLabel(1850, 1000)).toBe("1.85:1");
+    expect(aspectLabel(1000, 1850)).toBe("1:1.85");
+  });
+  it("keeps the pixel count when the ratio changes", () => {
+    const s = sizeForRatio(16 / 9, 1024 * 1024);
+    expect(s.width % 16 + (s.height % 16)).toBe(0);
+    expect(Math.abs((s.width * s.height) / (1024 * 1024) - 1)).toBeLessThan(0.03);
+    expect(aspectLabel(s.width, s.height)).toBe("16:9");
+  });
+  it("expands to a ratio or an exact size without cropping", () => {
+    expect(expandToRatio(1000, 1000, 2)).toEqual({ left: 500, right: 500, top: 0, bottom: 0, units: "pixels" });
+    expect(expandToRatio(2000, 1000, 1)).toEqual({ left: 0, right: 0, top: 500, bottom: 500, units: "pixels" });
+    expect(expandToSize(1000, 800, 1501, 700)).toEqual({ left: 250, right: 251, top: 0, bottom: 0, units: "pixels" });
+  });
+});
+
+describe("timeline arcs", () => {
+  it("puts an arc above every shorter arc it overlaps", () => {
+    // 1->3 and 3->5 only touch at 3 (overlap), 0->6 spans both, 7->8 is apart.
+    const p = arcLayout([{ a: 1, b: 3 }, { a: 3, b: 5 }, { a: 0, b: 6 }, { a: 7, b: 8 }]);
+    expect(p[0].lane).toBe(0);
+    expect(p[1].lane).toBe(1);
+    expect(p[2].lane).toBe(2);
+    expect(p[3].lane).toBe(0);
+  });
+  it("spreads ends that meet at one item, keeping the order of the other ends", () => {
+    // Both arcs end at 6 (a combine of 2 and 4); the one from further left ends further left.
+    const p = arcLayout([{ a: 4, b: 6 }, { a: 2, b: 6 }]);
+    expect(p[1].dx2).toBeLessThan(p[0].dx2);
+    expect(p[0].dx2 + p[1].dx2).toBe(0);
+    expect(p[0].dx1).toBe(0);
   });
 });

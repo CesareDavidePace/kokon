@@ -1,21 +1,11 @@
 import { Dices, RotateCcw } from "lucide-react";
-import { planPipeline } from "../lib/logic";
 import { updateComposer, useStore } from "../lib/store";
-import type { Advanced, OutputFormat, Plan, ResolutionMode } from "../lib/types";
+import type { Advanced, OutputFormat, Plan } from "../lib/types";
 import { Seg, Switch } from "./ui";
 
 // Verified against sd-server 3f8527a capabilities; replaced by the live list when loaded.
 const FALLBACK_SAMPLERS = ["euler", "euler_a", "heun", "dpm2", "dpm++2s_a", "dpm++2m", "dpm++2mv2", "ipndm", "ipndm_v", "lcm", "ddim_trailing", "tcd", "res_multistep", "res_2s", "er_sde"];
 const FALLBACK_SCHEDULERS = ["discrete", "karras", "exponential", "ays", "gits", "sgm_uniform", "simple", "smoothstep", "kl_optimal", "lcm", "beta", "flux"];
-
-const RESOLUTIONS: { value: ResolutionMode; label: string }[] = [
-  { value: "auto", label: "Auto" },
-  { value: "source", label: "Source" },
-  { value: "1k", label: "1K" },
-  { value: "1.5k", label: "1.5K" },
-  { value: "2k", label: "2K" },
-  { value: "custom", label: "Custom" },
-];
 
 function NumField(props: { label: string; value: number | null | undefined; placeholder: string; min: number; max: number; step?: number; onChange: (v: number | null) => void }) {
   return (
@@ -49,19 +39,6 @@ export function AdvancedPanel({ plan }: { plan: Plan | null }) {
 
   return (
     <>
-      <div className="field">
-        <span>Resolution</span>
-        <Seg value={c.resolution} options={RESOLUTIONS} onChange={(v) => updateComposer({ resolution: v })} />
-        {c.resolution === "custom" && (
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input className="input" type="number" min={64} max={4096} value={c.customWidth} onChange={(e) => updateComposer({ customWidth: Math.max(64, Math.min(4096, Number(e.target.value) || 64)) })} style={{ width: 90 }} />
-            <span className="muted">×</span>
-            <input className="input" type="number" min={64} max={4096} value={c.customHeight} onChange={(e) => updateComposer({ customHeight: Math.max(64, Math.min(4096, Number(e.target.value) || 64)) })} style={{ width: 90 }} />
-          </div>
-        )}
-        {plan && <span className="muted">{planPipeline(plan)}</span>}
-      </div>
-
       <label className="field-row">
         <span>Seed</span>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -150,7 +127,7 @@ export function AdvancedPanel({ plan }: { plan: Plan | null }) {
         <textarea className="input" rows={2} value={c.negative} placeholder="Optional; used only when CFG is above 1" onChange={(e) => updateComposer({ negative: e.target.value })} />
       </label>
 
-      <button className="btn" onClick={() => updateComposer({ advanced: {}, seed: null, negative: "", resolution: "auto" })}>
+      <button className="btn" onClick={() => updateComposer({ advanced: {}, seed: null, negative: "" })}>
         <RotateCcw size={14} /> Reset to automatic
       </button>
     </>

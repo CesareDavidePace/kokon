@@ -7,7 +7,7 @@
 
 import { useSyncExternalStore } from "react";
 import { api, ApiError, setPrivateInputs, subscribe } from "./api";
-import { buildRequest, emptyComposer, needsPrompt, newKey, persistentAdvanced, refFromGen, refFromInput, undoTarget, type CompareMode, type Composer, type Ref } from "./logic";
+import { buildRequest, emptyComposer, needsPrompt, newKey, persistentAdvanced, refFromGen, refFromInput, timelineLinks, undoTarget, versionLabels, type CompareMode, type Composer, type Ref } from "./logic";
 import type { AppErrorBody, GenerationRecord, GenerationRequest, InputRecord, JobView, ServerState, StatusResponse } from "./types";
 
 export type Overlay = null | "gallery" | "settings" | "inpaint" | "expand";
@@ -553,19 +553,89 @@ function retarget(c: Composer, ref: Ref): Composer {
   return { ...c, refs: [ref, ...rest], mask: null, outpaint: null, aspect: "auto" };
 }
 
-/** Shows a version; an image also becomes the one the prompt edits. Choosing a version
+const refOf = (it: SessionItem | undefined) => (it?.gen ? refFromGen(it.gen) : it?.input ? refFromInput(it.input) : null);
+
+/** Shows a version. While editing, the shown image also becomes the one the prompt edits;
+ * in "New image" mode browsing only shows it (Edit image switches back). Choosing a version
  * by hand ends the current Undo/Redo walk. */
 export function selectItem(key: string, keepRedo = false) {
   setState((s) => {
     const it = s.session.find((i) => i.key === key);
     if (!it) return {};
-    const ref = it.gen ? refFromGen(it.gen) : it.input ? refFromInput(it.input) : null;
+    const ref = s.composer.refs.length ? refOf(it) : null;
     return { selected: key, composer: ref ? retarget(s.composer, ref) : s.composer, ...(keepRedo ? {} : { redo: [] }) };
   });
 }
 
-const undoItems = (session: SessionItem[]) =>
-  session.map((i) => ({ key: i.key, source: itemSource(i), from: (i.gen?.request?.images?.[0] ?? (i.gen?.parent_id ? `gen:${i.gen.parent_id}` : null)) ?? i.request?.images?.[0] ?? null }));
+/** "New image": the prompt creates an image from scratch; the versions stay to look at. */
+export function startNewImage() {
+  setState((s) => ({ composer: { ...s.composer, refs: [], mask: null, outpaint: null } }));
+  focusPrompt();
+}
+
+/** "Edit image": the prompt edits the version shown (or the latest image). */
+export function editShownImage() {
+  setState((s) => {
+    const shown = s.session.find((i) => i.key === s.selected);
+    const ref = refOf(shown) ?? refOf([...s.session].reverse().find((i) => i.gen || i.input));
+    return ref ? { composer: retarget(s.composer, ref) } : {};
+  });
+  focusPrompt();
+}
+
+/** The sources ("gen:<id>"/"input:<id>") a version was made from; `variant` when it is the
+ * same recipe again with a new seed (a variation of a new image) rather than an edit. */
+export function itemOrigin(i: SessionItem): { from: string[]; variant: boolean } {
+  const req = i.gen?.request ?? i.request;
+  const mode = i.gen?.mode ?? req?.mode;
+  const images = mode === "generate" ? [] : req?.images ?? [];
+  if (images.length) return { from: images, variant: false };
+  const parent = i.gen?.parent_id ?? req?.parent_id;
+  return parent ? { from: [`gen:${parent}`], variant: true } : { from: [], variant: false };
+}
+
+const lineage = (session: SessionItem[]) => session.map((i) => ({ key: i.key, source: itemSource(i), ...itemOrigin(i) }));
+
+/** Short names of a project's images: "1", "1.1", "2"… */
+export const sessionLabels = (session: SessionItem[]) => versionLabels(lineage(session));
+
+/** How each version joins the timeline. */
+export const sessionLinks = (session: SessionItem[]) => timelineLinks(lineage(session));
+
+/** Puts a result's prompt back in the prompt box to try it again with small changes: it
+ * works on the same images the result was made from (none for a new image), and keeps the
+ * quality, size and advanced settings as they are now. */
+export function reusePrompt(g: GenerationRecord) {
+  setState((s) => {
+    const c = s.composer;
+    const sources = itemOrigin({ key: "", kind: "gen", gen: g });
+    const refs: Ref[] = [];
+    if (!sources.variant) {
+      sources.from.forEach((src, i) => {
+        const here = refOf(s.session.find((x) => itemSource(x) === src));
+        const rec = g.references[i];
+        const ref = here ?? (rec ? { key: newKey(), source: `input:${rec.input_id}`, width: rec.width, height: rec.height, name: `Image ${i + 1}` } : null);
+        if (ref) refs.push(ref);
+      });
+    }
+    const mask = g.mask_input_id && refs[0] ? { inputId: g.mask_input_id, refKey: refs[0].key } : null;
+    return {
+      composer: {
+        ...c,
+        prompt: g.prompt,
+        refs,
+        mask,
+        inpaintAction: mask ? g.request?.inpaint_action ?? "edit" : c.inpaintAction,
+        outpaint: g.outpaint && refs.length ? { ...g.outpaint, units: "pixels" } : null,
+        aspect: refs.length && !c.refs.length ? "auto" : c.aspect,
+        seed: null,
+      },
+    };
+  });
+  focusPrompt(true);
+}
+
+const undoItems = (session: SessionItem[]) => session.map((i) => ({ key: i.key, source: itemSource(i), from: itemOrigin(i).from[0] ?? null }));
 
 /** The version Undo goes back to (what the selected one was made from), if any. */
 export function undoKey(s: State): string | null {
@@ -651,11 +721,23 @@ export async function cancelJob(jobId: string) {
 export function addAsReference(item: SessionItem) {
   const ref = item.gen ? refFromGen(item.gen) : item.input ? refFromInput(item.input) : null;
   if (!ref) return;
+  if (getState().composer.refs.some((r) => r.source === ref.source)) {
+    toastInfo("That image is already in the prompt.");
+    return;
+  }
+  if (getState().composer.refs.length >= 10) {
+    toastInfo("Up to 10 reference images are supported.");
+    return;
+  }
   setState((s) => ({ composer: { ...s.composer, refs: [...s.composer.refs, ref].slice(0, 10), outpaint: null, aspect: s.composer.refs.length ? s.composer.aspect : "auto" } }));
 }
 
-export function focusPrompt() {
-  window.setTimeout(() => document.getElementById("prompt")?.focus(), 30);
+export function focusPrompt(cursorToEnd = false) {
+  window.setTimeout(() => {
+    const el = document.getElementById("prompt") as HTMLTextAreaElement | null;
+    el?.focus();
+    if (el && cursorToEnd) el.setSelectionRange(el.value.length, el.value.length);
+  }, 30);
 }
 
 export function removeSessionItem(key: string) {

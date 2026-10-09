@@ -4,7 +4,7 @@ export type Mode = "auto" | "generate" | "edit" | "inpaint" | "outpaint" | "mult
 export type ResolvedMode = Exclude<Mode, "auto">;
 /** What an inpaint does in the painted area. */
 export type InpaintAction = "edit" | "remove" | "replace" | "add";
-export type Quality = "fast" | "balanced" | "quality";
+export type Quality = "fast" | "balanced" | "quality" | "ultra";
 export type ResolutionMode = "auto" | "source" | "1k" | "1.5k" | "2k" | "custom";
 export type OutputFormat = "png" | "jpeg" | "webp";
 export type Units = "pixels" | "percent";
@@ -174,7 +174,7 @@ export interface StatusResponse {
   service: { version: string; pid: number; uptime_s: number };
   server: { state: ServerState; owned: boolean; pid: number | null; port: number; model: string | null; model_loaded: boolean; error: AppErrorBody | null };
   profile: { id: string; display_name: string };
-  gpu: { name: string; memory_total_mib: number; memory_used_mib: number; memory_free_mib: number; driver_version: string } | null;
+  gpu: { name: string; vendor: string; unified: boolean; memory_total_mib: number; memory_used_mib: number; memory_free_mib: number; driver_version: string } | null;
   active_job: JobView | null;
   queue: { queued: number; jobs: JobView[] };
   upscaler?: { model: string; available: boolean; refine_mode: RefineMode };
@@ -184,7 +184,7 @@ export interface StatusResponse {
 export interface Check { id: string; label: string; ok: boolean; detail: string }
 export interface SetupReport { ready: boolean; checks: Check[]; devices: [string, string][]; backend_version: string | null }
 
-export type TextEncoderPlacement = "ram" | "gpu" | "cpu" | "auto";
+export type TextEncoderPlacement = "ram" | "gpu" | "cpu" | "auto" | "disk";
 
 export interface ModelProfile {
   id: string;
@@ -198,9 +198,13 @@ export interface ModelProfile {
   capabilities: Record<string, boolean>;
 }
 
+/** stable-diffusion.cpp build: CUDA (NVIDIA) or Vulkan (AMD, Intel, also NVIDIA). */
+export type GpuBackend = "cuda" | "vulkan" | "metal";
+
 export interface AppConfig {
   schemaVersion: number;
   sdcppDir: string;
+  gpuBackend: GpuBackend;
   serverPort: number;
   servicePort: number;
   activeProfile: string;
@@ -268,6 +272,12 @@ export interface HardwarePreset {
 export interface HardwareReport {
   gpu: StatusResponse["gpu"];
   nvidia: boolean;
+  vendor: string | null;
+  /** Engine the presets' file lists are for. */
+  backend: GpuBackend;
+  recommended_backend: GpuBackend;
+  /** Engine in use now. */
+  current_backend: GpuBackend;
   vram_mib: number | null;
   vram_simulated: boolean;
   ram_total_mib: number;

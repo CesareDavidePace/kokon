@@ -5,7 +5,9 @@ import { z } from "zod";
 import { allowedRoots, checkInput, checkOutput, PathError } from "./paths.js";
 import { ServiceClient, ServiceError } from "./service.js";
 
-const quality = z.enum(["fast", "balanced", "quality"]).describe("fast = ~1 MP, 20 steps; balanced = ~1 MP, 40 steps (the default); quality = native 2K, 40 steps (slower; edits share 2K with their references)");
+const quality = z
+  .enum(["fast", "balanced", "quality", "ultra"])
+  .describe("fast = ~1 MP, 20 steps; balanced = ~1.5K, 20 steps (the default); quality = native 2K, 20 steps (slower; edits share 2K with their references); ultra = native 2K, 40 steps (slowest)");
 const seed = z.number().int().min(-1).max(2_147_483_647).describe("Seed for reproducible results; omit or -1 for random");
 const dim = z.number().int().min(64).max(4096);
 const aspect = z

@@ -68,7 +68,8 @@ fn ping(port: u16) -> bool {
 fn service_exe() -> Option<PathBuf> {
     let me = std::env::current_exe().ok()?;
     let dir = me.parent()?;
-    for name in ["kokon-service.exe", "kokon-service-x86_64-pc-windows-msvc.exe"] {
+    // Bundled sidecar (Tauri strips the target suffix) or a dev build next to the shell.
+    for name in ["kokon-service.exe", "kokon-service-x86_64-pc-windows-msvc.exe", "kokon-service", "kokon-service-aarch64-apple-darwin"] {
         let p = dir.join(name);
         if p.is_file() {
             return Some(p);
@@ -78,7 +79,7 @@ fn service_exe() -> Option<PathBuf> {
 }
 
 fn spawn_service() -> Result<(), String> {
-    let exe = service_exe().ok_or("kokon-service.exe was not found next to the application.")?;
+    let exe = service_exe().ok_or("kokon-service was not found next to the application.")?;
     let mut cmd = std::process::Command::new(exe);
     cmd.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
     #[cfg(windows)]
@@ -108,7 +109,7 @@ fn ensure_service(shared: &Shared) -> Result<ServiceInfo, String> {
             return Ok(i);
         }
     }
-    Err("The Kokon service did not start. See %LOCALAPPDATA%\\KokonData\\logs\\service.log.".into())
+    Err(format!("The Kokon service did not start. See {}.", data_dir().join("logs").join("service.log").display()))
 }
 
 fn heartbeat(info: &ServiceInfo) -> bool {

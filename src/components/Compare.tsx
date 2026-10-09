@@ -118,6 +118,11 @@ export function CompareFrame({ g, base, fullscreen = false }: { g: GenerationRec
         )}
         {label && <span className="compare-tag left">{label}</span>}
         {!fullscreen && (
+          <div className="compare-overlay" onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+            <CompareBar />
+          </div>
+        )}
+        {!fullscreen && (
           <FullscreenButton
             hint="Hold B for the original"
             content={

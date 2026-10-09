@@ -9,7 +9,7 @@
 //! - Every finished download is hashed; a mismatch deletes it and downloads once more.
 //! - A moved link (HTTP 404/403/410) or a second mismatch fails that file with instructions
 //!   to download it by hand and to open an issue ([`crate::catalog::manual_download_hint`]).
-//! - Zips (the engine) are extracted into the folder and then deleted.
+//! - Zips (the engine) are extracted into the folder of their destination and then deleted.
 //!
 //! Files already present (by size) are skipped. Network calls only go to the URLs in the
 //! catalog (GitHub releases and Hugging Face).
@@ -349,7 +349,7 @@ impl Installer {
         }
         if d.is_zip() {
             self.set(d.id, |i| i.state = ItemState::Extracting);
-            let (p, out) = (part.clone(), dir.to_path_buf());
+            let (p, out) = (part.clone(), crate::catalog::zip_dir(d, dir));
             tokio::task::spawn_blocking(move || extract_zip(&p, &out))
                 .await
                 .map_err(|e| Failure::Transient(e.to_string()))?
@@ -802,6 +802,12 @@ pub fn extract_zip(zip: &Path, out: &Path) -> Result<(), String> {
         let mut w = std::fs::File::create(&tmp).map_err(|e| format!("Cannot write {}: {e}", tmp.display()))?;
         std::io::copy(&mut entry, &mut w).map_err(|e| format!("Cannot extract {}: {e}", dest.display()))?;
         drop(w);
+        // Keep the executable bit of the macOS/Linux engine (sd-server).
+        #[cfg(unix)]
+        if let Some(mode) = entry.unix_mode() {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode & 0o777));
+        }
         std::fs::rename(&tmp, &dest).map_err(|e| {
             let _ = std::fs::remove_file(&tmp);
             format!("Cannot replace {} (is stable-diffusion.cpp still running?): {e}", dest.display())
@@ -852,7 +858,7 @@ mod tests {
         std::fs::write(&f, b"abc").unwrap();
         assert_eq!(sha256_file(&f).unwrap(), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
         let p = crate::catalog::preset("16gb").unwrap();
-        let all = crate::catalog::downloads_for(p, false);
+        let all = crate::catalog::downloads_for(p, crate::config::GpuBackend::Cuda, false);
         let (dl, disk) = space_needed(dir.path(), &all);
         assert_eq!(dl, all.iter().map(|d| d.size).sum::<u64>());
         assert!(disk > dl, "zips need room to extract");

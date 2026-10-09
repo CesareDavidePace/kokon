@@ -12,14 +12,64 @@ use crate::process::{parse_device_list, run_server_probe};
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct GpuInfo {
     pub name: String,
+    /// "nvidia", "amd", "intel", "apple" or "other"; picks the engine (`GpuBackend::for_vendor`).
+    pub vendor: String,
+    /// Apple Silicon: `memory_total_mib` is unified memory shared with the system.
+    pub unified: bool,
     pub memory_total_mib: u64,
     pub memory_used_mib: u64,
     pub memory_free_mib: u64,
     pub driver_version: String,
 }
 
-/// Queries NVIDIA GPUs through nvidia-smi (ships with the driver). None if unavailable.
+impl GpuInfo {
+    /// Memory the planner may use for the diffusion model, as on a discrete card. Apple
+    /// Silicon shares it with the system and the text encoder
+    /// (`planner::unified_memory_planning_mib`).
+    pub fn planning_mib(&self) -> u64 {
+        if self.unified {
+            use crate::catalog::{TEXT_ENCODER_Q4_K_M, VISION_PROJECTOR};
+            let te = (TEXT_ENCODER_Q4_K_M.size + VISION_PROJECTOR.size) / (1024 * 1024);
+            crate::planner::unified_memory_planning_mib(self.memory_total_mib, te)
+        } else {
+            self.memory_total_mib
+        }
+    }
+}
+
+/// The GPUs to plan for: NVIDIA through nvidia-smi (live memory use), otherwise any
+/// graphics card Windows knows (AMD, Intel), or the Apple Silicon GPU. None if there is none.
 pub fn query_gpus() -> Option<Vec<GpuInfo>> {
+    query_nvidia().or_else(query_dxgi).or_else(query_apple)
+}
+
+/// Apple Silicon: chip name and unified memory from sysctl (they never change, so read once).
+#[cfg(target_os = "macos")]
+fn query_apple() -> Option<Vec<GpuInfo>> {
+    static INFO: std::sync::OnceLock<Option<GpuInfo>> = std::sync::OnceLock::new();
+    INFO.get_or_init(|| {
+        let read = |key: &str| {
+            let out = std::process::Command::new("/usr/sbin/sysctl").args(["-n", key]).output().ok()?;
+            out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        };
+        if read("hw.optional.arm64").as_deref() != Some("1") {
+            return None; // Intel Mac: not supported
+        }
+        let total = read("hw.memsize")?.parse::<u64>().ok()? / (1024 * 1024);
+        let name = read("machdep.cpu.brand_string").unwrap_or_else(|| "Apple Silicon".into());
+        Some(GpuInfo { name, vendor: "apple".into(), unified: true, memory_total_mib: total, memory_used_mib: 0, memory_free_mib: total, driver_version: String::new() })
+    })
+    .clone()
+    .map(|g| vec![g])
+}
+
+#[cfg(not(target_os = "macos"))]
+fn query_apple() -> Option<Vec<GpuInfo>> {
+    None
+}
+
+/// NVIDIA GPUs through nvidia-smi (ships with the driver). None if unavailable.
+fn query_nvidia() -> Option<Vec<GpuInfo>> {
     let mut cmd = std::process::Command::new("nvidia-smi");
     cmd.args(["--query-gpu=name,memory.total,memory.used,memory.free,driver_version", "--format=csv,noheader,nounits"]);
     #[cfg(windows)]
@@ -43,11 +93,59 @@ pub fn parse_gpu_line(line: &str) -> Option<GpuInfo> {
     }
     Some(GpuInfo {
         name: f[0].to_string(),
+        vendor: "nvidia".into(),
+        unified: false,
         memory_total_mib: f[1].parse().ok()?,
         memory_used_mib: f[2].parse().ok()?,
         memory_free_mib: f[3].parse().ok()?,
         driver_version: f[4].to_string(),
     })
+}
+
+/// PCI vendor id → vendor name used across the app.
+pub fn vendor_name(id: u32) -> &'static str {
+    match id {
+        0x10DE => "nvidia",
+        0x1002 | 0x1022 => "amd",
+        0x8086 => "intel",
+        _ => "other",
+    }
+}
+
+/// Graphics adapters through DXGI, largest dedicated VRAM first. Skips software adapters
+/// (Microsoft Basic Render Driver). DXGI has no system-wide usage figure, so used = 0.
+/// Integrated GPUs report only their small reserved memory and so fall under the
+/// smallest preset's warning.
+#[cfg(windows)]
+fn query_dxgi() -> Option<Vec<GpuInfo>> {
+    use windows::Win32::Graphics::Dxgi::*;
+    let factory: IDXGIFactory1 = unsafe { CreateDXGIFactory1() }.ok()?;
+    let mut gpus = Vec::new();
+    for i in 0.. {
+        let Ok(adapter) = (unsafe { factory.EnumAdapters1(i) }) else { break };
+        let Ok(d) = (unsafe { adapter.GetDesc1() }) else { continue };
+        if d.Flags & (DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32) != 0 || d.VendorId == 0x1414 {
+            continue;
+        }
+        let len = d.Description.iter().position(|&c| c == 0).unwrap_or(d.Description.len());
+        let total = d.DedicatedVideoMemory as u64 / (1024 * 1024);
+        gpus.push(GpuInfo {
+            name: String::from_utf16_lossy(&d.Description[..len]).trim().to_string(),
+            vendor: vendor_name(d.VendorId).into(),
+            unified: false,
+            memory_total_mib: total,
+            memory_used_mib: 0,
+            memory_free_mib: total,
+            driver_version: String::new(),
+        });
+    }
+    gpus.sort_by(|a, b| b.memory_total_mib.cmp(&a.memory_total_mib));
+    (!gpus.is_empty()).then_some(gpus)
+}
+
+#[cfg(not(windows))]
+fn query_dxgi() -> Option<Vec<GpuInfo>> {
+    None
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -85,7 +183,7 @@ pub fn setup_checks(cfg: &AppConfig, server_ok: Option<bool>) -> SetupReport {
     checks.push(Check { id: "sdcpp_dir", label: "stable-diffusion.cpp folder".into(), ok: dir_ok, detail: cfg.sdcpp_dir.display().to_string() });
     let exe = cfg.server_exe();
     let exe_ok = exe.is_file();
-    checks.push(Check { id: "server_exe", label: "sd-server.exe".into(), ok: exe_ok, detail: exe.display().to_string() });
+    checks.push(Check { id: "server_exe", label: "stable-diffusion.cpp server".into(), ok: exe_ok, detail: exe.display().to_string() });
     for (label, path, _required) in cfg.profile().files() {
         let meta = std::fs::metadata(path).ok().filter(|m| m.is_file());
         checks.push(Check {
@@ -99,7 +197,7 @@ pub fn setup_checks(cfg: &AppConfig, server_ok: Option<bool>) -> SetupReport {
         });
     }
     let devices = if exe_ok { list_devices(&exe) } else { vec![] };
-    let wanted = cfg.device.to_ascii_lowercase();
+    let wanted = cfg.effective_device();
     let dev = devices.iter().find(|(n, _)| n.to_ascii_lowercase() == wanted);
     let gpu_ok = dev.is_some();
     checks.push(Check {
@@ -109,7 +207,7 @@ pub fn setup_checks(cfg: &AppConfig, server_ok: Option<bool>) -> SetupReport {
         detail: match dev {
             Some((n, d)) => format!("{n} — {d}"),
             None if devices.is_empty() => "No devices reported by sd-server".into(),
-            None => format!("{} not found. Available: {}", cfg.device, devices.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(", ")),
+            None => format!("{wanted} not found. Available: {}", devices.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(", ")),
         },
     });
     if let Some(running) = server_ok {
@@ -163,6 +261,21 @@ mod tests {
         assert_eq!((g.memory_total_mib, g.memory_used_mib, g.memory_free_mib), (16303, 2312, 13991));
         assert_eq!(g.driver_version, "617.14");
         assert!(parse_gpu_line("garbage").is_none());
+        assert_eq!(g.vendor, "nvidia");
+        assert_eq!(g.planning_mib(), 16303);
+        let mac = GpuInfo { name: "Apple M2 Pro".into(), vendor: "apple".into(), unified: true, memory_total_mib: 16384, ..Default::default() };
+        assert!(mac.planning_mib() < 6 * 1024, "16 GB Mac plans like a small card");
+        assert_eq!(crate::catalog::recommended_preset(Some(mac.planning_mib())).id, "12gb");
+    }
+
+    #[test]
+    fn dxgi_reports_real_adapters() {
+        assert_eq!((vendor_name(0x10DE), vendor_name(0x1002), vendor_name(0x8086), vendor_name(0x5143)), ("nvidia", "amd", "intel", "other"));
+        // Machines without a GPU (CI) report none; otherwise every entry is a real card.
+        for g in query_dxgi().unwrap_or_default() {
+            println!("DXGI: {} ({}) {} MiB", g.name, g.vendor, g.memory_total_mib);
+            assert!(!g.name.is_empty() && !g.name.contains("Basic Render"));
+        }
     }
 
     #[test]

@@ -2,6 +2,7 @@
 // token as a query parameter) so the webview streams them directly — no base64 copies.
 
 import type {
+  GpuBackend,
   AppConfig, AppErrorBody, GenerationRecord, GenerationRequest, HardwareReport, InputRecord, InstallStatus, JobView, Plan, ServiceEvent, SetupReport, StatusResponse,
 } from "./types";
 
@@ -52,8 +53,8 @@ const json = (body: unknown) => JSON.stringify(body);
 export const api = {
   status: () => call<StatusResponse>("/status"),
   setup: () => call<SetupReport>("/setup"),
-  hardware: () => call<HardwareReport>("/setup/hardware"),
-  install: (preset: string, upscaler: boolean) => call<InstallStatus>("/setup/install", { method: "POST", body: json({ preset, upscaler }) }),
+  hardware: (backend?: GpuBackend) => call<HardwareReport>(backend ? `/setup/hardware?backend=${backend}` : "/setup/hardware"),
+  install: (preset: string, upscaler: boolean, backend: GpuBackend) => call<InstallStatus>("/setup/install", { method: "POST", body: json({ preset, upscaler, backend }) }),
   installStatus: () => call<InstallStatus>("/setup/install"),
   cancelInstall: () => call<InstallStatus>("/setup/install/cancel", { method: "POST" }),
   config: () => call<AppConfig>("/config"),

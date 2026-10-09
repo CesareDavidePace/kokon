@@ -54,9 +54,10 @@ during development (Qwen Local Studio) and are kept on purpose.
   flow schedule (exponential shift 0.5–0.9, terminal 0.02). sd.cpp's own docs use CFG 6, which
   runs a second, unconditional model pass every step; the app used that until 2026-10-07.
   At CFG 1 the negative prompt is ignored.
-  Presets: Fast 20 steps at ~1 MP (a shortcut, not official); Balanced 40 steps at ~1 MP;
-  Quality 40 steps at the official 2K buckets (2048², 2752×1536…; edits share that budget
-  with their reference images, so they land near 2 MP on 16 GB).
+  Presets (since 2026-10-09; 20 steps judged enough, only Ultra keeps the official 40):
+  Fast 20 steps at ~1 MP; Balanced 20 steps at ~1.5K (1536²); Quality 20 steps and Ultra
+  40 steps at the official 2K buckets (2048², 2752×1536…; edits share that budget with their
+  reference images, so they land near 2 MP on 16 GB).
 - Default launch: `--backend cuda0 --params-backend te=cpu --fa --sage-attn --vae-tiling
   --vae-tile-size 768 --vae-tile-overlap 0.125 --max-vram -1` plus `--hires-upscalers-dir`
   when the upscalers folder exists (text-encoder weights in RAM, computed on the GPU). Measured
@@ -75,8 +76,8 @@ during development (Qwen Local Studio) and are kept on purpose.
 
 ## Resolution and upscaling policy
 
-Every job runs a single diffusion pass at the working size (Auto: ~1 MP for Fast/Balanced,
-native 2K for Quality; or the 1K/1.5K/2K/Source/Custom choice), capped by the VRAM token budget
+Every job runs a single diffusion pass at the working size (Auto: ~1 MP for Fast, ~1.5K for
+Balanced, native 2K for Quality and Ultra; or the 1K/1.5K/2K/Source/Custom choice), capped by the VRAM token budget
 that the target shares with its reference images. The earlier two-pass mode (≈1 MP render →
 ESRGAN → low-denoise refine at 2K) was removed on 2026-10-06: in A/B tests the refine made
 edits look worse than a single pass.

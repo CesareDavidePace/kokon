@@ -13,5 +13,6 @@ pub mod pipeline;
 pub mod planner;
 pub mod process;
 pub mod sdcpp;
+pub mod speed;
 pub mod store;
 pub mod wic;

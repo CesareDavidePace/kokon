@@ -314,7 +314,9 @@ export function Composer() {
   const hint = (() => {
     if (error) return error;
     if (!plan) return "";
-    return `${plan.output.width}×${plan.output.height} · ~${formatDuration(plan.estimated_seconds)}`;
+    // 0 = this machine's speed is not measured yet (the first image measures it).
+    const time = plan.estimated_seconds > 0 ? `~${formatDuration(plan.estimated_seconds)}` : "time known after the first image";
+    return `${plan.output.width}×${plan.output.height} · ${time}`;
   })();
   const hintTitle = plan
     ? [

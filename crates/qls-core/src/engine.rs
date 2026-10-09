@@ -91,6 +91,8 @@ pub struct Engine {
     /// Private mode: records in memory, files under `private_dir`; wiped by `clear_private`,
     /// at start and at exit. Never listed in the gallery.
     pub private_store: Arc<Store>,
+    /// Measured speed of this machine, for time estimates.
+    speed: crate::speed::SpeedBook,
     private_dir: PathBuf,
     jobs: Mutex<HashMap<String, Job>>,
     order: Mutex<VecDeque<String>>,
@@ -124,7 +126,9 @@ pub fn plan_inputs(cfg: &AppConfig, image_sizes: Vec<Size>, mask: Option<(Size, 
         upscaler: cfg.upscaler_file().map(|_| cfg.upscaler_model.trim().to_string()),
         refine: cfg.refine_mode,
         server_vae_tiling: cfg.vae_tile_size > 0,
-        sage_attention: cfg.sage_attention,
+        sage_attention: cfg.uses_sage_attention(),
+        speed_factor: None,
+        hide_uncalibrated: !crate::speed::trust_uncalibrated(cfg),
     }
 }
 
@@ -144,6 +148,7 @@ impl Engine {
             server: ServerManager::new(data_dir.to_path_buf()),
             store,
             private_store,
+            speed: if cfg!(test) { crate::speed::SpeedBook::in_memory() } else { crate::speed::SpeedBook::open(data_dir) },
             private_dir,
             jobs: Mutex::new(HashMap::new()),
             order: Mutex::new(VecDeque::new()),
@@ -459,11 +464,18 @@ impl Engine {
         Ok((img, rec))
     }
 
+    /// How this machine's measured speed compares with the time model (None: not measured).
+    fn speed_factor(&self, cfg: &AppConfig) -> Option<f32> {
+        self.speed.get(&crate::speed::machine_key(cfg, self.gpu().as_ref())).map(|c| c.factor)
+    }
+
     /// Dry run: the plan a request would get (used by the UI to show working sizes).
     pub fn preview_plan(&self, req: &GenerationRequest, sizes: Vec<Size>, mask: Option<(Size, Option<crate::geometry::Rect>, f64)>) -> AppResult<Plan> {
         let cfg = self.config();
         let vram = cfg.planning_vram_mib(self.gpu().map(|g| g.planning_mib()));
-        planner::plan(req, &plan_inputs(&cfg, sizes, mask, vram), &cfg.profile().recommended_settings)
+        let mut inputs = plan_inputs(&cfg, sizes, mask, vram);
+        inputs.speed_factor = self.speed_factor(&cfg);
+        planner::plan(req, &inputs, &cfg.profile().recommended_settings)
     }
 
     async fn run_job(self: Arc<Self>, id: &str) -> AppResult<()> {
@@ -509,7 +521,8 @@ impl Engine {
         let profile = cfg.profile().clone();
         let vram = cfg.planning_vram_mib(self.gpu().map(|g| g.planning_mib()));
         let mask_info = mask.as_ref().map(|(m, _)| (Size::new(m.width(), m.height()), imaging::mask_bbox(m, 16), imaging::mask_coverage(m, 16)));
-        let plan_inputs = plan_inputs(&cfg, images.iter().map(|i| i.size()).collect(), mask_info, vram);
+        let mut plan_inputs = plan_inputs(&cfg, images.iter().map(|i| i.size()).collect(), mask_info, vram);
+        plan_inputs.speed_factor = self.speed_factor(&cfg);
         let plan = planner::plan(&request, &plan_inputs, &profile.recommended_settings)?;
         let seed = request.seed.unwrap_or_else(random_seed);
         let mut request = request;
@@ -523,7 +536,10 @@ impl Engine {
         });
 
         // 3. Backend.
+        // A job that also starts the server is not a fair speed sample (startup, first load).
+        let mut cold_start = false;
         if self.server.status().state != ServerState::Ready || self.server.owned_alive() == Some(false) {
+            cold_start = true;
             self.update(id, |j| j.view.status = JobStatus::StartingBackend);
             self.emit_server();
             let r = self.server.ensure_ready(&cfg).await;
@@ -592,6 +608,7 @@ impl Engine {
             // 5. Submit and follow.
             let mut lines = self.server.subscribe_lines();
             let detailed = self.server.status().owned;
+            let submitted = Instant::now();
             let accepted = client.submit(&sd_req).await?;
             drop(sd_req); // release the base64 payloads
             self.update(id, |j| {
@@ -659,6 +676,13 @@ impl Engine {
                     let smaller = Size::new(((plan.working.width as f64) * 0.75) as u32 / 32 * 32, ((plan.working.height as f64) * 0.75) as u32 / 32 * 32);
                     let err = translate_generation_failure(&msg, &job_log.join("\n"), (plan.working.width, plan.working.height), Some((smaller.width, smaller.height)));
                     return self.maybe_retry_oom(id, err).await;
+                }
+            }
+            if !cold_start {
+                let key = crate::speed::machine_key(&cfg, self.gpu().as_ref());
+                let predicted = planner::backend_seconds(&plan, cfg.uses_sage_attention());
+                if let Some(f) = self.speed.record(&key, submitted.elapsed().as_secs_f32(), predicted) {
+                    tracing::info!("speed calibration {key}: x{f:.2}");
                 }
             }
             let result = backend_job.result.unwrap_or_default();

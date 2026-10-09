@@ -338,6 +338,11 @@ pub struct PlanInputs {
     pub server_vae_tiling: bool,
     /// SageAttention is enabled (faster steps; used for estimates only).
     pub sage_attention: bool,
+    /// Measured speed of this machine relative to the time model (`crate::speed`).
+    pub speed_factor: Option<f32>,
+    /// Without a measurement, report `estimated_seconds` = 0 (unknown until the first image)
+    /// instead of the uncalibrated model, which only fits the hardware it was measured on.
+    pub hide_uncalibrated: bool,
 }
 
 // ---------------------------------------------------------------------------------------
@@ -571,6 +576,14 @@ pub fn estimate_seconds(working: Size, refs: &[RefPlan], steps: u32, batch: u32,
     let cache_factor = if cache { 0.7 } else { 1.0 };
     let t = encode + step_seconds(tokens(working), ref_tokens, sage, cfg) * steps as f32 * cache_factor;
     (t + decode_seconds(working.area())) * batch as f32
+}
+
+/// Uncalibrated prediction of the backend part of a planned job (what `crate::speed`
+/// compares with the measured time): encode, sampling and decode, no enlargement.
+pub fn backend_seconds(p: &Plan, sage: bool) -> f32 {
+    let detailed = p.upscale.map(|u| u.method == UpscaleMethod::Detailed).unwrap_or(false);
+    let steps = if detailed { (p.steps as f32 * p.strength.unwrap_or(1.0)).ceil() as u32 } else { p.steps };
+    estimate_seconds(p.working, &p.references, steps, p.batch_count, p.cache_threshold.is_some(), sage, p.cfg)
 }
 
 fn steps_for(q: Quality, rec: &RecommendedSettings) -> u32 {
@@ -939,6 +952,11 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
             estimated_seconds += esrgan_seconds(inputs.image_sizes[0].area());
         }
     }
+    estimated_seconds = match inputs.speed_factor {
+        Some(f) => estimated_seconds * f,
+        None if inputs.hide_uncalibrated => 0.0,
+        None => estimated_seconds,
+    };
     let negative_prompt = req.negative_prompt.clone().unwrap_or_else(|| rec.negative_prompt.clone());
     if !negative_prompt.trim().is_empty() && !uses_guidance(cfg) && !quick_upscale {
         notes.push("The negative prompt is ignored at CFG 1; raise CFG in Advanced to use it.".into());
@@ -978,6 +996,22 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn estimates_follow_the_measured_speed() {
+        let r = GenerationRequest { prompt: "a lighthouse at dusk".into(), ..Default::default() };
+        let base = PlanInputs { vram_total_mib: Some(16303), ..Default::default() };
+        let raw = plan(&r, &base, &RecommendedSettings::default()).unwrap().estimated_seconds;
+        assert!(raw > 0.0);
+        let slow = PlanInputs { speed_factor: Some(13.0), ..base.clone() };
+        let s = plan(&r, &slow, &RecommendedSettings::default()).unwrap();
+        assert!((s.estimated_seconds / raw - 13.0).abs() < 0.01);
+        assert!((backend_seconds(&s, false) - raw).abs() < 0.5, "the calibration compares against the uncalibrated backend time");
+        let unknown = PlanInputs { hide_uncalibrated: true, ..base.clone() };
+        assert_eq!(plan(&r, &unknown, &RecommendedSettings::default()).unwrap().estimated_seconds, 0.0, "unknown until measured");
+        let known = PlanInputs { hide_uncalibrated: true, speed_factor: Some(2.0), ..base };
+        assert!(plan(&r, &known, &RecommendedSettings::default()).unwrap().estimated_seconds > 0.0);
+    }
+
     #[test]
     fn unified_memory_maps_to_presets() {
         use crate::catalog::{TEXT_ENCODER_Q4_K_M, VISION_PROJECTOR, recommended_preset};

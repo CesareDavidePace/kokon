@@ -79,6 +79,7 @@ export interface Plan {
   aspect_label: string;
   notes: string[];
   optimized_for_vram: boolean;
+  /** Calibrated to this machine after its first image; 0 = not measured yet. */
   estimated_seconds: number;
   cache_threshold: number | null;
   upscaler: string | null;

@@ -60,7 +60,7 @@ describe("MCP protocol", () => {
     const s = r.structuredContent as Record<string, unknown>;
     expect(s).toHaveProperty("server_running");
     expect(s).toHaveProperty("model_loaded");
-    expect(s.service_version).toBe("1.0.0");
+    expect(s.service_version).toBe("0.9.0");
   }, 60_000);
 
   it("get_image_info reads a project image and blocks paths outside", async () => {

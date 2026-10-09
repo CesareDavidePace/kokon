@@ -1,0 +1,7 @@
+Kokon
+Copyright 2026 Gabriele Lozupone
+
+This product is licensed under the GNU Affero General Public License, version 3 only (AGPL-3.0-only, see LICENSE).
+
+Model weights and the upscaler that Kokon downloads at setup are not part of this product;
+they come from their authors under their own licenses (see the README).

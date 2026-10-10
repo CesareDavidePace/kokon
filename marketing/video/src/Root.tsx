@@ -8,6 +8,7 @@ import { Layout } from "./scenes/Layout";
 import { MAIN_FRAMES, Main } from "./scenes/Main";
 import { MONTAGE_FRAMES, Montage } from "./scenes/Montage";
 import { Hook, Intro } from "./scenes/Opening";
+import { Banner } from "./scenes/Banner";
 import { LENGTH } from "./app/timeline";
 
 const withPreload = (C: ComponentType) => () => (
@@ -32,6 +33,7 @@ export function Root() {
       <Composition id="Region" component={withPreload(Region)} durationInFrames={REGION_FRAMES} {...S} />
       <Composition id="Versions" component={withPreload(Versions)} durationInFrames={VERSIONS_FRAMES} {...S} />
       <Composition id="Layout" component={Layout} durationInFrames={4} {...S} />
+      <Composition id="Banner" component={withPreload(Banner)} durationInFrames={1} fps={30} width={2560} height={1440} />
     </>
   );
 }

@@ -4,10 +4,10 @@
     <loc>https://kokon.app/</loc>
     <lastmod>2026-10-10</lastmod>
     <video:video>
-      <video:thumbnail_loc>https://kokon.app/assets/kokon-poster.jpg</video:thumbnail_loc>
+      <video:thumbnail_loc>https://kokon.app/assets/kokon-poster.jpg?v=2</video:thumbnail_loc>
       <video:title>Kokon: edit photos by describing the change, on your own GPU</video:title>
       <video:description>Kokon in use: creating an image from a sentence, painting an area to remove a scooter, adding a cat, and six more edits made with Qwen-Image 2.1 on a local GPU.</video:description>
-      <video:content_loc>https://kokon.app/assets/kokon.mp4</video:content_loc>
+      <video:content_loc>https://kokon.app/assets/kokon.mp4?v=2</video:content_loc>
       <video:duration>85</video:duration>
     </video:video>
   </url>

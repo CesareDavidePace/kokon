@@ -70,8 +70,8 @@
       "description": "Kokon in use: creating an image from a sentence, painting an area to remove a scooter, adding a cat, and six more edits made with Qwen-Image 2.1 on a local GPU.",
       "thumbnailUrl": "https://kokon.app/assets/kokon-poster.jpg",
       "contentUrl": "https://kokon.app/assets/kokon.mp4",
-      "uploadDate": "2026-10-10",
-      "duration": "PT1M27S"
+      "uploadDate": "2026-10-11",
+      "duration": "PT1M25S"
     },
     {
       "@type": "WebSite",
@@ -554,7 +554,22 @@
   const reel = $("reel"), reelBtn = $("reel-btn");
   const vio = new IntersectionObserver(([en]) => { if (en.isIntersecting) reel.play().catch(() => {}); else reel.pause(); }, { threshold: 0.3 });
   vio.observe(reel);
-  reelBtn.addEventListener("click", () => { reel.currentTime = 0; reel.controls = true; reel.loop = false; reel.play().catch(() => {}); reelBtn.remove(); });
+  // The loop here is silent and 1080p. With the YouTube id set, the button swaps it for the full
+  // film with voice and music (up to 4K), loaded from youtube-nocookie only on click.
+  const YOUTUBE_ID = "";
+  if (YOUTUBE_ID) { reelBtn.textContent = "▶ Watch with sound"; reelBtn.setAttribute("aria-label", "Play the launch film with sound"); }
+  reelBtn.addEventListener("click", () => {
+    if (YOUTUBE_ID) {
+      const yt = document.createElement("iframe");
+      yt.src = `https://www.youtube-nocookie.com/embed/${YOUTUBE_ID}?autoplay=1&rel=0&playsinline=1`;
+      yt.title = "Kokon launch film";
+      yt.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
+      yt.allowFullscreen = true;
+      yt.style.cssText = "position:absolute;inset:0;width:100%;height:100%;border:0";
+      vio.disconnect(); reel.pause(); reel.replaceWith(yt);
+    } else { reel.currentTime = 0; reel.controls = true; reel.loop = false; reel.play().catch(() => {}); }
+    reelBtn.remove();
+  });
 
   const nav = $("nav");
   const onScroll = () => nav.classList.toggle("scrolled", scrollY > 10);

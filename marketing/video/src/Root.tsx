@@ -8,6 +8,7 @@ import { Layout } from "./scenes/Layout";
 import { MAIN_FRAMES, Main } from "./scenes/Main";
 import { MONTAGE_FRAMES, Montage } from "./scenes/Montage";
 import { Hook, Intro } from "./scenes/Opening";
+import { LENGTH } from "./app/timeline";
 
 const withPreload = (C: ComponentType) => () => (
   <>
@@ -25,8 +26,8 @@ export function Root() {
       <Composition id="Agent" component={withPreload(Agent)} durationInFrames={AGENT_FRAMES} {...S} />
       <Composition id="Hardware" component={withPreload(Hardware)} durationInFrames={HARDWARE_FRAMES} {...S} />
       <Composition id="Outro" component={withPreload(Outro)} durationInFrames={OUTRO_FRAMES} {...S} />
-      <Composition id="Intro" component={withPreload(Intro)} durationInFrames={120} {...S} />
-      <Composition id="Hook" component={withPreload(Hook)} durationInFrames={150} {...S} />
+      <Composition id="Intro" component={withPreload(Intro)} durationInFrames={LENGTH.intro} {...S} />
+      <Composition id="Hook" component={withPreload(Hook)} durationInFrames={LENGTH.hook} {...S} />
       <Composition id="Create" component={withPreload(Create)} durationInFrames={CREATE_FRAMES} {...S} />
       <Composition id="Region" component={withPreload(Region)} durationInFrames={REGION_FRAMES} {...S} />
       <Composition id="Versions" component={withPreload(Versions)} durationInFrames={VERSIONS_FRAMES} {...S} />

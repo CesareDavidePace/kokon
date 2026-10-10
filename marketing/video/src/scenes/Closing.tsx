@@ -4,6 +4,8 @@ import { AbsoluteFill, useCurrentFrame } from "remotion";
 import { siAmd, siApple, siGithub, siIntel, siNvidia } from "simple-icons";
 import { Mark } from "../app/Mark";
 import { Backdrop, inOut, prog } from "../app/motion";
+import { Sfx } from "../app/sound";
+import { LENGTH, OUTRO } from "../app/timeline";
 
 const font = '"Inter Variable", Inter, sans-serif';
 const PAPER = "#F7F6F2";
@@ -64,7 +66,7 @@ function Card({ icon, title, show, children }: { icon: ReactNode; title: string;
   );
 }
 
-export const HARDWARE_FRAMES = 240;
+export const HARDWARE_FRAMES = LENGTH.hardware;
 
 export function Hardware() {
   const f = useCurrentFrame();
@@ -103,14 +105,14 @@ export function Hardware() {
   );
 }
 
-export const OUTRO_FRAMES = 200;
+export const OUTRO_FRAMES = LENGTH.outro;
 
 export function Outro() {
   const f = useCurrentFrame();
   const a = prog(f, 0, 30);
   const b = prog(f, 22, 24);
-  const c = prog(f, 40, 24);
-  const d = prog(f, 62, 24);
+  const c = prog(f, OUTRO.try - 4, 20); // kokon.app arrives with "Try it now."
+  const d = prog(f, OUTRO.knows + 10, 24);
   const fade = prog(f, OUTRO_FRAMES - 24, 24, inOut);
   return (
     <AbsoluteFill style={{ fontFamily: font, background: "#050505", alignItems: "center", justifyContent: "center", opacity: 1 - fade }}>
@@ -130,6 +132,7 @@ export function Outro() {
         </div>
       </div>
       <div style={{ position: "absolute", bottom: 80, fontSize: 24, color: "rgba(247,246,242,0.5)", opacity: d }}>Designed and built by Gabriele Lozupone, with the help of Claude Code.</div>
+      <Sfx name="hit" at={0} gain={0.8} />
     </AbsoluteFill>
   );
 }

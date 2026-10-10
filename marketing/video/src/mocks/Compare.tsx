@@ -1,5 +1,7 @@
 // The app's CompareFrame (src/components/Compare.tsx) with the slider position taken from the
-// frame clock (`setCompareSplit`) instead of the pointer. Markup and classes are unchanged.
+// frame clock (`CompareSplitContext`, provided by <AppWindow>) instead of the pointer. Markup and
+// classes are unchanged.
+import { createContext, useContext } from "react";
 import { compareBase as _cb, type CompareBase, type CompareMode } from "../../../../src/lib/logic";
 import type { GenerationRecord } from "../../../../src/lib/types";
 import { Seg, useFit } from "../../../../src/components/ui";
@@ -15,13 +17,11 @@ const MODES: { value: CompareMode; label: string }[] = [
   { value: "diff", label: "Changes" },
 ];
 
-let split = 0.5;
-export function setCompareSplit(v: number) {
-  split = Math.min(1, Math.max(0, v));
-}
+export const CompareSplitContext = createContext(0.5);
 
 export function CompareFrame({ g, base, fullscreen = false }: { g: GenerationRecord; base: CompareBase; fullscreen?: boolean }) {
   const mode = useStore((s) => s.compare);
+  const split = Math.min(1, Math.max(0, useContext(CompareSplitContext)));
   const { ref, box } = useFit(g.width / g.height);
   const after = urls.gen(g.id);
   const before = urls.input(base.inputId);

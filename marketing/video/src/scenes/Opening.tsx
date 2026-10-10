@@ -3,6 +3,8 @@
 import { AbsoluteFill, Img, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
 import { MARK_PATHS } from "../app/Mark";
 import { inOut, out, prog } from "../app/motion";
+import { Sfx } from "../app/sound";
+import { sceneCues, sentenceAt } from "../app/timeline";
 
 const PAPER = "#F7F6F2";
 const font = '"Inter Variable", Inter, sans-serif';
@@ -37,6 +39,7 @@ export function Intro() {
           Edit photos by describing the change.
         </div>
       </div>
+      <Sfx name="hit" at={4} />
     </AbsoluteFill>
   );
 }
@@ -64,10 +67,12 @@ function Tile({ pair, flipAt, w, h }: { pair: [string, string]; flipAt: number; 
   );
 }
 
+// The three lines follow the voice: each appears as it is said.
+const HOOK = sceneCues("hook")[0];
 const LINES = [
-  { text: "Describe the change.", from: 0, to: 46 },
-  { text: "Your computer makes it.", from: 46, to: 92 },
-  { text: "No cloud. No Python. No account.", from: 92, to: 150 },
+  { text: "Another image editor?", from: sentenceAt(HOOK, 0) - 2, to: sentenceAt(HOOK, 1) - 2 },
+  { text: "Nope.", from: sentenceAt(HOOK, 1) - 2, to: sentenceAt(HOOK, 2) - 2 },
+  { text: "This one is yours.", from: sentenceAt(HOOK, 2) - 2, to: 150 },
 ];
 
 export function Hook() {

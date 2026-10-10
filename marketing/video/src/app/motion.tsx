@@ -31,10 +31,13 @@ export const typingDone = (text: string, start: number, cps = 32, fps = 30) => s
 
 export interface Cam { x: number; y: number; s: number }
 
-/** Puts window point (x, y) at the centre of the 1920×1080 frame, scaled by s. */
-export function Camera({ cam, children, tilt = 0, lift = 0, opacity = 1 }: { cam: Cam; children: ReactNode; tilt?: number; lift?: number; opacity?: number }) {
+/**
+ * Puts window point (x, y) at the centre of the 1920×1080 frame, scaled by s. `free` lets a
+ * macro shot show past the window's edges; `blur` (px) smears fast moves.
+ */
+export function Camera({ cam, children, tilt = 0, lift = 0, opacity = 1, free = false, blur = 0, turn }: { cam: Cam; children: ReactNode; tilt?: number; lift?: number; opacity?: number; free?: boolean; blur?: number; turn?: { x: number; y: number } }) {
   // Zoomed in further than the frame: never show past the window's edges.
-  const clamp = (v: number, half: number, size: number) => (cam.s * size >= half * 2 ? Math.min(Math.max(v, half / cam.s), size - half / cam.s) : v);
+  const clamp = (v: number, half: number, size: number) => (!free && cam.s * size >= half * 2 ? Math.min(Math.max(v, half / cam.s), size - half / cam.s) : v);
   const x = clamp(cam.x, 960, WIN.w);
   const y = clamp(cam.y, 540, WIN.h);
   const px = 960 - cam.s * x;
@@ -51,18 +54,93 @@ export function Camera({ cam, children, tilt = 0, lift = 0, opacity = 1 }: { cam
           transformOrigin: "0 0",
           transform: `translate(${px}px, ${py}px) scale(${cam.s}) rotateX(${tilt}deg)`,
           opacity,
+          filter: blur > 0.3 ? `blur(${blur / cam.s}px)` : undefined,
+          perspective: turn ? 2000 / cam.s : undefined,
         }}
       >
-        {children}
+        {turn ? (
+          // An angled view, turning about the point the camera looks at.
+          <div style={{ position: "absolute", inset: 0, transformOrigin: `${x}px ${y}px`, transform: `rotateX(${turn.x}deg) rotateY(${turn.y}deg)` }}>{children}</div>
+        ) : (
+          children
+        )}
       </div>
     </div>
   );
 }
 
-/** Interpolates a camera through keyframes [frame, cam]. */
+/**
+ * Shallow depth of field: the frame stays sharp in the band `focus` (frame y, px) and goes soft
+ * above and below, like a macro lens. Renders `children` twice (soft copy under a sharp one).
+ */
+export function DepthOfField({ focus, blur = 7, feather = 150, children }: { focus: [number, number]; blur?: number; feather?: number; children: ReactNode }) {
+  const [a, b] = focus;
+  const mask = `linear-gradient(to bottom, transparent ${a - feather}px, #000 ${a}px, #000 ${b}px, transparent ${b + feather}px)`;
+  return (
+    <>
+      <div style={{ position: "absolute", inset: 0, filter: `blur(${blur}px)` }}>{children}</div>
+      <div style={{ position: "absolute", inset: 0, maskImage: mask, WebkitMaskImage: mask }}>{children}</div>
+    </>
+  );
+}
+
+/** How fast a camera moves at `frame` (frame px per frame), for motion blur. */
+export function camSpeed(frame: number, at: (f: number) => Cam): number {
+  const a = at(frame - 0.5);
+  const b = at(frame + 0.5);
+  const scale = Math.abs(Math.log(b.s / a.s)) * 900; // zoom: how far the frame edge travels
+  return Math.hypot((b.x - a.x) * b.s, (b.y - a.y) * b.s) + scale;
+}
+
+/**
+ * Monotone cubic (Fritsch–Carlson) through [frame, value] keys: glides through the inner keys
+ * instead of stopping at each one, never overshoots, rests at the first and last key and
+ * wherever a value turns or holds.
+ */
+export function glide(frame: number, points: [number, number][]): number {
+  const n = points.length;
+  if (frame <= points[0][0]) return points[0][1];
+  if (frame >= points[n - 1][0]) return points[n - 1][1];
+  const d = points.slice(1).map(([f1, v1], i) => (v1 - points[i][1]) / (f1 - points[i][0]));
+  const m = points.map((_, i) => {
+    if (i === 0 || i === n - 1) return 0;
+    const a = d[i - 1];
+    const b = d[i];
+    if (a * b <= 0) return 0;
+    const h0 = points[i][0] - points[i - 1][0];
+    const h1 = points[i + 1][0] - points[i][0];
+    return (3 * (h0 + h1)) / ((2 * h1 + h0) / a + (h1 + 2 * h0) / b);
+  });
+  let i = 1;
+  while (frame > points[i][0]) i++;
+  const [f0, v0] = points[i - 1];
+  const [f1, v1] = points[i];
+  const h = f1 - f0;
+  const t = (frame - f0) / h;
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return (2 * t3 - 3 * t2 + 1) * v0 + (t3 - 2 * t2 + t) * h * m[i - 1] + (-2 * t3 + 3 * t2) * v1 + (t3 - t2) * h * m[i];
+}
+
+/** Moves a camera smoothly through keyframes [frame, cam]. */
 export function camAt(frame: number, keys: [number, Cam][]): Cam {
-  const k = (sel: (c: Cam) => number) => kf(frame, keys.map(([f, c]) => [f, sel(c)] as [number, number]));
+  const k = (sel: (c: Cam) => number) => glide(frame, keys.map(([f, c]) => [f, sel(c)] as [number, number]));
   return { x: k((c) => c.x), y: k((c) => c.y), s: k((c) => c.s) };
+}
+
+/**
+ * Renders `view(frame)`; for `dur` frames after each frame in `cuts`, the view from just
+ * before the cut stays on top and fades out, so a new screen state dissolves in instead of
+ * replacing the old one in a single frame.
+ */
+export function Dissolve({ frame, cuts, view, dur = 9 }: { frame: number; cuts: number[]; view: (t: number) => ReactNode; dur?: number }) {
+  const cut = cuts.find((c) => frame >= c && frame < c + dur);
+  return (
+    <>
+      {view(frame)}
+      {cut !== undefined && <div style={{ position: "absolute", inset: 0, opacity: 1 - prog(frame, cut, dur, inOut) }}>{view(cut - 1)}</div>}
+    </>
+  );
 }
 
 /** A mouse pointer in window coordinates; `clicks` are frames where it presses. */

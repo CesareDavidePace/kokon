@@ -1,8 +1,10 @@
 // An AI agent in a terminal asks Kokon's MCP server for an image; the image arrives.
 import { AbsoluteFill, Img, interpolate, staticFile, useCurrentFrame } from "remotion";
-import { Backdrop, Caption, inOut, prog, typed, typingDone } from "../app/motion";
+import { Backdrop, Caption, inOut, prog, typed } from "../app/motion";
+import { Send, Sfx } from "../app/sound";
+import { AGENT, LENGTH } from "../app/timeline";
 
-export const AGENT_FRAMES = 280;
+export const AGENT_FRAMES = LENGTH.agent;
 const mono = '"Cascadia Code", "Cascadia Mono", Consolas, "SF Mono", monospace';
 const ASK = "Make a hero image for my landing page: a blue morpho butterfly on a silk cocoon, 16:9";
 
@@ -16,8 +18,7 @@ function Line({ show, children, color = "#d6d6d6", indent = 0 }: { show: number;
 export function Agent() {
   const f = useCurrentFrame();
   const T0 = 22;
-  const T1 = typingDone(ASK, T0, 55);
-  const CALL = T1 + 14;
+  const CALL = AGENT.works; // "Kokon works with it too."
   const STEPS0 = CALL + 26;
   const SAVED = STEPS0 + 48;
   const REPLY = SAVED + 16;
@@ -98,6 +99,8 @@ export function Agent() {
         <div style={{ position: "absolute", left: 16, bottom: 14, padding: "4px 10px", borderRadius: 8, background: "rgba(0,0,0,0.55)", color: "#fff", fontSize: 14, fontFamily: '"Inter Variable", Inter, sans-serif' }}>hero.png</div>
       </div>
       <Caption title="Works with your AI agent." sub="Built-in MCP server and local HTTP API, for Claude Code, Cursor or any MCP client." start={10} end={AGENT_FRAMES} y={86} />
+      <Send at={CALL} />
+      <Sfx name="reveal" at={SAVED} variant={2} />
     </AbsoluteFill>
   );
 }

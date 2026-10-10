@@ -8,7 +8,7 @@
       <video:title>Kokon: edit photos by describing the change, on your own GPU</video:title>
       <video:description>Kokon in use: creating an image from a sentence, painting an area to remove a scooter, adding a cat, and six more edits made with Qwen-Image 2.1 on a local GPU.</video:description>
       <video:content_loc>https://kokon.app/assets/kokon.mp4</video:content_loc>
-      <video:duration>87</video:duration>
+      <video:duration>85</video:duration>
     </video:video>
   </url>
   <url><loc>https://kokon.app/qwen-image-2-1-local/</loc><lastmod>2026-10-10</lastmod></url>

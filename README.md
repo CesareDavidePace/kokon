@@ -40,6 +40,8 @@
 
 https://github.com/user-attachments/assets/f954c20e-eb07-4bc8-8216-b8a412860e99
 
+<p align="center"><a href="https://youtu.be/ulMVqrhrn-w">Watch in 4K on YouTube</a></p>
+
 <p align="center">
   <a href="https://github.com/GabrieleLozupone/kokon/releases/latest"><picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/readme/download-windows-dark.svg">

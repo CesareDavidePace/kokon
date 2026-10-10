@@ -38,7 +38,7 @@
   <a href="docs/engineering-notes.md">How it works</a>
 </p>
 
-https://github.com/user-attachments/assets/f954c20e-eb07-4bc8-8216-b8a412860e99
+https://github.com/user-attachments/assets/939569fb-bc7b-4b7d-83d1-813dd2db40a8
 
 <p align="center"><a href="https://youtu.be/ulMVqrhrn-w">Watch in 4K on YouTube</a></p>
 

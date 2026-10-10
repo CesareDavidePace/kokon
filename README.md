@@ -108,13 +108,14 @@ https://github.com/user-attachments/assets/f954c20e-eb07-4bc8-8216-b8a412860e99
   add a tomato sauce river, generate the kitchen, combine the two, expand to 21:9.</sub>
 </p>
 
-Every result below came from one sentence in Kokon, with default settings.
+Every image below was made by Kokon itself (no stock photos), first try with that seed. Prompts,
+seeds and times are in [marketing/showcase/PROMPTS.md](marketing/showcase/PROMPTS.md).
 
 | | |
 | :---: | :---: |
-| <img src="docs/media/examples/remove.jpg" alt="Remove people from a beach"><br>**Remove** · *“Remove all the people from the beach”* | <img src="docs/media/examples/replace.jpg" alt="Replace an object"><br>**Replace** · *“Replace the orange car with a blue vintage Vespa scooter”* |
-| <img src="docs/media/examples/relight.jpg" alt="Relight a scene"><br>**Relight** · *“Make it golden hour, warm low sunlight”* | <img src="docs/media/examples/restyle.jpg" alt="Restyle a photo"><br>**Restyle** · *“Turn it into a watercolor illustration”* |
-| <img src="docs/media/examples/text.jpg" alt="Change text in a photo"><br>**Text** · *“Change the neon sign to say ‘OPEN LATE’”* | <img src="docs/media/examples/expand.jpg" alt="Expand a photo"><br>**Expand** · Expand → 16:9 · *“continue the beach”* |
+| <img src="docs/media/examples/remove.jpg" alt="A red scooter removed from a café street"><br>**Remove** · paint the scooter · *“the red scooter”* | <img src="docs/media/examples/replace.jpg" alt="An armchair replaced by a green sofa"><br>**Replace** · *“Replace the yellow armchair with a deep green velvet sofa and hang an abstract painting above it”* |
+| <img src="docs/media/examples/relight.jpg" alt="A summer lake cabin turned into a snowy night"><br>**Relight** · *“Make it a snowy winter night, warm light glowing from the cabin windows”* | <img src="docs/media/examples/restyle.jpg" alt="A portrait turned into a watercolor"><br>**Restyle** · *“Turn it into a hand-painted watercolor illustration”* |
+| <img src="docs/media/examples/text.jpg" alt="A shop sign changed to KOKON CAFÉ"><br>**Text** · *“Change the gold sign text to ‘KOKON CAFÉ’”* | <img src="docs/media/examples/expand.jpg" alt="A square lighthouse photo expanded to a panorama"><br>**Expand** · 40 % left and right · *“continue the rocky coastline and the turquoise sea”* |
 
 ## Install
 
@@ -154,7 +155,7 @@ whole thing takes a few minutes, and the setup screen shows what Kokon can do wh
 | **macOS** | 26 Tahoe | latest |
 | **Unified memory** | 16 GB: works, but slowly (lightest mode, about 1 megapixel) | 32 GB or more (also gets native 2K) |
 | **Disk** | 15 GB free | 25 GB free |
-| **Time per image** | About 10 minutes for 1024×1024 on a 16 GB M2 Pro; Fast renders at 768×768 and enlarges, which is quicker | Faster on Max/Ultra chips with more memory |
+| **Time per image** | About 4 minutes for a 1 MP image on a 16 GB M2 Pro | Faster on Max/Ultra chips with more memory |
 
 Kokon measures your machine's speed with the first image and shows realistic time estimates
 from then on.
@@ -428,7 +429,7 @@ been verified on a real AMD or Intel card yet; integrated graphics are not suppo
 [open an issue](https://github.com/GabrieleLozupone/kokon/issues) with your card and how it went.
 
 Mac: yes, in beta, on Apple Silicon (M1 or newer) with macOS 26. It runs on a 16 GB Mac in a
-lighter mode, but slowly (about 10 minutes per 1-megapixel image on an M2 Pro); 32 GB or more
+lighter mode, but slowly (about 4 minutes per 1-megapixel image on an M2 Pro); 32 GB or more
 and a Pro, Max or Ultra chip are recommended. See the [requirements](#requirements) and
 [docs/platforms.md](docs/platforms.md).
 

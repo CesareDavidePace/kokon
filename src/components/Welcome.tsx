@@ -92,12 +92,12 @@ export function Welcome() {
 
 const SLIDES: { src: string; video?: boolean; title: string; prompt: string }[] = [
   { src: demo, video: true, title: "One project, start to finish", prompt: "Create, edit, combine and expand: the whole flow in under a minute." },
-  { src: remove, title: "Remove", prompt: "“Remove all the people from the beach”" },
-  { src: replace, title: "Replace", prompt: "“Replace the orange car with a blue vintage Vespa scooter”" },
-  { src: relight, title: "Relight", prompt: "“Make it golden hour, warm low sunlight”" },
-  { src: restyle, title: "Restyle", prompt: "“Turn it into a watercolor illustration”" },
-  { src: text, title: "Change text", prompt: "“Change the neon sign to say ‘OPEN LATE’”" },
-  { src: expand, title: "Expand", prompt: "Expand to 16:9 · “continue the beach”" },
+  { src: remove, title: "Remove", prompt: "Paint the scooter · Remove · “the red scooter”" },
+  { src: replace, title: "Replace", prompt: "“Replace the yellow armchair with a deep green velvet sofa and hang an abstract painting above it”" },
+  { src: relight, title: "Relight", prompt: "“Make it a snowy winter night, warm light glowing from the cabin windows”" },
+  { src: restyle, title: "Restyle", prompt: "“Turn it into a hand-painted watercolor illustration”" },
+  { src: text, title: "Change text", prompt: "“Change the gold sign text to ‘KOKON CAFÉ’”" },
+  { src: expand, title: "Expand", prompt: "Expand 40 % left and right · “continue the rocky coastline and the turquoise sea”" },
 ];
 
 /** What Kokon can do, shown while the model downloads (the wait is the best moment for it). */

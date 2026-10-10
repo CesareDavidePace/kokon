@@ -10,9 +10,8 @@ How to publish a version that installed copies update to, on Windows and macOS.
 - One click downloads the installer (Windows) or the app archive (Mac) and checks its
   signature against the public key in `src-tauri/tauri.conf.json`. Then it stops the local
   service, installs, and restarts Kokon. Settings, gallery and models are kept.
-- **While the repository is private, the check finds nothing**, because GitHub serves release
-  files of a private repo only to signed-in users. Updates start working when the repo is
-  public.
+- The check needs the repository to be public (it is since 2026-10-11): GitHub serves the
+  release files of a private repo only to signed-in users.
 
 ## The signing key (do this once)
 

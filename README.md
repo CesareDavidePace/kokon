@@ -305,8 +305,7 @@ claude mcp add-json --scope user kokon '{"type":"stdio","command":"C:\\Users\\<y
   `QLS_MCP_ALLOWED_DIRS` (separated by semicolons). Existing files are never overwritten.
 - Images are **not** sent back to the model by default; they stay on disk. Pass
   `include_preview: true` to include a small JPEG preview.
-- `upscale_image` takes `scale` (default 2) or `width`/`height` (up to 8192 px), and
-  `method` (`quick` | `detailed`).
+- `upscale_image` takes `scale` (default 2) or `width`/`height` (up to 8192 px).
 - Progress is reported through MCP progress notifications. Claude Code's default tool timeout is
   30 minutes (`MCP_TOOL_TIMEOUT`).
 - Without the desktop window open, the model is unloaded after 15 idle minutes (Settings → General).
@@ -536,8 +535,8 @@ or macOS version and the log from `KokonData/logs` (see the table above).
 - [x] Before/after, version undo, private mode, HEIC and HDR
 - [x] macOS on Apple Silicon (beta, Metal)
 - [x] One-click in-app updates on Windows and Mac
-- [ ] AMD and Intel GPUs through Vulkan (beta now; works on NVIDIA, to verify on AMD/Intel)
 - [x] Qwen's official 8-step Turbo model for every preset
+- [ ] AMD and Intel GPUs through Vulkan (beta now; works on NVIDIA, to verify on AMD/Intel)
 - [ ] Background removal and transparent cutouts
 - [ ] Batch edits: one instruction for a whole folder
 - [ ] Plugins for Krita, GIMP and Photoshop through the local API

@@ -116,8 +116,9 @@ Whenever a result is larger than what the model rendered (edits restored to the 
 outpaint, sizes above the VRAM budget) it is enlarged with ESRGAN ×4 and then resized down to
 the exact size; Lanczos is only used for shrinking or factors below 1.1×.
 
-On Apple Silicon, Fast at Auto resolution renders at most 768² (`planner::UNIFIED_FAST_AREA`)
-and is enlarged to the 1 MP output, because Mac GPUs are several times slower.
+Apple Silicon renders Fast at its full ~1 MP like a PC. Rendering 768² and enlarging it was
+removed on 2026-10-10: on the M2 Pro 16 GB it took 5 min 25 s against 4 min 20 s for a direct
+1376×768 render (the ESRGAN pass on Metal costs more than the smaller render saves).
 
 ### Turbo (the only image model since 2026-10-09)
 

@@ -213,7 +213,7 @@ export function Setup() {
             {hw.gpu?.unified ? (
               hw.gpu.memory_total_mib < 23 * 1024 ? (
                 <div className="setup-note">
-                  With {gb(hw.gpu.memory_total_mib)} of unified memory Kokon works, but slowly: model weights are read from disk as needed and images are made at about 1 megapixel, which took about 10 minutes on an M2 Pro. Fast renders smaller and enlarges the result, so it is quicker. 32 GB or more and a Pro, Max or Ultra chip are recommended. Close other apps while generating.
+                  With {gb(hw.gpu.memory_total_mib)} of unified memory Kokon works, but slowly: model weights are read from disk as needed and images are made at about 1 megapixel, which takes about 4 to 5 minutes on an M2 Pro. 32 GB or more and a Pro, Max or Ultra chip are recommended. Close other apps while generating.
                 </div>
               ) : (
                 hw.gpu.memory_total_mib < 31 * 1024 && (

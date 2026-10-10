@@ -127,7 +127,7 @@ pub const MAX_UPSCALE_AREA: u64 = 40_000_000;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Quality {
-    /// ~1 MP (768² on Apple Silicon, then enlarged). Older versions' "turbo" maps here.
+    /// ~1 MP. Older versions' "turbo" maps here.
     #[default]
     #[serde(alias = "turbo")]
     Fast,
@@ -335,8 +335,8 @@ pub struct PlanInputs {
     /// Without a measurement, report `estimated_seconds` = 0 (unknown until the first image)
     /// instead of the uncalibrated model, which only fits the hardware it was measured on.
     pub hide_uncalibrated: bool,
-    /// Apple Silicon (unified memory): the GPU is several times slower than the discrete
-    /// cards the presets were tuned on, so Fast renders smaller (`UNIFIED_FAST_AREA`).
+    /// Apple Silicon (unified memory). Fast renders its full size here too: 768² plus the
+    /// upscaler took longer than 1 MP directly on an M2 Pro (5 min 25 s vs 4 min 20 s, 2026-10-10).
     pub unified_memory: bool,
 }
 
@@ -529,11 +529,6 @@ pub fn unified_memory_planning_mib(ram_mib: u64, text_encoder_mib: u64) -> u64 {
     gpu_share.saturating_sub(text_encoder_mib)
 }
 
-/// Working area of Fast (Auto resolution) on Apple Silicon. Sampling time grows faster than
-/// the area, so 768² takes well under half of 1 MP; the upscaler model then enlarges the
-/// result to the size Fast would have rendered.
-pub const UNIFIED_FAST_AREA: u64 = 768 * 768;
-
 pub const PIXELS_PER_TOKEN: u64 = 256; // 8x VAE downscale, 2x2 patches
 
 /// The noise schedule of every diffusion job: `sample_sigmas` of Qwen/Qwen-Image-2.1-Turbo's model_index.json
@@ -706,8 +701,6 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
     let mut steps = TURBO_STEPS;
     let batch_count = if mode == ResolvedMode::Upscale { 1 } else { adv.batch_count.unwrap_or(1).clamp(1, 8) };
     let mut optimized = false;
-    // Largest area actually rendered; the output keeps its size and is enlarged afterwards.
-    let render_cap = (inputs.unified_memory && quality == Quality::Fast && req.resolution == ResolutionMode::Auto).then_some(UNIFIED_FAST_AREA);
     // Diffusion always runs in one pass; larger outputs are enlarged with the upscaler
     // model (user A/B test, 2026-10-06: the two-pass refine made results worse).
     let mut upscale = None;
@@ -781,8 +774,7 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
                 let wanted = tier_area.unwrap_or(rec.area_balanced);
                 let area = cap_for_refs(wanted, 0.0, &mut notes);
                 let size = size_for_aspect(aspect, area, rec);
-                let render = render_cap.map_or(size.area(), |c| c.min(size.area()));
-                working = plan_working_canvas(size, &limits(render, rec));
+                working = plan_working_canvas(size, &limits(size.area(), rec));
                 output = size;
             }
         }
@@ -818,10 +810,7 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
             let area = cap_for_sources(wanted, &inputs.image_sizes, &mut notes);
             sources_reduced = area < wanted;
             let full = plan_working_canvas(target, &limits(area, rec));
-            working = match render_cap {
-                Some(c) if c < area => plan_working_canvas(target, &limits(c, rec)),
-                _ => full,
-            };
+            working = full;
             for (i, s) in inputs.image_sizes.iter().enumerate() {
                 let c = if i == 0 && *s == target { working } else { ref_canvas(*s, working.canvas.area(), rec) };
                 references.push(RefPlan { index: i, source: *s, canvas: c });
@@ -1047,25 +1036,16 @@ mod tests {
     }
 
     #[test]
-    fn mac_fast_renders_smaller_and_keeps_the_output_size() {
+    fn mac_fast_renders_the_full_size() {
         let mac = |sizes: &[(u32, u32)]| PlanInputs { unified_memory: true, vram_total_mib: Some(4600), upscaler: Some("4x-UltraSharp".into()), ..inputs(sizes) };
         let mut r = req("a lighthouse at dusk");
         r.quality = Quality::Fast;
         let p = plan(&r, &mac(&[]), &rec()).unwrap();
-        assert_eq!(p.output, Size::new(1024, 1024), "same output as Fast on a PC");
-        assert_eq!(p.working, Size::new(768, 768));
-        assert!(p.notes.iter().any(|n| n.contains("enlarged")));
-        // Edits too: smaller render, source size kept.
+        assert_eq!((p.output, p.working), (Size::new(1024, 1024), Size::new(1024, 1024)), "no smaller render + upscale");
+        assert!(p.upscale.is_none());
         let p = plan(&r, &mac(&[(1024, 768)]), &rec()).unwrap();
         assert_eq!(p.output, Size::new(1024, 768));
-        assert!(p.working.area() <= UNIFIED_FAST_AREA + 32 * 1024, "{:?}", p.working);
-        // Other qualities, explicit sizes and PCs are unchanged.
-        r.quality = Quality::Balanced;
-        assert_eq!(plan(&r, &mac(&[]), &rec()).unwrap().working, Size::new(1024, 1024), "budget-capped 1 MP");
-        r.quality = Quality::Fast;
-        assert_eq!(plan(&r, &inputs(&[]), &rec()).unwrap().working, Size::new(1024, 1024));
-        r.resolution = ResolutionMode::K1;
-        assert_eq!(plan(&r, &mac(&[]), &rec()).unwrap().working, Size::new(1024, 1024));
+        assert!(p.upscale.is_none());
     }
 
     #[test]

@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://github.com/GabrieleLozupone/kokon/releases/latest"><img src="https://img.shields.io/github/v/release/GabrieleLozupone/kokon?style=flat-square&color=6b6b6b&labelColor=333&label=release" alt="Latest release"></a>
-  <a href="https://github.com/GabrieleLozupone/kokon/releases"><img src="https://img.shields.io/github/downloads/GabrieleLozupone/kokon/total?style=flat-square&color=6b6b6b&labelColor=333" alt="Downloads"></a>
+  <a href="https://github.com/GabrieleLozupone/kokon/releases"><img src="https://img.shields.io/github/downloads/GabrieleLozupone/kokon/total?style=flat-square&cacheSeconds=3600&color=6b6b6b&labelColor=333" alt="Downloads"></a>
   <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-6b6b6b?labelColor=333&style=flat-square&logo=windows&logoColor=white" alt="Windows 10 and 11">
   <img src="https://img.shields.io/badge/macOS-26%2B-6b6b6b?labelColor=333&style=flat-square&logo=apple&logoColor=white" alt="macOS 26 or newer">
   <br>
@@ -24,8 +24,8 @@
   <img src="https://img.shields.io/badge/Apple%20Silicon-32%20GB%20recommended%20(beta)-6b6b6b?labelColor=333&style=flat-square&logo=apple&logoColor=white" alt="Apple Silicon, 32 GB of unified memory recommended, beta">
   <br>
   <a href="#use-it-from-your-ai-agent"><img src="https://img.shields.io/badge/MCP-server%20included-6b6b6b?labelColor=333&style=flat-square" alt="MCP server included"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/GabrieleLozupone/kokon?style=flat-square&color=6b6b6b&labelColor=333" alt="License"></a>
-  <a href="https://github.com/GabrieleLozupone/kokon/stargazers"><img src="https://img.shields.io/github/stars/GabrieleLozupone/kokon?style=flat-square&color=6b6b6b&labelColor=333" alt="Stars"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/GabrieleLozupone/kokon?style=flat-square&cacheSeconds=3600&color=6b6b6b&labelColor=333" alt="License"></a>
+  <a href="https://github.com/GabrieleLozupone/kokon/stargazers"><img src="https://img.shields.io/github/stars/GabrieleLozupone/kokon?style=flat-square&cacheSeconds=3600&color=6b6b6b&labelColor=333" alt="Stars"></a>
 </p>
 
 <p align="center">
@@ -107,7 +107,7 @@ https://github.com/user-attachments/assets/8851c580-99b9-432a-82be-b6d42fa9a749
 <p align="center">
   <img src="docs/media/examples/fatto-in-casa.jpg" alt="A grandmother sprinkles parmesan over a miniature Colosseum made of pasta, standing on a tomato sauce river on her kitchen table, with Rome's rooftops at sunset through the window" width="860">
   <br>
-  <sub>One project from the demo video, made in six steps: generate the Colosseum, rebuild it out of pasta,
+  <sub>One project, six steps in Kokon: generate the Colosseum, rebuild it out of pasta,
   add a tomato sauce river, generate the kitchen, combine the two, expand to 21:9.</sub>
 </p>
 

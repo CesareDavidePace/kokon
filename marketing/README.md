@@ -50,11 +50,11 @@ Sound (`src/app/sound.tsx`, all levels in one table):
 To regenerate music, start the ACE-Step API (`uv run acestep-api` in its folder) and run
 `python audio/gen_music.py house`; takes land in `audio/takes/` (git-ignored).
 
-The website uses a lighter copy: `site/assets/kokon.mp4` (CRF 25, no audio, ~13 MB) and
+The website uses a lighter copy: `site/assets/kokon.mp4` (CRF 25, ~17 MB; it autoplays muted and its "Watch with sound" button restarts it with sound) and
 `site/assets/kokon-poster.jpg`. To refresh them after a new render:
 
 ```powershell
-ffmpeg -y -i marketing/video/out/kokon-launch.mp4 -c:v libx264 -preset slow -crf 25 -pix_fmt yuv420p -movflags +faststart -an site/assets/kokon.mp4
+ffmpeg -y -i marketing/video/out/kokon-launch.mp4 -c:v libx264 -preset slow -crf 25 -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart site/assets/kokon.mp4
 ffmpeg -y -ss 35.5 -i marketing/video/out/kokon-launch.mp4 -frames:v 1 -q:v 3 site/assets/kokon-poster.jpg
 ```
 

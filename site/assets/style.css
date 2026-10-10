@@ -65,7 +65,7 @@ h1 .soft { color: var(--text-3); }
 .showreel .frame { position: relative; border-radius: 22px; overflow: hidden; background: #000 url("assets/kokon-poster.jpg") center / cover; box-shadow: 0 0 0 1px var(--line-hi), 0 60px 160px rgba(0,0,0,0.75), 0 0 120px rgba(247,246,242,0.06); aspect-ratio: 16 / 9; }
 .showreel video { width: 100%; height: 100%; object-fit: cover; }
 .showreel .glow { position: absolute; inset: 8% 4% -6%; background: radial-gradient(ellipse at center, rgba(255,214,140,0.16), transparent 65%); filter: blur(40px); z-index: -1; }
-.sound { position: absolute; right: 16px; bottom: 16px; height: 36px; padding: 0 14px; border-radius: 999px; background: rgba(0,0,0,0.55); backdrop-filter: blur(10px); font-size: 13px; color: #fff; display: inline-flex; align-items: center; gap: 8px; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.15); }
+.sound { position: absolute; right: 18px; bottom: 18px; height: 44px; padding: 0 18px; border-radius: 999px; background: rgba(0,0,0,0.6); backdrop-filter: blur(10px); font-size: 15px; font-weight: 600; cursor: pointer; color: #fff; display: inline-flex; align-items: center; gap: 8px; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.15); }
 
 /* Runs on */
 .runs { padding: 64px 0 24px; text-align: center; }

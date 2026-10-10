@@ -29,7 +29,7 @@
 </p>
 
 <p align="center">
-  <a href="https://gabrielelozupone.github.io/kokon/">Website</a> ·
+  <a href="https://kokon.app/">Website</a> ·
   <a href="#install">Install</a> ·
   <a href="#what-you-can-do">Features</a> ·
   <a href="#examples">Examples</a> ·

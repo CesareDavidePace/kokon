@@ -1,10 +1,11 @@
-# Publishes site/ to GitHub Pages (https://gabrielelozupone.github.io/kokon/).
-name: Website
+# The website moved to https://kokon.app (Cloudflare, see wrangler.jsonc). This keeps the old
+# address https://gabrielelozupone.github.io/kokon/... working by sending every page there.
+name: Redirect old site address
 
 on:
   push:
     branches: [master]
-    paths: ["site/**", ".github/workflows/pages.yml"]
+    paths: [".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
@@ -23,10 +24,30 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Build redirect pages
+        run: |
+          page() {
+            mkdir -p "out/$1"
+            cat > "out/$1/index.html" <<HTML
+          <!doctype html><html lang="en"><head><meta charset="utf-8">
+          <title>Kokon moved to kokon.app</title>
+          <link rel="canonical" href="https://kokon.app/$1">
+          <meta http-equiv="refresh" content="0; url=https://kokon.app/$1">
+          <meta name="robots" content="noindex">
+          </head><body><p>Kokon moved to <a href="https://kokon.app/$1">kokon.app</a>.</p></body></html>
+          HTML
+          }
+          page ""
+          page "qwen-image-2-1-local/"
+          page "mcp-image-generation/"
+          cat > out/404.html <<'HTML'
+          <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="robots" content="noindex">
+          <script>location.replace("https://kokon.app" + location.pathname.replace(/^\/kokon/, "") + location.search + location.hash);</script>
+          </head><body><p>Kokon moved to <a href="https://kokon.app/">kokon.app</a>.</p></body></html>
+          HTML
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          path: out
       - id: deployment
         uses: actions/deploy-pages@v4

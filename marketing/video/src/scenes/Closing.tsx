@@ -121,8 +121,11 @@ export function Outro() {
           <span style={{ fontSize: 128, fontWeight: 620, color: PAPER, letterSpacing: "-0.045em", lineHeight: 1 }}>Kokon</span>
         </div>
         <div style={{ fontSize: 40, color: "rgba(247,246,242,0.8)", letterSpacing: "-0.02em", opacity: b, transform: `translateY(${(1 - b) * 14}px)` }}>Free and open source. For Windows and macOS.</div>
-        <div style={{ marginTop: 18, display: "flex", alignItems: "center", gap: 14, padding: "18px 34px", borderRadius: 999, background: PAPER, color: "#0d0d0d", fontSize: 30, fontWeight: 600, letterSpacing: "-0.01em", opacity: c, transform: `translateY(${(1 - c) * 14}px)` }}>
-          <Brand path={siGithub.path} color="#0d0d0d" size={30} />
+        <div style={{ marginTop: 18, padding: "18px 40px", borderRadius: 999, background: PAPER, color: "#0d0d0d", fontSize: 34, fontWeight: 650, letterSpacing: "-0.02em", opacity: c, transform: `translateY(${(1 - c) * 14}px)` }}>
+          kokon.app
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 24, color: "rgba(247,246,242,0.62)", opacity: c, transform: `translateY(${(1 - c) * 14}px)` }}>
+          <Brand path={siGithub.path} color="rgba(247,246,242,0.62)" size={22} />
           github.com/GabrieleLozupone/kokon
         </div>
       </div>

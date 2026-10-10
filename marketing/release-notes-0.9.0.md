@@ -39,7 +39,7 @@ On first launch Kokon detects your graphics card (or your Mac's chip and memory)
 
 ## Model licenses
 
-Kokon's code is open source under the GNU AGPL-3.0. The models are downloaded from their authors and keep their own licenses: Qwen-Image 2.1 Turbo has the same license as [Qwen-Image 2.1](https://huggingface.co/Qwen/Qwen-Image-2.1) (see the [Turbo model page](https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo)), the Qwen3-VL text encoder is from [Qwen/Qwen3-VL-8B-Instruct-GGUF](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF), and the optional 4x-UltraSharp upscaler is CC BY-NC-SA 4.0 (non-commercial only). Check them before commercial use. Details in [NOTICE](https://github.com/GabrieleLozupone/kokon/blob/master/NOTICE).
+Kokon's code is open source under the GNU AGPL-3.0. The models are downloaded from their authors and keep their own licenses: Qwen-Image 2.1 Turbo is under the [Qwen Research License](https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE) (research and evaluation only, no commercial use without a license from the Qwen team), the Qwen3-VL text encoder is Apache-2.0, and the optional 4x-UltraSharp upscaler is CC BY-NC-SA 4.0 (non-commercial only). Details in [NOTICE](https://github.com/GabrieleLozupone/kokon/blob/master/NOTICE).
 
 ## First launch
 

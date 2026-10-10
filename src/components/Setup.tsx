@@ -386,7 +386,7 @@ export function Setup() {
           </div>
         )}
         <p className="muted setup-foot">
-          Qwen-Image 2.1 and Qwen3-VL are released by Alibaba's Qwen team under their own licenses; check them before commercial use. Downloads come only from GitHub
+          Qwen-Image 2.1 Turbo is released by Alibaba's Qwen team under the Qwen Research License: research and evaluation only, no commercial use. By downloading it you accept that license. Downloads come only from GitHub
           (stable-diffusion.cpp) and Hugging Face, and every file is verified with its SHA-256 checksum.
         </p>
       </div>

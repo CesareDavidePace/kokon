@@ -449,13 +449,14 @@ Kokon is designed for. Smaller cards may come with lighter models in the future.
 <summary><b>Can I use Kokon commercially?</b></summary>
 <br>
 
-Kokon's code is open source (see [License](#license)). The models have their own licenses:
-Qwen-Image 2.1 is released under the Qwen license (see the
-[model page](https://huggingface.co/Qwen/Qwen-Image-2.1)), and the optional 4x-UltraSharp
-upscaler is CC BY-NC-SA 4.0, which means non-commercial use only. Qwen-Image 2.1 Turbo
-([model page](https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo)) has the same license as
-Qwen-Image 2.1. Check each license for your
-use case.
+Not with the default model. Kokon's code is open source (see [License](#license)), but the
+image model has its own license: Qwen-Image 2.1 and its Turbo model are released under the
+[Qwen Research License](https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE), which allows **research and evaluation only, no commercial
+use**. That includes selling or using commercially the images you make with it. For commercial
+use, ask the Qwen team for a license (model-business@notice.qwencloud.com).
+
+The Qwen3-VL text encoder is Apache-2.0. The optional 4x-UltraSharp upscaler is CC BY-NC-SA
+4.0, also non-commercial only.
 
 </details>
 

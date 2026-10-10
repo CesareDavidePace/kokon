@@ -200,10 +200,9 @@ details[open] summary::after { transform: rotate(45deg); }
 details p { margin: -6px 0 22px; color: var(--text-2); max-width: 44em; }
 
 /* Maker */
-.maker { display: inline-flex; align-items: center; gap: 14px; margin-top: 56px; padding: 12px 20px 12px 12px; border-radius: 18px; background: var(--card); box-shadow: inset 0 0 0 1px var(--line); text-align: left; transition: background 0.2s; }
+.maker { display: inline-flex; align-items: center; gap: 14px; margin-top: 56px; padding: 10px 22px 10px 10px; border-radius: 999px; background: var(--card); box-shadow: inset 0 0 0 1px var(--line); text-align: left; transition: background 0.2s; }
 .maker:hover { background: var(--card-hi); }
-.maker-mark { width: 44px; height: 44px; border-radius: 12px; background: var(--paper); color: var(--ink); display: grid; place-items: center; flex: none; }
-.maker-mark svg { width: 22px; height: 22px; }
+.maker-photo { width: 52px; height: 52px; border-radius: 50%; object-fit: cover; flex: none; box-shadow: 0 0 0 2px rgba(255,255,255,0.12); }
 .maker b { display: block; font-weight: 600; font-size: 15px; letter-spacing: -0.01em; }
 .maker small { display: block; color: var(--text-2); font-size: 13.5px; }
 footer .me { color: var(--text-2); text-decoration: underline; text-underline-offset: 3px; }
@@ -462,7 +461,7 @@ footer a:hover { color: var(--text); }
         <a class="btn ghost" href="https://github.com/GabrieleLozupone/kokon" rel="noopener"><svg fill="currentColor"><use href="#github"/></svg>Star on GitHub</a>
       </div>
       <a class="maker rv d3" href="https://gabrielelozupone.github.io/" rel="author">
-        <span class="maker-mark"><svg><use href="#mark"/></svg></span>
+        <img class="maker-photo" src="assets/gabriele.webp" alt="Gabriele Lozupone" width="52" height="52" loading="lazy">
         <span><b>Made by Gabriele Lozupone</b><small>AI researcher. Built Kokon alone, with AI. More about me →</small></span>
       </a>
     </div>

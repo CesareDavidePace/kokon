@@ -126,7 +126,7 @@ export function Outro() {
           github.com/GabrieleLozupone/kokon
         </div>
       </div>
-      <div style={{ position: "absolute", bottom: 80, fontSize: 24, color: "rgba(247,246,242,0.5)", opacity: d }}>Designed and built by Gabriele Lozupone, with AI.</div>
+      <div style={{ position: "absolute", bottom: 80, fontSize: 24, color: "rgba(247,246,242,0.5)", opacity: d }}>Designed and built by Gabriele Lozupone, with the help of Claude Code.</div>
     </AbsoluteFill>
   );
 }

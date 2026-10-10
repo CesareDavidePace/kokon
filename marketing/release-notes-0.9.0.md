@@ -7,7 +7,7 @@ Kokon is a native desktop app built on [stable-diffusion.cpp](https://github.com
 | | File |
 | --- | --- |
 | **Windows 10/11** | `Kokon_0.9.0_x64-setup.exe` (installs for your user only, no admin rights) |
-| **Mac (Apple Silicon, beta)** | coming to this release shortly |
+| **Mac (Apple Silicon, beta)** | `Kokon_0.9.0_aarch64.dmg` (macOS 26 or newer, 32 GB of memory recommended) |
 
 On first launch Kokon detects your graphics card (or your Mac's chip and memory), recommends a model preset and downloads about 12 GB of models once. Downloads resume if interrupted and every file is checked against its SHA-256. After that Kokon works offline.
 
@@ -46,11 +46,14 @@ Kokon's code is open source under the GNU AGPL-3.0. The models are downloaded fr
 - **Windows:** SmartScreen may say "Windows protected your PC" because the app is new and has no download history yet. Click **More info → Run anyway**. You can check the installer against the SHA-256 below.
 - **Mac:** Kokon is not notarized by Apple, so macOS blocks it the first time. Try to open it once, then go to **System Settings → Privacy & Security** and click **Open Anyway**. In-app updates don't trigger this again.
 
-## Checksum
+## Checksums
 
 ```
 SHA-256  Kokon_0.9.0_x64-setup.exe
-e27b4a8b779644232443e6b3bedfe4b009c30d511b682822cea51aeccd42a608
+38a2abca067a390d5f5b9bf11884e628a7292db86e4329a1af47e2b89ae9f193
+
+SHA-256  Kokon_0.9.0_aarch64.dmg
+c09a931f94d97616bb8e53cd4bbccfb482162a79012f243db44e5c50bb457762
 ```
 
 ## Feedback

@@ -181,7 +181,7 @@ function TargetBar() {
       </span>
       <span className="spacer" />
       <span className="tool-group">
-        <button className={`tool ${c.mask ? "on" : ""}`} onClick={() => setState({ overlay: "inpaint" })} title="Paint the area to change; the rest stays as it is">
+        <button className={`tool ${c.mask ? "on" : ""}`} data-tour="paint" onClick={() => setState({ overlay: "inpaint" })} title="Paint the area to change; the rest stays as it is">
           <Brush size={14} /> {c.mask ? "Area painted" : "Paint area"}
         </button>
         {c.mask && (

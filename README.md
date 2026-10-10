@@ -504,8 +504,8 @@ with a plain resize instead.
 <summary><b>How do I uninstall it?</b></summary>
 <br>
 
-**Windows:** Settings → Apps → Installed apps → Kokon → Uninstall. To free the model space too,
-delete `%LOCALAPPDATA%\KokonData`.
+**Windows:** Settings → Apps → Installed apps → Kokon → Uninstall. The uninstaller asks whether to
+delete the downloaded models and app data too (`%LOCALAPPDATA%\KokonData`).
 
 **Mac:** drag Kokon from Applications to the Trash. To free the model space too, delete
 `~/Library/Application Support/KokonData`.
@@ -609,9 +609,17 @@ images of someone without their consent. You are responsible for what you create
 
 ## License
 
-Kokon's source code is released under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only). Model weights and the
-upscaler are downloaded from their authors and keep their own licenses (see the
-[FAQ](#faq)).
+Kokon's source code is released under the [GNU Affero General Public License v3.0](LICENSE)
+(AGPL-3.0-only). You can use, study, change and share it freely. If you distribute a modified
+version, or offer one as a network service, you must publish its source under the same
+license. The license covers the code, not the images you make with it.
+
+Want to ship Kokon inside a closed-source product or service? A commercial license is
+available: open a [discussion](https://github.com/GabrieleLozupone/kokon/discussions) or
+contact the author.
+
+Model weights and the upscaler are downloaded from their authors and keep their own licenses
+(see the [FAQ](#faq)).
 
 Kokon builds on [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) by
 leejet, [Qwen-Image 2.1](https://huggingface.co/Qwen/Qwen-Image-2.1) and its Turbo model by the

@@ -32,7 +32,8 @@ pub struct ServiceInfo {
 pub struct Lease {
     pub kind: String,
     pub last_seen: Instant,
-    /// Client process id; a dead process drops its lease at once (app killed or crashed).
+    /// Client process id. A dead process drops its lease at once (app killed or crashed); a
+    /// live one keeps it however late its heartbeat is (see [`lease_alive`]).
     pub pid: Option<u32>,
 }
 
@@ -51,6 +52,17 @@ pub struct AppState {
 }
 
 pub const LEASE_TTL: Duration = Duration::from_secs(45);
+
+/// Whether a client still holds its lease. Clients that sent their pid (the desktop app, the
+/// MCP server) hold it while that process runs: after the computer sleeps their heartbeat is
+/// minutes late, and dropping them then cancelled the window's jobs and unloaded the model.
+/// The heartbeat timeout only applies to clients without a pid.
+fn lease_alive(l: &Lease) -> bool {
+    match l.pid {
+        Some(pid) => qls_core::process::pid_alive(pid),
+        None => l.last_seen.elapsed() < LEASE_TTL,
+    }
+}
 
 fn load_or_create_token(dir: &std::path::Path) -> String {
     let p = dir.join("service-token");
@@ -169,13 +181,25 @@ async fn main() {
 /// Exits when no client holds a lease, no job is pending, and the grace period passed.
 /// Also unloads the model after long idle periods when no desktop window is attached.
 async fn lifecycle(state: Arc<AppState>) {
+    let mut last_tick = Instant::now();
     loop {
         tokio::time::sleep(Duration::from_secs(2)).await;
+        // A long gap between two 2 s ticks: the computer slept. Give every client a fresh
+        // timeout to check in again before deciding it is gone.
+        let gap = last_tick.elapsed();
+        last_tick = Instant::now();
+        let resumed = gap > Duration::from_secs(20);
+        if resumed {
+            tracing::info!("resumed after {} s (computer asleep?): waiting for clients to check in", gap.as_secs());
+        }
         let (n_leases, has_ui, lost) = {
             let mut leases = state.leases.lock().unwrap();
+            if resumed {
+                leases.values_mut().for_each(|l| l.last_seen = Instant::now());
+            }
             let mut lost = Vec::new();
             leases.retain(|id, l| {
-                let alive = l.last_seen.elapsed() < LEASE_TTL && l.pid.map(qls_core::process::pid_alive).unwrap_or(true);
+                let alive = lease_alive(l);
                 if !alive {
                     lost.push((id.clone(), l.kind.clone()));
                 }

@@ -3,6 +3,7 @@ pub mod config;
 pub mod diagnostics;
 pub mod engine;
 pub mod error;
+pub mod examples;
 pub mod geometry;
 pub mod hdr;
 pub mod heif;

@@ -1,10 +1,10 @@
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { ArrowDownToLine, EyeOff, PanelLeft, Redo2, Settings, SquarePen, Undo2, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, configure } from "./lib/api";
 import { native } from "./lib/native";
 import {
-  addInputs, dismissToast, getState, newProject, redoVersion, refreshStatus, selectItem, setPrivateMode, setState, startEvents, submitComposer, toastError, toastInfo, undoKey, undoVersion, useStore,
+  addExampleProjects, addInputs, dismissToast, getState, newProject, redoVersion, refreshStatus, selectItem, setPrivateMode, setState, startEvents, startTour, submitComposer, toastError, toastInfo, undoKey, undoVersion, useStore,
 } from "./lib/store";
 import { Composer, importPaths } from "./components/Composer";
 import { ExpandEditor } from "./components/ExpandEditor";
@@ -14,6 +14,7 @@ import { Settings as SettingsDialog } from "./components/Settings";
 import { Setup } from "./components/Setup";
 import { ProjectTitle, Sidebar } from "./components/Sidebar";
 import { Stage } from "./components/Stage";
+import { Tour } from "./components/Tour";
 import { IconButton } from "./components/ui";
 import { shortcut } from "./lib/platform";
 import { KokonMark, Welcome } from "./components/Welcome";
@@ -178,6 +179,14 @@ export default function App() {
   const editing = useStore((s) => s.composer.refs.length > 0 && s.session.length > 0);
   const [boot, setBoot] = useState<"connecting" | "ok" | string>("connecting");
   const [dragging, setDragging] = useState(false);
+  // First launch: the tour starts once the main window is free (after welcome and setup).
+  const tourPending = useRef(false);
+  const tourDue = boot === "ok" && !needsSetup && !overlay;
+  useEffect(() => {
+    if (!tourDue || !tourPending.current) return;
+    tourPending.current = false;
+    startTour();
+  }, [tourDue]);
 
   // Connect to (or start) the local service.
   useEffect(() => {
@@ -191,7 +200,13 @@ export default function App() {
         const cfg = await api.config();
         const st = await refreshStatus();
         // First launch: the welcome screen, once (Settings → General shows it again).
-        const welcomeSeen = !!(cfg.ui as Record<string, unknown> | null)?.welcomeSeen;
+        const ui = (cfg.ui ?? {}) as Record<string, unknown>;
+        const welcomeSeen = !!ui.welcomeSeen;
+        // ...with example projects to look at, and the tour through the first one.
+        if (!welcomeSeen && !ui.tourSeen) {
+          tourPending.current = true;
+          addExampleProjects().catch(() => {});
+        }
         setState({ needsSetup: !cfg.setupComplete, ...(welcomeSeen ? {} : { overlay: "welcome" }) });
         setBoot("ok");
         autoCheckForUpdate();
@@ -340,6 +355,7 @@ export default function App() {
       </div>
       {overlay === "settings" && <SettingsDialog />}
       {overlay === "welcome" && <Welcome />}
+      <Tour />
       <Toasts />
     </div>
   );

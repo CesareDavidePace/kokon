@@ -87,8 +87,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/gallery/{id}", get(gallery_get).patch(gallery_patch).delete(gallery_delete))
         .route("/gallery/{id}/image", get(gallery_image))
         .route("/gallery/{id}/thumb", get(gallery_thumb))
+        .route("/gallery/{id}/original", get(gallery_original))
         .route("/gallery/{id}/export", post(gallery_export))
         .route("/image-info", post(image_info))
+        .route("/examples", post(install_examples))
         .route("/session/heartbeat", post(heartbeat))
         .route("/session/release", post(release))
         .route("/shutdown", post(shutdown))
@@ -154,7 +156,8 @@ async fn auth(State(s): St, req: Request, next: Next) -> Response {
     if !ok {
         return ApiError(AppError::new(ErrorCode::Unauthorized, "Missing or invalid API token (see service.json).")).into_response();
     }
-    s.engine.touch();
+    // No `touch()` here: heartbeats and status polls are not work, and counting them kept
+    // the model loaded for as long as an MCP client stayed connected.
     next.run(req).await
 }
 
@@ -765,6 +768,13 @@ async fn gallery_image(State(s): St, AxPath(id): AxPath<String>) -> ApiResult<Re
     serve_file(Path::new(&r.file_path), None).await
 }
 
+/// The result before the upscaler enlarged it, when it was kept.
+async fn gallery_original(State(s): St, AxPath(id): AxPath<String>) -> ApiResult<Response> {
+    let r = s.engine.gen_store(&id).get_generation(&id)?;
+    let p = r.pipeline.and_then(|p| p.original_path).ok_or_else(|| AppError::new(ErrorCode::NotFound, "This image has no pre-upscale original."))?;
+    serve_file(Path::new(&p), Some("image/png")).await
+}
+
 async fn gallery_thumb(State(s): St, AxPath(id): AxPath<String>) -> ApiResult<Response> {
     let store = s.engine.gen_store(&id);
     let p = store.thumb_path(&id);
@@ -780,6 +790,9 @@ struct ExportBody {
     path: String,
     #[serde(default)]
     overwrite: bool,
+    /// Save the pre-upscale original instead of the result.
+    #[serde(default)]
+    original: bool,
 }
 
 /// "Save as" from the desktop app (path chosen in the native dialog, which already
@@ -798,13 +811,18 @@ async fn gallery_export(State(s): St, AxPath(id): AxPath<String>, Json(b): Json<
                 qls_core::planner::OutputFormat::Png
             }
         };
-        if Path::new(&rec.file_path) == target {
+        let source = if b.original {
+            rec.pipeline.as_ref().and_then(|p| p.original_path.clone()).ok_or_else(|| AppError::new(ErrorCode::NotFound, "This image has no pre-upscale original."))?
+        } else {
+            rec.file_path.clone()
+        };
+        if Path::new(&source) == target {
             return Ok(target);
         }
         if !b.overwrite {
             target = paths::unique_path(target, &[]);
         }
-        let img = imaging::load_image(Path::new(&rec.file_path))?;
+        let img = imaging::load_image(Path::new(&source))?;
         let bytes = qls_core::engine::encode_output(&img.pixels, fmt, &rec, img.icc_profile.as_deref())?;
         qls_core::engine::write_atomic(&target, &bytes)?;
         Ok(target)
@@ -812,6 +830,13 @@ async fn gallery_export(State(s): St, AxPath(id): AxPath<String>, Json(b): Json<
     .await
     .map_err(AppError::internal)??;
     Ok(Json(json!({ "path": saved })))
+}
+
+/// Adds the bundled example projects (first launch, or Settings) and lists them.
+async fn install_examples(State(s): St) -> ApiResult<Json<Value>> {
+    let engine = s.engine.clone();
+    let projects = tokio::task::spawn_blocking(move || engine.install_examples()).await.map_err(AppError::internal)??;
+    Ok(Json(json!({ "projects": projects })))
 }
 
 async fn image_info(Json(b): Json<PathBody>) -> ApiResult<Json<Value>> {

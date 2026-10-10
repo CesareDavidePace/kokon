@@ -95,6 +95,8 @@ export interface PipelineRecord {
   cache_threshold: number | null;
   enlarged_with: string | null;
   enlarged_from: Size | null;
+  /** The result before that enlargement, kept by the service (absent on older results). */
+  original_path?: string | null;
 }
 
 export interface GenerationRecord {

@@ -1,6 +1,7 @@
 [package]
 name = "qls-service"
 version.workspace = true
+license.workspace = true
 edition.workspace = true
 
 # The executable users see (Task Manager, the install folder) carries the product name.

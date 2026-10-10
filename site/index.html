@@ -97,7 +97,7 @@
    "name": "Is it really free?",
    "acceptedAnswer": {
     "@type": "Answer",
-    "text": "Yes. Kokon is open source under the AGPL-3.0 license. No account, no credits, no subscription. It uses your own GPU, so there is nothing to pay for."
+    "text": "Yes. Kokon is open source under the GNU AGPL-3.0 license. No account, no credits, no subscription. It uses your own GPU, so there is nothing to pay for."
    }
   },
   {
@@ -153,7 +153,7 @@
    "name": "Can I use the images commercially?",
    "acceptedAnswer": {
     "@type": "Answer",
-    "text": "The app's code is AGPL-3.0. The model weights have their own licenses: read the Qwen-Image model page before commercial use. The optional upscaler is non-commercial (CC BY-NC-SA 4.0)."
+    "text": "The app is open source (AGPL-3.0); that covers the code, not the images you make. The model weights have their own licenses: read the Qwen-Image model page before commercial use. The optional upscaler is non-commercial (CC BY-NC-SA 4.0)."
    }
   },
   {
@@ -428,14 +428,14 @@
       <p class="kicker rv">FAQ</p>
       <h2 class="rv d1">Questions.</h2>
       <div class="faq rv d2">
-        <details><summary>Is it really free?</summary><p>Yes. Kokon is open source under the AGPL-3.0 license. No account, no credits, no subscription. It uses your own GPU, so there is nothing to pay for.</p></details>
+        <details><summary>Is it really free?</summary><p>Yes. Kokon is open source under the GNU AGPL-3.0 license. No account, no credits, no subscription. It uses your own GPU, so there is nothing to pay for.</p></details>
         <details><summary>How do I run Qwen-Image 2.1 locally without ComfyUI?</summary><p>Install Kokon and let its setup download the model. Kokon runs Qwen-Image 2.1 through stable-diffusion.cpp, a native engine, so there is no Python, no ComfyUI and no workflow to build. The step-by-step guide is at kokon.app/qwen-image-2-1-local.</p></details>
         <details><summary>Which model does it use?</summary><p>Qwen-Image 2.1 Turbo, the official 8-step version of Qwen&#x27;s image model, which both creates and edits images and leads the open-weights image-editing rankings.</p></details>
         <details><summary>Does it work on AMD or Intel GPUs?</summary><p>Yes, in beta, through the Vulkan engine on Windows with 12 GB of VRAM or more. On NVIDIA it uses CUDA; on Apple Silicon Macs it uses Metal.</p></details>
         <details><summary>My GPU has 8 GB. Will it work?</summary><p>Not well today. 12 GB is the smallest size that gives good results with this model. On a Mac, 16 GB of unified memory works but slowly; 32 GB is recommended.</p></details>
         <details><summary>Can Claude Code or Cursor generate images with it?</summary><p>Yes. Kokon ships an MCP server: register it once and any MCP client can create, edit, inpaint, expand and upscale images on your GPU, for free and without an API key.</p></details>
         <details><summary>Is it an alternative to Photoshop Generative Fill?</summary><p>For many edits, yes: paint an area and describe what should be there, or remove, replace and add objects. It runs offline and costs nothing, but it is an AI editor, not a full layer-based image editor.</p></details>
-        <details><summary>Can I use the images commercially?</summary><p>The app's code is AGPL-3.0. The model weights have their own licenses: read the Qwen-Image model page before commercial use. The optional upscaler is non-commercial (CC BY-NC-SA 4.0).</p></details>
+        <details><summary>Can I use the images commercially?</summary><p>The app is open source (AGPL-3.0); that covers the code, not the images you make. The model weights have their own licenses: read the Qwen-Image model page before commercial use. The optional upscaler is non-commercial (CC BY-NC-SA 4.0).</p></details>
         <details><summary>Windows says the app is unrecognized. Is it safe?</summary><p>The beta installer is not code-signed yet, so SmartScreen warns about it. Click &quot;More info&quot; and then &quot;Run anyway&quot;. The code is public and every download the app makes is checked against a pinned hash.</p></details>
         <details><summary>Does it work offline?</summary><p>Yes. After setup has downloaded the models, everything runs offline.</p></details>
       </div>

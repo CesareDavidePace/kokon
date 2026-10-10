@@ -271,7 +271,9 @@ function MoreMenu({ item, path }: { item: SessionItem; path: string | null }) {
   );
 }
 
-function GenActions({ item, g }: { item: SessionItem; g: GenerationRecord }) {
+function GenActions({ item, g, showOriginal }: { item: SessionItem; g: GenerationRecord; showOriginal: boolean }) {
+  // Save, copy and "show in folder" act on the image on screen: the result or its pre-upscale original.
+  const shownPath = (showOriginal && g.pipeline?.original_path) || g.file_path;
   const original = g.references[0] && g.mode !== "generate" && g.mode !== "upscale" ? { width: g.references[0].width, height: g.references[0].height } : null;
   const [fav, setFav] = useState(g.favorite);
   return (
@@ -312,13 +314,13 @@ function GenActions({ item, g }: { item: SessionItem; g: GenerationRecord }) {
         <Heart size={17} fill={fav ? "currentColor" : "none"} />
       </IconButton>
       <IconButton
-        title="Save as…"
+        title={showOriginal ? "Save the original (before upscaling) as…" : "Save as…"}
         onClick={async () => {
           const name = g.file_path.split(/[\\/]/).pop() ?? "image.png";
-          const path = await native.saveAs(name);
+          const path = await native.saveAs(showOriginal ? name.replace(/(\.\w+)?$/, "-original.png") : name);
           if (!path) return;
           try {
-            const r = await api.exportGeneration(g.id, path);
+            const r = await api.exportGeneration(g.id, path, showOriginal);
             toastInfo(`Saved ${r.path.split(/[\\/]/).pop()}`);
           } catch (e) {
             toastError(e);
@@ -328,10 +330,10 @@ function GenActions({ item, g }: { item: SessionItem; g: GenerationRecord }) {
         <Download size={17} />
       </IconButton>
       <IconButton
-        title="Copy image"
+        title={showOriginal ? "Copy the original (before upscaling)" : "Copy image"}
         onClick={async () => {
           try {
-            await native.copyImage(g.file_path);
+            await native.copyImage(shownPath);
             toastInfo("Image copied");
           } catch (e) {
             toastError(e);
@@ -350,7 +352,7 @@ function GenActions({ item, g }: { item: SessionItem; g: GenerationRecord }) {
       >
         {() => <InfoPanel g={g} />}
       </Popover>
-      <MoreMenu item={item} path={g.file_path} />
+      <MoreMenu item={item} path={shownPath} />
     </div>
   );
 }
@@ -382,10 +384,11 @@ function PlainFrame({ src, alt, w, h }: { src: string; alt: string; w: number; h
 }
 
 /** Under the image: which image this is and what made it, then what you can do with it. */
-function StageBar({ item, label }: { item: SessionItem; label: string }) {
+function StageBar({ item, label, showOriginal, setShowOriginal }: { item: SessionItem; label: string; showOriginal: boolean; setShowOriginal: (on: boolean) => void }) {
   const g = item.gen;
   const w = g?.width ?? item.input!.width;
   const h = g?.height ?? item.input!.height;
+  const from = g?.pipeline?.original_path ? g.pipeline.enlarged_from : null;
   const name = item.input?.original_name ? safeDecode(item.input.original_name) : "Imported image";
   return (
     <div className="stage-bar">
@@ -395,11 +398,22 @@ function StageBar({ item, label }: { item: SessionItem; label: string }) {
         <span className="stage-prompt" title={g?.prompt ?? name}>
           {g ? g.prompt || (g.mode === "upscale" ? `${g.references[0]?.width ?? "?"}×${g.references[0]?.height ?? "?"} → ${w}×${h}` : "") : name}
         </span>
-        <span className="dims">
-          {w}×{h}
-        </span>
+        {from ? (
+          <span className="seg dims-seg" role="radiogroup" aria-label="Which image to show">
+            <button className={showOriginal ? "" : "on"} role="radio" aria-checked={!showOriginal} onClick={() => setShowOriginal(false)} title={`The result, enlarged by ${upscalerLabel(g!.pipeline!.enlarged_with)}`}>
+              Upscaled {w}×{h}
+            </button>
+            <button className={showOriginal ? "on" : ""} role="radio" aria-checked={showOriginal} onClick={() => setShowOriginal(true)} title="What the model made, before the upscaler enlarged it">
+              Original {from.width}×{from.height}
+            </button>
+          </span>
+        ) : (
+          <span className="dims">
+            {w}×{h}
+          </span>
+        )}
       </div>
-      {g ? <GenActions key={`actions-${g.id}`} item={item} g={g} /> : <InputActions item={item} />}
+      {g ? <GenActions key={`actions-${g.id}`} item={item} g={g} showOriginal={showOriginal} /> : <InputActions item={item} />}
     </div>
   );
 }
@@ -461,6 +475,29 @@ function Timeline({ labels }: { labels: Record<string, string> }) {
     boxRef.current?.querySelector(".frame.sel")?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [selected, session.length]);
 
+  // A timeline wider than the stage scrolls: a thin bar under it, and the mouse wheel moves
+  // it sideways (a touchpad's own sideways swipe keeps working).
+  const [overflow, setOverflow] = useState(false);
+  useEffect(() => {
+    const box = boxRef.current;
+    if (!box) return;
+    const measure = () => setOverflow(box.scrollWidth > box.clientWidth + 1);
+    const ro = new ResizeObserver(measure);
+    ro.observe(box);
+    if (trackRef.current) ro.observe(trackRef.current);
+    const wheel = (e: WheelEvent) => {
+      if (box.scrollWidth <= box.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+      e.preventDefault();
+      box.scrollLeft += e.deltaMode === 1 ? e.deltaY * 32 : e.deltaY;
+    };
+    box.addEventListener("wheel", wheel, { passive: false });
+    measure();
+    return () => {
+      ro.disconnect();
+      box.removeEventListener("wheel", wheel);
+    };
+  }, [session.length > 0]);
+
   // Thumbnail centres, for the arcs.
   useLayoutEffect(() => {
     const out: Record<string, number> = {};
@@ -491,7 +528,7 @@ function Timeline({ labels }: { labels: Record<string, string> }) {
   };
 
   return (
-    <div className="timeline" ref={boxRef} aria-label="Versions">
+    <div className={`timeline ${overflow ? "overflow" : ""}`} ref={boxRef} aria-label="Versions">
       {/* Room for the selection outline even when there are no arcs (the scroll box clips). */}
       <div className="track" ref={trackRef} style={{ paddingTop: Math.max(band, 6) }} onMouseLeave={() => setHovered(null)}>
         {arcs.length > 0 && (
@@ -606,6 +643,8 @@ export function Stage() {
   const session = useStore((s) => s.session);
   const job = useStore((s) => (item?.jobId ? s.jobs[item.jobId] : undefined));
   const labels = useMemo(() => sessionLabels(session), [session]);
+  // The result whose pre-upscale original is on screen instead of it.
+  const [originalOf, setOriginalOf] = useState<string | null>(null);
 
   if (!item) {
     return (
@@ -632,14 +671,19 @@ export function Stage() {
     const w = item.gen?.width ?? item.input!.width;
     const h = item.gen?.height ?? item.input!.height;
     const base = item.gen ? compareBase(item.gen) : null;
+    const g = item.gen;
+    const from = g?.pipeline?.original_path ? g.pipeline.enlarged_from : null;
+    const showOriginal = !!(g && from && originalOf === g.id);
     view = (
       <>
-        {item.gen && base ? (
+        {g && from && showOriginal ? (
+          <PlainFrame key={`original-${g.id}`} src={urls.genOriginal(g.id)} alt={`${g.prompt} (before upscaling)`} w={from.width} h={from.height} />
+        ) : item.gen && base ? (
           <CompareFrame key={`compare-${item.gen.id}`} g={item.gen} base={base} />
         ) : (
           <PlainFrame key={src} src={src} alt={item.gen?.prompt ?? item.input?.original_name ?? ""} w={w} h={h} />
         )}
-        <StageBar item={item} label={labels[item.key]} />
+        <StageBar item={item} label={labels[item.key]} showOriginal={showOriginal} setShowOriginal={(on) => setOriginalOf(on && g ? g.id : null)} />
       </>
     );
   }

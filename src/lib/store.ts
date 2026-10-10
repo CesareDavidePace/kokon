@@ -79,6 +79,8 @@ export interface State {
   privateMode: boolean;
   /** Versions left with Undo, most recent last (Redo walks back through them). */
   redo: string[];
+  /** Step of the first-run tour on screen (components/Tour.tsx), or null. */
+  tour: number | null;
 }
 
 const PREFS_KEY = "qls.prefs.v1";
@@ -280,6 +282,7 @@ let state: State = {
   flickerMs: 500,
   privateMode: false,
   redo: [],
+  tour: null,
 };
 
 const listeners = new Set<() => void>();
@@ -471,6 +474,53 @@ export async function switchProject(id: string, selectKey?: string) {
   const keep = (k: string | null | undefined) => (k && session.some((i) => i.key === k) ? k : null);
   const selected = keep(selectKey) ?? keep(data.selected) ?? session[session.length - 1]?.key ?? null;
   setState((s) => ({ projectId: id, session, selected, overlay: null, redo: [], composer: composerFor(s.composer, session, selected) }));
+}
+
+/** Adds the example projects that ship with Kokon (made by Kokon itself), except the ones
+ * already in the list, below the user's own work. Returns the first one (the tour's). */
+export async function addExampleProjects(): Promise<string | null> {
+  const { projects: examples } = await api.installExamples();
+  const now = Date.now();
+  let first: string | null = null;
+  examples.forEach((ex, i) => {
+    const have = Object.values(projects).find((p) => p.items.some((it) => it.genId === ex.generations[0]));
+    if (have) {
+      first ??= have.meta.id;
+      return;
+    }
+    const id = newKey();
+    const items: StoredItem[] = ex.generations.map((g) => ({ key: newKey(), kind: "gen", genId: g }));
+    const updatedAt = now - 60_000 - i * 1000;
+    projects[id] = { meta: { id, title: ex.title, named: true, updatedAt, cover: lastCover(items), count: items.length }, items, selected: items[items.length - 1].key };
+    first ??= id;
+  });
+  persistProjects();
+  setState({ projects: projectList() });
+  return first;
+}
+
+/** Opens the first example project on its last version and starts the tour. */
+export async function startTour() {
+  try {
+    const id = await addExampleProjects();
+    if (!id) return;
+    await switchProject(id, projects[id]?.items.at(-1)?.key);
+    setState({ tour: 0, overlay: null, sidebar: true });
+  } catch (e) {
+    toastError(e);
+  }
+}
+
+/** Closes the tour and remembers that it was seen. */
+export async function endTour() {
+  setState({ tour: null });
+  try {
+    const cfg = await api.config();
+    const ui = (cfg.ui ?? {}) as Record<string, unknown>;
+    if (!ui.tourSeen) await api.saveConfig({ ...cfg, ui: { ...ui, tourSeen: true } });
+  } catch {
+    /* shown again next time */
+  }
 }
 
 /** Gives a project a name; an empty name goes back to naming it after its first prompt. */

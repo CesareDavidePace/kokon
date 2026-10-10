@@ -694,7 +694,11 @@ impl Engine {
         let mut records = Vec::with_capacity(contents.len());
         for (i, content) in contents.into_iter().enumerate() {
             let before = Size::new(content.width(), content.height());
-            let (content, enlarged_with) = self.enlarge(id, &client, content, pipeline::enlarge_target(&post), esrgan.as_deref()).await?;
+            let target = pipeline::enlarge_target(&post);
+            // Kept when the upscaler enlarges it, so the user can still see and save it.
+            let original = target.map(|_| content.clone());
+            let (content, enlarged_with) = self.enlarge(id, &client, content, target, esrgan.as_deref()).await?;
+            let original = original.filter(|_| enlarged_with.is_some());
             self.update(id, |j| {
                 j.view.status = JobStatus::Saving;
                 j.view.stage = None;
@@ -708,6 +712,7 @@ impl Engine {
                 cache_threshold: None,
                 enlarged_from: enlarged_with.is_some().then_some(before),
                 enlarged_with,
+                original_path: None, // set when the original is saved
             };
             let this = self.clone();
             let mut plan3 = plan.clone();
@@ -720,7 +725,7 @@ impl Engine {
                 let final_img = pipeline::finish(content, &p)?;
                 let duration_ms = duration_start.elapsed().as_millis() as u64;
                 let pipeline = (pipeline_rec != PipelineRecord::default()).then_some(pipeline_rec);
-                this.save_result(&final_img, &req3, &plan3, seed + i as i64, &inputs3, mask3.as_ref(), icc3.as_deref(), duration_ms, ws.as_deref(), i, pipeline)
+                this.save_result(&final_img, &req3, &plan3, seed + i as i64, &inputs3, mask3.as_ref(), icc3.as_deref(), duration_ms, ws.as_deref(), i, pipeline, original.as_ref())
             })
             .await?;
             if !request.private {
@@ -879,7 +884,8 @@ impl Engine {
         duration_ms: u64,
         workspace: Option<&Path>,
         index: usize,
-        pipeline: Option<PipelineRecord>,
+        mut pipeline: Option<PipelineRecord>,
+        original: Option<&image::RgbaImage>,
     ) -> AppResult<GenerationRecord> {
         let cfg = self.config();
         let id = new_id();
@@ -893,6 +899,21 @@ impl Engine {
         let (hdr, hdr_note) = hdr_for(img, req, plan, inputs);
         let format = if hdr.is_some() { OutputFormat::Jpeg } else { plan.output_format };
         let file = paths::unique_path(dir.join(format!("{stem}.{}", format.ext())), &[]);
+
+        if let Some(o) = original {
+            let path = store.original_path(&id);
+            let saved = (|| {
+                if let Some(d) = path.parent() {
+                    std::fs::create_dir_all(d).map_err(|e| AppError::io("create the originals folder", d, e))?;
+                }
+                write_atomic(&path, &imaging::encode_png(o, &[], icc, true)?)
+            })();
+            match (saved, pipeline.as_mut()) {
+                (Ok(()), Some(p)) => p.original_path = Some(path.to_string_lossy().into_owned()),
+                (Err(e), _) => tracing::warn!("could not keep the pre-upscale image of {id}: {} {:?}", e.message, e.detail),
+                _ => {}
+            }
+        }
 
         let mode = match plan.mode {
             ResolvedMode::Generate => "generate",

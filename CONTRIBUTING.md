@@ -91,8 +91,11 @@ picked to be approachable. Also welcome:
 
 ## Licenses
 
-By contributing, you agree that your contribution is licensed under the
-[GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only), like the rest of Kokon's code.
+Kokon's code is licensed under the [GNU AGPL-3.0](LICENSE). Before your first pull request is
+merged, a bot asks you to sign the [Contributor License Agreement](CLA.md) with a one-line
+comment. You keep the copyright on your work; the CLA lets the project ship it under the
+AGPL and, if needed, under a commercial license too. Contributions are always also available
+under the AGPL.
 
 Model weights are not part of this repository. Kokon downloads them from their authors, and
 they keep their own licenses (see [NOTICE](NOTICE)). Please don't commit model files or other

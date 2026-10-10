@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { api } from "../lib/api";
 import { native } from "../lib/native";
-import { getState, refreshStatus, setState, toastError, toastInfo } from "../lib/store";
+import { getState, refreshStatus, setState, startTour, toastError, toastInfo } from "../lib/store";
 import { UPSCALERS } from "../lib/logic";
 import type { AppConfig, Check, ModelProfile, SetupReport, TextEncoderPlacement } from "../lib/types";
 import { IconButton, Seg, Switch } from "./ui";
@@ -191,6 +191,12 @@ export function Settings() {
                 <span>Welcome screen: what Kokon is and how it keeps your work private</span>
                 <button className="btn" onClick={() => setState({ overlay: "welcome" })}>
                   Show
+                </button>
+              </div>
+              <div className="field-row">
+                <span>Tour: a short walk through an example project (adds the examples again if you removed them)</span>
+                <button className="btn" onClick={startTour}>
+                  Start
                 </button>
               </div>
             </>

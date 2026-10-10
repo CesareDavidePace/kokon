@@ -40,6 +40,10 @@ pub struct PipelineRecord {
     pub enlarged_with: Option<String>,
     /// Size the content had before the final enlargement.
     pub enlarged_from: Option<Size>,
+    /// The diffusion output before that enlargement (PNG in the store's `originals`), kept
+    /// so the result can be compared with it or saved without the upscaler.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -123,6 +127,9 @@ impl GenerationRecord {
     pub fn png_text(&self) -> Vec<(&'static str, String)> {
         let mut slim = self.clone();
         slim.request = serde_json::Value::Null;
+        if let Some(p) = slim.pipeline.as_mut() {
+            p.original_path = None;
+        }
         vec![
             ("parameters", self.parameters_text()),
             ("qls:generation", serde_json::to_string(&slim).unwrap_or_default()),
@@ -230,6 +237,16 @@ impl Store {
         self.data_dir.join("thumbs").join(format!("{id}.jpg"))
     }
 
+    /// The bundled example projects' images ([`crate::examples`]).
+    pub fn examples_dir(&self) -> PathBuf {
+        self.data_dir.join("examples")
+    }
+
+    /// Where a result's pre-enlargement image is kept ([`PipelineRecord::original_path`]).
+    pub fn original_path(&self, id: &str) -> PathBuf {
+        self.data_dir.join("originals").join(format!("{id}.png"))
+    }
+
     pub fn insert_generation(&self, r: &GenerationRecord) -> AppResult<()> {
         let json = serde_json::to_string(r).map_err(AppError::internal)?;
         self.conn
@@ -306,15 +323,17 @@ impl Store {
         Ok(())
     }
 
-    /// Removes the record, its image file (only if inside the app output folder) and thumbnail.
+    /// Removes the record, its image file (only if inside the app output folder, or an
+    /// example's), thumbnail and pre-upscale original.
     pub fn delete_generation(&self, id: &str, output_root: &Path) -> AppResult<()> {
         let rec = self.get_generation(id)?;
         self.conn.lock().unwrap().execute("DELETE FROM generations WHERE id = ?1", [id]).map_err(db_err)?;
         let f = PathBuf::from(&rec.file_path);
-        if crate::paths::is_within(&f, &[output_root.to_path_buf()]) {
+        if crate::paths::is_within(&f, &[output_root.to_path_buf(), self.examples_dir()]) {
             let _ = std::fs::remove_file(&f);
         }
         let _ = std::fs::remove_file(self.thumb_path(id));
+        let _ = std::fs::remove_file(self.original_path(id));
         Ok(())
     }
 
@@ -458,6 +477,7 @@ mod tests {
             cache_threshold: Some(0.2),
             enlarged_with: Some("RealESRGAN_x4plus".into()),
             enlarged_from: Some(Size::new(2048, 1152)),
+            original_path: None,
         });
         let text = r.png_text();
         let params_ = &text.iter().find(|(k, _)| *k == "parameters").unwrap().1;

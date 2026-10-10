@@ -51,7 +51,7 @@ body::before { content: ""; position: fixed; inset: 0; pointer-events: none; z-i
 .btn .tag { font-size: 11.5px; font-weight: 600; padding: 2px 7px; border-radius: 6px; background: rgba(255,255,255,0.1); color: var(--text-2); letter-spacing: 0.02em; }
 
 /* Hero */
-.hero { position: relative; padding: 148px 0 40px; text-align: center; }
+.hero { position: relative; padding: 148px 0 40px; text-align: center; overflow-x: clip; }
 .hero::before { content: ""; position: absolute; left: 50%; top: -240px; width: 1400px; height: 900px; transform: translateX(-50%); background: radial-gradient(ellipse at center, rgba(247,246,242,0.09) 0%, rgba(247,246,242,0) 60%); pointer-events: none; }
 .eyebrow { display: inline-flex; align-items: center; gap: 10px; padding: 6px 14px 6px 6px; border-radius: 999px; background: var(--card); box-shadow: inset 0 0 0 1px var(--line); font-size: 13.5px; color: var(--text-2); }
 .eyebrow b { font-weight: 600; color: var(--ink); background: var(--paper); padding: 3px 9px; border-radius: 999px; font-size: 12px; }
@@ -137,6 +137,7 @@ h2 { font-size: clamp(36px, 5.6vw, 68px); line-height: 1.04; letter-spacing: -0.
 
 /* Agent */
 .split { display: grid; gap: 48px; align-items: center; grid-template-columns: 1fr; }
+.split > * { min-width: 0; } /* long commands scroll inside their box instead of widening the page */
 @media (min-width: 980px) { .split { grid-template-columns: 1fr 1.12fr; gap: 72px; } }
 .term { border-radius: 18px; background: #0c0c0c; box-shadow: 0 0 0 1px var(--line-hi), 0 40px 120px rgba(0,0,0,0.6); overflow: hidden; font-family: var(--mono); font-size: 13.5px; line-height: 1.7; }
 .term-head { height: 40px; display: flex; align-items: center; gap: 8px; padding: 0 16px; background: #151515; font-family: var(--font); font-size: 12.5px; color: var(--text-3); }
@@ -190,7 +191,7 @@ footer .me { color: var(--text-2); text-decoration: underline; text-underline-of
 footer .me:hover { color: var(--text); }
 
 /* Final */
-.final { padding: 160px 0 120px; text-align: center; position: relative; }
+.final { padding: 160px 0 120px; text-align: center; position: relative; overflow-x: clip; }
 .final::before { content: ""; position: absolute; left: 50%; top: 40px; width: 1100px; height: 600px; transform: translateX(-50%); background: radial-gradient(ellipse at center, rgba(247,246,242,0.08), transparent 60%); pointer-events: none; }
 .final .mark { width: 64px; height: 64px; margin: 0 auto 30px; }
 footer { border-top: 1px solid var(--line); padding: 36px 0 48px; font-size: 14px; color: var(--text-3); }
@@ -241,6 +242,7 @@ footer a:hover { color: var(--text); }
 .article figcaption { margin-top: 12px; font-size: 14px; color: var(--text-3); text-align: center; }
 .article .term { margin-top: 40px; }
 .article code { font-family: var(--mono); font-size: 0.88em; padding: 2px 6px; border-radius: 6px; background: rgba(255,255,255,0.07); color: var(--text); }
+.article p code, .article li code { overflow-wrap: anywhere; }
 .article pre { margin: 14px 0 0; padding: 16px 18px; border-radius: 14px; background: #0f0f0f; box-shadow: inset 0 0 0 1px var(--line); overflow-x: auto; }
 .article pre code { padding: 0; background: none; font-size: 13.5px; line-height: 1.6; color: #d6d6d6; }
 .note { font-size: 15px !important; color: var(--text-3) !important; }

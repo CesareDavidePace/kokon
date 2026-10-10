@@ -12,6 +12,9 @@ const mock = (f: string) => path.resolve(root, "src/mocks", f);
 Config.setVideoImageFormat("jpeg");
 Config.setJpegQuality(95);
 Config.setConcurrency(4);
+// Standard web video colour (BT.709, limited range): untagged full-range output shows grey
+// blacks in browsers that hand the video straight to the GPU.
+Config.setColorSpace("bt709");
 
 Config.overrideWebpackConfig((c) => {
   const swap = (re: RegExp, file: string) =>

@@ -51,7 +51,9 @@ To regenerate music, start the ACE-Step API (`uv run acestep-api` in its folder)
 `python audio/gen_music.py house`; takes land in `audio/takes/` (git-ignored).
 
 The website uses a lighter copy: `site/assets/kokon.mp4` (CRF 25, ~17 MB; it autoplays muted and its "Watch with sound" button restarts it with sound) and
-`site/assets/kokon-poster.jpg`. To refresh them after a new render:
+`site/assets/kokon-poster.jpg`. Browsers cache them for a week, so after replacing either one raise the
+`?v=` number where the page links them (`site/index.html`, `site/sitemap.xml`, `site/assets/style.css`;
+the same for `style.css` in every page that links it). To refresh them after a new render:
 
 ```powershell
 ffmpeg -y -i marketing/video/out/kokon-launch.mp4 -c:v libx264 -preset slow -crf 25 -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart site/assets/kokon.mp4

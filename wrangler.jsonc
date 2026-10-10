@@ -1,6 +1,6 @@
 // Cloudflare Workers static site: publishes site/ to https://kokon.app (no build step).
 {
-  "name": "kokon",
+  "name": "kokon-site",
   "compatibility_date": "2026-10-01",
   "assets": {
     "directory": "./site",

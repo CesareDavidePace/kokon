@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How to Run Qwen-Image 2.1 Locally on Windows and Mac (No Python, No ComfyUI)</title>
+<meta name="description" content="Step-by-step guide to run Qwen-Image 2.1 on your own GPU: requirements (12 GB VRAM, AMD, Intel, Apple Silicon), one-installer setup with Kokon, editing tips, speed and troubleshooting.">
+<meta name="author" content="Gabriele Lozupone">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<meta name="theme-color" content="#0a0a0a">
+<link rel="canonical" href="https://gabrielelozupone.github.io/kokon/qwen-image-2-1-local/">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="../assets/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="../assets/apple-touch-icon.png">
+<meta property="og:site_name" content="Kokon">
+<meta property="og:type" content="article">
+<meta property="og:title" content="How to run Qwen-Image 2.1 locally (no Python, no ComfyUI)">
+<meta property="og:description" content="Run Qwen-Image 2.1 on Windows or Mac with one installer: requirements, setup, editing tips and troubleshooting.">
+<meta property="og:url" content="https://gabrielelozupone.github.io/kokon/qwen-image-2-1-local/">
+<meta property="og:image" content="https://gabrielelozupone.github.io/kokon/assets/img/app-screenshot.webp">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "How to Run Qwen-Image 2.1 Locally on Windows and Mac (No Python, No ComfyUI)",
+      "description": "Requirements, one-installer setup, editing tips, speed and troubleshooting for running Qwen-Image 2.1 on your own GPU.",
+      "image": "https://gabrielelozupone.github.io/kokon/assets/img/app-screenshot.webp",
+      "datePublished": "2026-10-10",
+      "dateModified": "2026-10-10",
+      "author": { "@type": "Person", "name": "Gabriele Lozupone", "url": "https://gabrielelozupone.github.io/" },
+      "about": [{ "@type": "Thing", "name": "Qwen-Image 2.1" }, { "@type": "SoftwareApplication", "name": "Kokon", "url": "https://gabrielelozupone.github.io/kokon/" }],
+      "mainEntityOfPage": "https://gabrielelozupone.github.io/kokon/qwen-image-2-1-local/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "Kokon", "item": "https://gabrielelozupone.github.io/kokon/" },
+        { "@type": "ListItem", "position": 2, "name": "Run Qwen-Image 2.1 locally", "item": "https://gabrielelozupone.github.io/kokon/qwen-image-2-1-local/" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        { "@type": "Question", "name": "How much VRAM does Qwen-Image 2.1 need?", "acceptedAnswer": { "@type": "Answer", "text": "With Kokon, 12 GB of VRAM is enough (tested on an RTX 5070 12 GB). 16 GB or more is more comfortable. Apple Silicon Macs work with 16 GB of unified memory, slowly; 32 GB is recommended." } },
+        { "@type": "Question", "name": "Can I run Qwen-Image 2.1 without ComfyUI or Python?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Kokon runs it through stable-diffusion.cpp, a native C++ engine, and ships as one installer. It downloads and checks the model on first run." } },
+        { "@type": "Question", "name": "Does Qwen-Image 2.1 run on AMD or Intel GPUs?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, through Vulkan on Windows (beta in Kokon), with 12 GB of VRAM or more." } },
+        { "@type": "Question", "name": "How fast is Qwen-Image 2.1 locally?", "acceptedAnswer": { "@type": "Answer", "text": "With the official 8-step Turbo model on an RTX 5070 Ti: about 22 s for a 1.5K image, about 40 s for native 2K, and 25 to 55 s for an edit. An M2 Pro Mac takes about 4 minutes for a 1-megapixel image." } }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="mark" viewBox="0 0 1024 1024"><path d="M0.00 242.81 C0.00 112.17 70.23 25.08 175.59 25.08 C280.94 25.08 351.17 112.17 351.17 242.81 L351.17 781.19 C351.17 911.83 280.94 998.92 175.59 998.92 C70.23 998.92 0.00 911.83 0.00 781.19 Z M389.53 548.95 C389.53 250.35 662.35 25.08 1024.00 25.08 C1024.00 323.68 751.18 548.95 389.53 548.95 Z M389.53 587.31 C389.53 821.93 618.71 998.92 922.49 998.92 C922.49 764.30 693.31 587.31 389.53 587.31 Z" fill="currentColor"/></symbol>
+  </defs>
+</svg>
+
+<header class="nav scrolled" id="nav">
+  <div class="wrap">
+    <a class="logo" href="../" aria-label="Kokon home"><svg><use href="#mark"/></svg>Kokon</a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="../#examples">Examples</a>
+      <a href="../#features">Features</a>
+      <a href="../mcp-image-generation/">AI agents</a>
+      <a href="../#faq">FAQ</a>
+    </nav>
+    <span class="spacer"></span>
+    <a class="btn primary small" href="https://github.com/GabrieleLozupone/kokon/releases/latest" rel="noopener">Download</a>
+  </div>
+</header>
+
+<main class="article">
+  <div class="wrap narrow">
+    <nav class="crumbs" aria-label="Breadcrumb"><a href="../">Kokon</a> <span>/</span> Guide</nav>
+    <h1>How to run Qwen-Image 2.1 locally on Windows and Mac</h1>
+    <p class="lede-left">No Python, no ComfyUI, no cloud. One installer, a model download, and you edit photos by describing the change. Updated October 10, 2026.</p>
+
+    <figure>
+      <img src="../assets/img/app-screenshot.webp" width="1600" height="980" alt="Kokon running Qwen-Image 2.1 locally: a café street photo with the scooter removed, shown with a before/after slider" loading="eager">
+      <figcaption>Kokon with a local Qwen-Image 2.1 edit: the scooter was painted and removed.</figcaption>
+    </figure>
+
+    <h2>What Qwen-Image 2.1 is</h2>
+    <p>Qwen-Image 2.1 is the open-weights image model from Alibaba's Qwen team. One model both <strong>creates images from text</strong> and <strong>edits existing photos from an instruction</strong> ("remove the people", "make it a snowy night", "change the sign to say…"). It leads the open-weights image-editing rankings, and the official <strong>Turbo</strong> version makes an image in 8 steps, fast enough to use on a consumer GPU.</p>
+    <p>Most guides run it through ComfyUI: install Python, add custom nodes, download several model files and load a workflow. That works, but it is a lot to set up and keep working. This guide uses <a href="../">Kokon</a>, a free, open-source desktop app that does all of that for you.</p>
+
+    <h2>What you need</h2>
+    <div class="table-wrap">
+      <table class="cmp-table">
+        <thead><tr><th></th><th class="us">Minimum</th><th>Recommended</th></tr></thead>
+        <tbody>
+          <tr><td>Windows + NVIDIA</td><td class="us">12 GB VRAM (RTX 3060 12 GB, 4070, 5070)</td><td>16 GB or more (RTX 4080, 5070 Ti, 4090, 5090)</td></tr>
+          <tr><td>Windows + AMD / Intel Arc</td><td class="us">12 GB VRAM, Vulkan (beta)</td><td>16 GB or more</td></tr>
+          <tr><td>Mac</td><td class="us">Apple Silicon, 16 GB unified memory, macOS 26 (slow)</td><td>32 GB or more, Pro/Max/Ultra chip</td></tr>
+          <tr><td>Disk</td><td class="us">15 GB free</td><td>25 GB free</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">8 GB cards are not supported well: the model is large, and 12 GB is the smallest size that gives good results.</p>
+
+    <h2>Step 1: Install Kokon</h2>
+    <p>Download the latest release from <a href="https://github.com/GabrieleLozupone/kokon/releases/latest" rel="noopener">GitHub</a>:</p>
+    <ul>
+      <li><strong>Windows:</strong> <code>Kokon_&lt;version&gt;_x64-setup.exe</code> (about 35 MB). It installs for your user only, no administrator rights. The beta is not code-signed yet, so if SmartScreen warns, click <em>More info → Run anyway</em>.</li>
+      <li><strong>Mac (Apple Silicon, beta):</strong> <code>Kokon_&lt;version&gt;_aarch64.dmg</code>. Drag Kokon to Applications. The first time, open <em>System Settings → Privacy &amp; Security</em> and click <em>Open Anyway</em>.</li>
+    </ul>
+
+    <h2>Step 2: Let it download the model</h2>
+    <p>On first launch Kokon shows your graphics card (or your Mac's chip and memory) and recommends a preset. It downloads what it needs: the stable-diffusion.cpp engine, <strong>Qwen-Image 2.1 Turbo</strong> as a 4-bit GGUF (about 4 GB), the Qwen3-VL text encoder and the VAE, about 12 GB in total. Downloads resume if interrupted, and every file is checked against a pinned SHA-256 hash.</p>
+    <p>On Windows with an NVIDIA card you can pick the <strong>CUDA</strong> engine (fastest) or <strong>Vulkan</strong>; AMD and Intel cards use Vulkan. Macs use Metal.</p>
+
+    <h2>Step 3: Create or edit</h2>
+    <ol>
+      <li><strong>Create:</strong> type a description and press Enter. Add an aspect ratio in words ("16:9 banner") or pick one from the menu.</li>
+      <li><strong>Edit:</strong> drop or paste a photo, describe the change, press Enter. The result appears as a new version; drag the slider to compare before and after.</li>
+      <li><strong>Edit only one area:</strong> click <em>Paint area</em>, brush over the part to change, then choose <em>Change</em>, <em>Remove</em>, <em>Replace</em> or <em>Add</em>. Pixels outside the brush stay exactly as they were.</li>
+      <li><strong>Expand:</strong> click <em>Expand</em> to extend the photo beyond its borders, to any ratio.</li>
+    </ol>
+    <p>There are only three quality levels: <strong>Fast</strong> (~1 MP), <strong>Balanced</strong> (~1.5K) and <strong>Quality</strong> (native 2K). Resolution, memory use and upscaling are chosen for your GPU.</p>
+
+    <h2>Prompts that work well</h2>
+    <div class="table-wrap">
+      <table class="cmp-table">
+        <thead><tr><th>Edit</th><th class="us">Example prompt</th></tr></thead>
+        <tbody>
+          <tr><td>Remove</td><td class="us">"Remove all the people from the beach"</td></tr>
+          <tr><td>Replace</td><td class="us">"Replace the yellow armchair with a deep green velvet sofa"</td></tr>
+          <tr><td>Relight</td><td class="us">"Make it a snowy winter night, warm light glowing from the windows"</td></tr>
+          <tr><td>Text</td><td class="us">"Change the gold sign text to 'KOKON CAFÉ' in the same lettering"</td></tr>
+          <tr><td>Restyle</td><td class="us">"Turn it into a hand-painted watercolor illustration"</td></tr>
+          <tr><td>Product shot</td><td class="us">"Place the sneaker on wet black stone with a soft orange rim light"</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Say what should change and, when it matters, what should stay: "…keep the person and the composition the same". For small objects, paint the area first: it is more reliable than describing where the object is.</p>
+
+    <h2>How fast is it?</h2>
+    <p>Measured with Qwen-Image 2.1 Turbo (8 steps):</p>
+    <ul>
+      <li><strong>RTX 5070 Ti (16 GB):</strong> about 22 s for a new 1.5K image, about 40 s at native 2K, 25 to 55 s for an edit.</li>
+      <li><strong>RTX 5070 (12 GB):</strong> works with the 12 GB preset, a little slower than the 5070 Ti.</li>
+      <li><strong>M2 Pro, 16 GB:</strong> about 4 minutes for a 1-megapixel image.</li>
+    </ul>
+    <p>Kokon measures your machine with the first image and shows realistic time estimates from then on.</p>
+
+    <h2>Troubleshooting</h2>
+    <ul>
+      <li><strong>"Out of memory":</strong> choose Fast or Balanced, close other GPU-heavy apps, or run setup again and pick a lighter preset.</li>
+      <li><strong>The first image is slow:</strong> the model loads once (and Vulkan compiles its GPU programs on first use). Later images are faster.</li>
+      <li><strong>Something else:</strong> Settings → Diagnostics → Copy, then <a href="https://github.com/GabrieleLozupone/kokon/issues" rel="noopener">open an issue</a> with the report.</li>
+    </ul>
+
+    <h2>Use it from an AI agent</h2>
+    <p>Kokon includes an MCP server, so Claude Code, Cursor or any MCP client can create and edit images on your GPU without an API key. See <a href="../mcp-image-generation/">free local image generation for Claude Code and MCP</a>.</p>
+
+    <h2>License notes</h2>
+    <p>Kokon's code is AGPL-3.0. The model weights have their own licenses; read the Qwen-Image model page before commercial use. Kokon is an independent project, not affiliated with Alibaba.</p>
+
+    <div class="cta-box">
+      <h2>Try it</h2>
+      <p>Free and open source for Windows and macOS.</p>
+      <div class="ctas" style="justify-content:flex-start">
+        <a class="btn primary" href="https://github.com/GabrieleLozupone/kokon/releases/latest" rel="noopener">Download Kokon</a>
+        <a class="btn ghost" href="https://github.com/GabrieleLozupone/kokon" rel="noopener">View on GitHub</a>
+      </div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <a class="logo" href="../"><svg><use href="#mark"/></svg>Kokon</a>
+    <span>Designed and built by <a class="me" href="https://gabrielelozupone.github.io/" rel="author">Gabriele Lozupone</a>, with the help of Claude Code.</span>
+    <nav aria-label="Links">
+      <a href="../">Home</a>
+      <a href="../mcp-image-generation/">MCP guide</a>
+      <a href="https://github.com/GabrieleLozupone/kokon" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>

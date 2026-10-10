@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Free Local Image Generation MCP Server for Claude Code and Cursor (No API Key)</title>
+<meta name="description" content="Let Claude Code, Cursor or any MCP client create and edit images on your own GPU with Qwen-Image 2.1. Free, offline, no API key. Setup for Windows and Mac, tools and example prompts.">
+<meta name="author" content="Gabriele Lozupone">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<meta name="theme-color" content="#0a0a0a">
+<link rel="canonical" href="https://gabrielelozupone.github.io/kokon/mcp-image-generation/">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="../assets/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="../assets/apple-touch-icon.png">
+<meta property="og:site_name" content="Kokon">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Free local image generation for Claude Code and MCP clients">
+<meta property="og:description" content="An MCP server that creates and edits images on your GPU with Qwen-Image 2.1. No API key, no cloud, no cost.">
+<meta property="og:url" content="https://gabrielelozupone.github.io/kokon/mcp-image-generation/">
+<meta property="og:image" content="https://gabrielelozupone.github.io/kokon/assets/img/hero.webp">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "Free Local Image Generation MCP Server for Claude Code and Cursor (No API Key)",
+      "description": "Set up Kokon's MCP server so AI agents can create and edit images on your own GPU with Qwen-Image 2.1.",
+      "image": "https://gabrielelozupone.github.io/kokon/assets/img/hero.webp",
+      "datePublished": "2026-10-10",
+      "dateModified": "2026-10-10",
+      "author": { "@type": "Person", "name": "Gabriele Lozupone", "url": "https://gabrielelozupone.github.io/" },
+      "about": [{ "@type": "Thing", "name": "Model Context Protocol" }, { "@type": "SoftwareApplication", "name": "Kokon", "url": "https://gabrielelozupone.github.io/kokon/" }],
+      "mainEntityOfPage": "https://gabrielelozupone.github.io/kokon/mcp-image-generation/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "Kokon", "item": "https://gabrielelozupone.github.io/kokon/" },
+        { "@type": "ListItem", "position": 2, "name": "MCP image generation", "item": "https://gabrielelozupone.github.io/kokon/mcp-image-generation/" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        { "@type": "Question", "name": "Can Claude Code generate images without an API key?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, with a local MCP server such as Kokon's kokon-mcp: images are made by Qwen-Image 2.1 on your own GPU, so there is no API key and no per-image cost." } },
+        { "@type": "Question", "name": "Does the Kokon app need to be open for the MCP server to work?", "acceptedAnswer": { "@type": "Answer", "text": "No. The MCP server starts the engine on demand. The first call takes about a minute while the model loads; without the desktop window open, the model is unloaded after 15 idle minutes." } },
+        { "@type": "Question", "name": "Are my images sent to the AI model?", "acceptedAnswer": { "@type": "Answer", "text": "No. Results stay on disk and the tool returns their path. A small JPEG preview is included only if the agent asks for it with include_preview." } }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="mark" viewBox="0 0 1024 1024"><path d="M0.00 242.81 C0.00 112.17 70.23 25.08 175.59 25.08 C280.94 25.08 351.17 112.17 351.17 242.81 L351.17 781.19 C351.17 911.83 280.94 998.92 175.59 998.92 C70.23 998.92 0.00 911.83 0.00 781.19 Z M389.53 548.95 C389.53 250.35 662.35 25.08 1024.00 25.08 C1024.00 323.68 751.18 548.95 389.53 548.95 Z M389.53 587.31 C389.53 821.93 618.71 998.92 922.49 998.92 C922.49 764.30 693.31 587.31 389.53 587.31 Z" fill="currentColor"/></symbol>
+  </defs>
+</svg>
+
+<header class="nav scrolled" id="nav">
+  <div class="wrap">
+    <a class="logo" href="../" aria-label="Kokon home"><svg><use href="#mark"/></svg>Kokon</a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="../#examples">Examples</a>
+      <a href="../#features">Features</a>
+      <a href="../qwen-image-2-1-local/">Guide</a>
+      <a href="../#faq">FAQ</a>
+    </nav>
+    <span class="spacer"></span>
+    <a class="btn primary small" href="https://github.com/GabrieleLozupone/kokon/releases/latest" rel="noopener">Download</a>
+  </div>
+</header>
+
+<main class="article">
+  <div class="wrap narrow">
+    <nav class="crumbs" aria-label="Breadcrumb"><a href="../">Kokon</a> <span>/</span> MCP</nav>
+    <h1>Free local image generation for Claude Code and MCP clients</h1>
+    <p class="lede-left">Most image MCP servers forward your prompt to a paid cloud API. Kokon's runs Qwen-Image 2.1 on your own GPU: no API key, no cost per image, nothing uploaded.</p>
+
+    <div class="term" aria-label="Claude Code calling Kokon">
+      <div class="term-head"><i></i><i></i><i></i><span style="margin-left:8px">my-website</span></div>
+      <div class="term-body">
+        <div class="w"><span class="c">&gt;</span> Make a hero image for my landing page: a blue morpho butterfly on a silk cocoon, 16:9</div>
+        <div style="margin-top:10px"><span class="w">● kokon</span> <span class="d">· generate_image</span></div>
+        <div class="d" style="padding-left:20px">aspect_ratio: "16:9" · quality: "quality"</div>
+        <div style="padding-left:20px"><span class="c">⎿</span> Saved public/hero.png · 2752×1536 · 39 s</div>
+        <img src="../assets/img/hero.webp" width="1800" height="1005" alt="A blue morpho butterfly on a silk cocoon, generated locally by Kokon for an AI agent">
+      </div>
+    </div>
+
+    <h2>What your agent can do</h2>
+    <div class="table-wrap">
+      <table class="cmp-table">
+        <thead><tr><th>Tool</th><th class="us">What it does</th></tr></thead>
+        <tbody>
+          <tr><td><code>generate_image</code></td><td class="us">Create an image from a prompt; aspect ratio from the prompt ("16:9 hero") or explicit</td></tr>
+          <tr><td><code>edit_image</code></td><td class="us">Edit a photo with an instruction, keeping its size</td></tr>
+          <tr><td><code>edit_images</code></td><td class="us">Combine several images ("put the product from image 1 on the table in image 2")</td></tr>
+          <tr><td><code>inpaint_image</code></td><td class="us">Change only a masked area: edit, remove, replace or add</td></tr>
+          <tr><td><code>outpaint_image</code></td><td class="us">Extend an image beyond its borders, in pixels or percent</td></tr>
+          <tr><td><code>upscale_image</code></td><td class="us">Enlarge up to 8192 px</td></tr>
+          <tr><td><code>get_image_info</code></td><td class="us">Size, format and the generation metadata of an image</td></tr>
+          <tr><td><code>get_generator_status</code></td><td class="us">GPU, VRAM, whether the model is loaded, the queue</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>Set it up</h2>
+    <p>Install <a href="../">Kokon</a> and run its first-time setup once (it downloads the model). Then register the MCP server.</p>
+    <h3>Claude Code on Windows</h3>
+    <pre><code>claude mcp add --scope user kokon -- "$env:LOCALAPPDATA\Kokon\kokon-mcp.exe"</code></pre>
+    <h3>Claude Code on Mac</h3>
+    <pre><code>claude mcp add --scope user kokon -- /Applications/Kokon.app/Contents/MacOS/kokon-mcp</code></pre>
+    <h3>Cursor and other MCP hosts</h3>
+    <p>Any host that takes the standard JSON config (on a Mac the command is <code>/Applications/Kokon.app/Contents/MacOS/kokon-mcp</code>):</p>
+    <pre><code>{
+  "mcpServers": {
+    "kokon": {
+      "type": "stdio",
+      "command": "C:\\Users\\&lt;you&gt;\\AppData\\Local\\Kokon\\kokon-mcp.exe",
+      "args": []
+    }
+  }
+}</code></pre>
+    <p>The desktop app does not need to be open: the server starts the engine on demand. The first call takes about a minute while the model loads.</p>
+
+    <h2>Prompts to try</h2>
+    <ul>
+      <li>"Generate a 16:9 hero image for this README and save it in docs/"</li>
+      <li>"Remove the background clutter from screenshot.png"</li>
+      <li>"Make three product shots of assets/mug.png: marble counter, wooden desk, outdoor café"</li>
+      <li>"Extend banner.png to 21:9, continuing the sky"</li>
+      <li>"Create an app icon, a flat orange fox on a dark background, 1:1"</li>
+    </ul>
+
+    <h2>Safe by default</h2>
+    <ul>
+      <li>Reads and writes are limited to the project folder, Kokon's output folder and folders you allow with <code>QLS_MCP_ALLOWED_DIRS</code>. Existing files are never overwritten.</li>
+      <li>Images stay on disk; the tool returns their path, size, seed and metadata. A small preview goes back to the model only when it asks for one (<code>include_preview</code>).</li>
+      <li>Everything runs on <code>127.0.0.1</code>. No account, no telemetry, no prompts in the logs.</li>
+    </ul>
+
+    <h2>Requirements</h2>
+    <p>A Windows PC with a 12 GB NVIDIA, AMD or Intel Arc GPU, or an Apple Silicon Mac (32 GB recommended). On an RTX 5070 Ti a new image takes 22 to 46 s and an edit 25 to 55 s. Details in the <a href="../qwen-image-2-1-local/">setup guide</a>.</p>
+
+    <div class="cta-box">
+      <h2>Give your agent a GPU</h2>
+      <p>Kokon is free and open source.</p>
+      <div class="ctas" style="justify-content:flex-start">
+        <a class="btn primary" href="https://github.com/GabrieleLozupone/kokon/releases/latest" rel="noopener">Download Kokon</a>
+        <a class="btn ghost" href="https://github.com/GabrieleLozupone/kokon#use-it-from-your-ai-agent" rel="noopener">MCP docs on GitHub</a>
+      </div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <a class="logo" href="../"><svg><use href="#mark"/></svg>Kokon</a>
+    <span>Designed and built by <a class="me" href="https://gabrielelozupone.github.io/" rel="author">Gabriele Lozupone</a>, with the help of Claude Code.</span>
+    <nav aria-label="Links">
+      <a href="../">Home</a>
+      <a href="../qwen-image-2-1-local/">Setup guide</a>
+      <a href="https://github.com/GabrieleLozupone/kokon" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>

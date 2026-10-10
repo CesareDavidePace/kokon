@@ -1,0 +1,64 @@
+// The app's CompareFrame (src/components/Compare.tsx) with the slider position taken from the
+// frame clock (`setCompareSplit`) instead of the pointer. Markup and classes are unchanged.
+import { compareBase as _cb, type CompareBase, type CompareMode } from "../../../../src/lib/logic";
+import type { GenerationRecord } from "../../../../src/lib/types";
+import { Seg, useFit } from "../../../../src/components/ui";
+import { FullscreenButton } from "../../../../src/components/Viewer";
+import { urls } from "./api";
+import { useStore } from "./store";
+
+void _cb;
+const MODES: { value: CompareMode; label: string }[] = [
+  { value: "off", label: "Result" },
+  { value: "slider", label: "Slider" },
+  { value: "flicker", label: "Flicker" },
+  { value: "diff", label: "Changes" },
+];
+
+let split = 0.5;
+export function setCompareSplit(v: number) {
+  split = Math.min(1, Math.max(0, v));
+}
+
+export function CompareFrame({ g, base, fullscreen = false }: { g: GenerationRecord; base: CompareBase; fullscreen?: boolean }) {
+  const mode = useStore((s) => s.compare);
+  const { ref, box } = useFit(g.width / g.height);
+  const after = urls.gen(g.id);
+  const before = urls.input(base.inputId);
+  const pct = (v: number) => `${v * 100}%`;
+  const { x, y, w, h } = base.rect;
+  return (
+    <div className={fullscreen ? "viewer-frame" : "stage-frame"} ref={ref}>
+      <div className={`compare-box ${mode === "slider" ? "slider" : ""}`} style={{ width: box.w, height: box.h }}>
+        <img className="compare-img" src={after} alt={g.prompt} draggable={false} />
+        <div className="compare-before" style={{ visibility: mode === "slider" ? "visible" : "hidden", clipPath: mode === "slider" ? `inset(0 ${pct(1 - split)} 0 0)` : undefined }}>
+          <img src={before} alt="Original" draggable={false} style={{ left: pct(x), top: pct(y), width: pct(w), height: pct(h) }} />
+        </div>
+        {mode === "slider" && (
+          <>
+            <div className="compare-handle" style={{ left: pct(split) }}>
+              <span />
+            </div>
+            <span className="compare-tag left">Before</span>
+            <span className="compare-tag right">After</span>
+          </>
+        )}
+        {!fullscreen && (
+          <div className="compare-overlay">
+            <CompareBar />
+          </div>
+        )}
+        {!fullscreen && <FullscreenButton hint="Hold B for the original" content={null} />}
+      </div>
+    </div>
+  );
+}
+
+export function CompareBar() {
+  const mode = useStore((s) => s.compare);
+  return (
+    <div className="compare-bar">
+      <Seg value={mode} options={MODES} onChange={() => {}} />
+    </div>
+  );
+}

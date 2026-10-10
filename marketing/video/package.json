@@ -1,0 +1,24 @@
+{
+  "name": "kokon-video",
+  "private": true,
+  "version": "0.9.0",
+  "description": "Kokon launch video, made with Remotion from the app's own React components",
+  "scripts": {
+    "studio": "remotion studio",
+    "render": "remotion render KokonLaunch out/kokon-launch.mp4",
+    "still": "remotion still"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@remotion/cli": "4.0.534",
+    "lucide-react": "^1.52.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "remotion": "4.0.534",
+    "simple-icons": "^16.34.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "typescript": "^5.9.3"
+  }
+}

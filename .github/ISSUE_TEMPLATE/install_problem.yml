@@ -1,0 +1,62 @@
+name: Install or setup problem
+description: The installer, the setup screen, a model download, SmartScreen or Gatekeeper got in the way.
+labels: ["install"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before you open an issue, two common cases:
+
+        - **Windows: "Windows protected your PC".** Click **More info → Run anyway**. Kokon is new,
+          so SmartScreen has no download history for it yet.
+        - **macOS: "Kokon cannot be opened".** Try to open it once, then go to **System Settings →
+          Privacy & Security** and click **Open Anyway**. Kokon is not notarized by Apple.
+
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Where did it go wrong?
+      options:
+        - Running the installer / opening the app the first time
+        - SmartScreen or Gatekeeper won't let it run
+        - Setup screen (GPU detection, preset choice)
+        - Model or engine download (failed, stuck, checksum error)
+        - First image after setup
+        - Update to a new version
+        - Something else
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Kokon version
+      placeholder: "0.9.0"
+    validations:
+      required: true
+
+  - type: input
+    id: system
+    attributes:
+      label: OS and hardware
+      description: Windows or macOS version, GPU and VRAM (or Mac chip and memory), engine if you know it (CUDA, Vulkan, Metal).
+      placeholder: "Windows 11, RX 7800 XT 16 GB, Vulkan"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The exact message, which file failed (the setup screen names it), and a screenshot if you can.
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics or log (if the app opens)
+      description: |
+        **Settings → Diagnostics → Copy**, or the latest log from `%LOCALAPPDATA%\KokonData\logs`
+        (Mac: `~/Library/Application Support/KokonData/logs`).
+      render: text

@@ -1,0 +1,90 @@
+name: Bug report
+description: Something in Kokon doesn't work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. If the problem is with installing, the setup
+        screen or the model downloads, please use **Install or setup problem** instead.
+
+  - type: input
+    id: version
+    attributes:
+      label: Kokon version
+      description: Settings → General shows it.
+      placeholder: "0.9.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS 26 (Apple Silicon)
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Engine
+      options:
+        - CUDA (NVIDIA)
+        - Vulkan (AMD, Intel or NVIDIA)
+        - Metal (Mac)
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU and memory
+      description: Graphics card and VRAM, or Mac chip and unified memory. Add the driver version if you know it.
+      placeholder: "RTX 4070 12 GB, driver 581.xx  /  M2 Pro, 16 GB"
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What did you do? Include the mode (create, edit, brush edit, expand, upscale) and the quality preset. You don't have to share your prompt or photo.
+      placeholder: |
+        1. Open a photo
+        2. Type "..." and press Enter
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead
+      description: Error messages, screenshots, or how the result looked wrong.
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: |
+        Open **Settings → Diagnostics**, click **Copy** and paste it here. If the app won't open,
+        attach the latest log from `%LOCALAPPDATA%\KokonData\logs` (Mac:
+        `~/Library/Application Support/KokonData/logs`). Logs never contain your prompts.
+      render: text
+    validations:
+      required: true

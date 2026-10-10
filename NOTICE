@@ -5,3 +5,46 @@ This product is licensed under the GNU Affero General Public License, version 3 
 
 Model weights and the upscaler that Kokon downloads at setup are not part of this product;
 they come from their authors under their own licenses (see the README).
+
+
+Third-party software included in the Kokon installer
+----------------------------------------------------
+
+- Tauri and its plugins (https://tauri.app), Apache-2.0 OR MIT.
+- React and React DOM (https://react.dev), MIT.
+- Lucide icons, lucide-react (https://lucide.dev), ISC.
+- Inter typeface by The Inter Project Authors (https://github.com/rsms/inter),
+  SIL Open Font License 1.1, through @fontsource-variable/inter.
+- SQLite (https://sqlite.org), public domain, built into the gallery through rusqlite.
+- Node.js runtime (https://nodejs.org), embedded in kokon-mcp as a single executable
+  application; see https://github.com/nodejs/node/blob/main/LICENSE.
+- Model Context Protocol TypeScript SDK (https://github.com/modelcontextprotocol/typescript-sdk)
+  and Zod (https://zod.dev), MIT, bundled in kokon-mcp.
+- Other Rust crates and npm packages, each under its own license as listed in Cargo.lock,
+  package-lock.json and mcp/package-lock.json.
+
+
+Downloaded by the setup screen (not part of this product)
+---------------------------------------------------------
+
+Every file is pinned by URL, size and SHA-256 in crates/qls-core/src/catalog.rs.
+
+- stable-diffusion.cpp by leejet (https://github.com/leejet/stable-diffusion.cpp), MIT,
+  release master-929-3f8527a: CUDA 12, Vulkan or Metal build.
+- ggml by the ggml authors (https://github.com/ggml-org/ggml), MIT, included in the
+  stable-diffusion.cpp builds.
+- NVIDIA CUDA 12 runtime and cuBLAS DLLs (NVIDIA cards only), redistributed in the
+  stable-diffusion.cpp release; see https://docs.nvidia.com/cuda/eula/.
+- Qwen-Image 2.1 Turbo by the Qwen team (https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo),
+  same license as Qwen-Image 2.1 (https://huggingface.co/Qwen/Qwen-Image-2.1); see those
+  model pages for the terms. Downloaded as the GGUF conversion by DogukanUrker
+  (https://huggingface.co/DogukanUrker/Qwen-Image-2.1-Turbo-GGUF).
+- Qwen-Image 2.1 VAE, from https://huggingface.co/Comfy-Org/Qwen-Image-2.1; see
+  https://huggingface.co/Qwen/Qwen-Image-2.1 for the terms.
+- Qwen3-VL 8B Instruct text encoder and vision projector by the Qwen team, from
+  https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF; see that page for the terms.
+- 4x-UltraSharp upscaler by Kim2091 (optional), CC BY-NC-SA 4.0 (non-commercial), from
+  https://huggingface.co/uwg/upscaler.
+
+Selectable in Settings but not downloaded by Kokon: 4x_NMKD-Superscale-SP_178000_G by NMKD,
+placed by hand from https://huggingface.co/uwg/upscaler; see that page for the terms.

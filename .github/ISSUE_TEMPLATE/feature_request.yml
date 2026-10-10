@@ -1,0 +1,31 @@
+name: Feature request
+description: Suggest something Kokon should do.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Kokon tries to stay simple: describe a change, get a good result. Ideas that fit that are
+        the most likely to land. For open-ended ideas, a
+        [discussion](https://github.com/GabrieleLozupone/kokon/discussions) may be a better start.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The task or the problem, not the solution yet.
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help
+      description: How you imagine it working in the app, the MCP server or the API.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Anything you tried instead

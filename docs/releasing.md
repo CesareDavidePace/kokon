@@ -16,8 +16,8 @@ How to publish a version that installed copies update to, on Windows and macOS.
 
 ## The signing key (do this once)
 
-- **The private key** is `C:\Users\gabri\.tauri\kokon-updater.key`. It was generated on
-  2026-10-09 with no password, and its public half is in `tauri.conf.json`.
+- **The private key** lives in `~/.tauri/kokon-updater.key` (on Windows
+  `%USERPROFILE%\.tauri\kokon-updater.key`), and its public half is in `tauri.conf.json`.
 - **Back it up** (password manager, encrypted drive). If it's lost, already installed copies
   can never be updated again: you'd need a new key and every user would have to reinstall
   by hand.

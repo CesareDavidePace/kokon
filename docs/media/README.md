@@ -1,11 +1,13 @@
 # README media
 
-The files in this folder are placeholders. Replace each one with a real capture before launch, keeping the same file names and sizes.
-
-| File | What to capture | Size |
+| File | What | Made with |
 | --- | --- | --- |
-| `demo.gif` | Drop a photo → type one sentence → result appears → before/after slider. Under 10 s, cut out the waiting. | 1280×720, < 8 MB |
-| `screenshot-app.png` | Main window with a finished edit and the Slider view | 1600×1000 |
-| `examples/remove.jpg` … `expand.jpg` | Before (left) and after (right) side by side, with the exact prompt from the README caption | 1200×600 |
+| `examples/*.jpg` | Before/after pairs in the README (1200x600, two 600x600 halves) | Generated and edited with Kokon; prompts and seeds in `marketing/showcase/PROMPTS.md` |
+| `examples/fatto-in-casa.jpg` | The six-step project from the demo video | Kokon |
+| `screenshot-app.png` | The main window | A screenshot of the app |
 
-Rules: use neutral, non-NSFW photos you have the rights to (your own photos, or CC0 from Unsplash or Pexels), default settings only, and no cherry-picked seeds you couldn't reproduce. If a result needs a different prompt, update its caption in the README too.
+The same example images are bundled in the app's welcome screen (`src/assets/showcase`). The launch
+video and the website are described in `marketing/README.md`.
+
+Use only images made with Kokon or that you have the rights to, neutral subjects, and default
+settings, so every result can be reproduced from its prompt and seed.

@@ -15,3 +15,8 @@ __pycache__/
 /src-tauri/binaries/*-apple-darwin
 /target/mac-check
 .DS_Store
+# Internal notes kept locally
+/docs/upscale-plan.md
+/docs/visibility-plan.md
+/docs/visibility-progress.md
+/docs/media/demo.gif

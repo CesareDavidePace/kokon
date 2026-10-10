@@ -30,13 +30,10 @@ $exe = Join-Path $root 'target\debug\kokon-service.exe'
 if (-not (Test-Path $exe)) { throw "Build first: cargo build -p qls-service" }
 if (Get-Process sd-server -ErrorAction SilentlyContinue) { throw "sd-server is running. Close Kokon (and any sd-server) first." }
 
-# Official weights when present; otherwise whatever Q4_K_M diffusion model is there.
+# The model the setup wizard installs (Qwen-Image 2.1 Turbo, Q4_K).
 $m = Join-Path $SdcppDir 'models\qwen21'
-$diffusion = Join-Path $m 'qwen-image-2.1-Q4_K_M.gguf'
-if (-not (Test-Path $diffusion)) {
-    $diffusion = Join-Path $m 'qwen-image-2.1-UC-Q4_K_M.gguf'
-    Write-Host "Official qwen-image-2.1-Q4_K_M.gguf not found; testing with $diffusion (same size and architecture)." -ForegroundColor Yellow
-}
+$diffusion = Join-Path $m 'qwen-image-2.1-turbo-Q4_K.gguf'
+if (-not (Test-Path $diffusion)) { throw "Model not found: $diffusion. Run Settings -> Models -> Set up models first." }
 $prof = @{
     id = 'qwen-image-2.1'; displayName = 'test'; diffusionModel = $diffusion
     vae = (Join-Path $m 'qwen_image_2.1_vae_bf16.safetensors')

@@ -369,12 +369,12 @@ async fn diagnostics_json(State(s): St) -> ApiResult<Json<Value>> {
         let args = qls_core::process::build_server_args(&cfg, cfg.profile());
         let mut text = String::new();
         use std::fmt::Write;
-        let _ = writeln!(text, "Kokon {APP_VERSION} â€” diagnostics ({})", qls_core::store::now_rfc3339());
+        let _ = writeln!(text, "Kokon {APP_VERSION} — diagnostics ({})", qls_core::store::now_rfc3339());
         let _ = writeln!(text, "\n[GPU]");
         match &gpus {
             Some(g) => {
                 for x in g {
-                    let _ = writeln!(text, "{} â€” {} MiB total, {} MiB used, {} MiB free, driver {}", x.name, x.memory_total_mib, x.memory_used_mib, x.memory_free_mib, x.driver_version);
+                    let _ = writeln!(text, "{} — {} MiB total, {} MiB used, {} MiB free, driver {}", x.name, x.memory_total_mib, x.memory_used_mib, x.memory_free_mib, x.driver_version);
                 }
             }
             None => {
@@ -413,7 +413,7 @@ async fn diagnostics_json(State(s): St) -> ApiResult<Json<Value>> {
         let _ = writeln!(text, "Ports: server {}, service {}", cfg.server_port, cfg.service_port);
         let _ = writeln!(text, "Output: {}", cfg.output_dir.display());
         let _ = writeln!(text, "Data: {}", qls_core::config::data_dir().display());
-        let _ = writeln!(text, "\n[Server log â€” last {} lines]", log.len());
+        let _ = writeln!(text, "\n[Server log — last {} lines]", log.len());
         for l in &log {
             let _ = writeln!(text, "{l}");
         }

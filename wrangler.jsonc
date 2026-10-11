@@ -1,7 +1,11 @@
 // Cloudflare Workers static site: publishes site/ to https://kokon.app (no build step).
+// workers_dev / preview_urls off: the site is served only on kokon.app, not on a *.workers.dev copy.
 {
   "name": "kokon-site",
   "compatibility_date": "2026-10-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "kokon.app", "custom_domain": true }],
   "assets": {
     "directory": "./site",
     "html_handling": "auto-trailing-slash",

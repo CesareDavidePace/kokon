@@ -192,3 +192,14 @@ edit, inpaint, outpaint, multi-reference and upscale through an isolated service
 time, working size, peak VRAM, memory spilled to shared GPU memory and out-of-memory retries
 into `docs\test-results\`. Bandwidth and compute stay those of the bigger card, so times are
 optimistic: a real 12 GB card (RTX 3060/4070) has to confirm them.
+
+Real RTX 5070 12 GB (a friend's diagnostics, 2026-10-11; 12gb preset, Turbo Q4_K, text encoder on
+the CPU, text to image only): 1376×768 at 1.24 s/step (10 s sampling, 1.9 s decode); ~3.2 MP
+(2400×1344, 1216×2624) at 4.3 s/step (35 s sampling, 7.2 s tiled decode). No OOM retries and no
+prefix-cache fallback; ~5.8 GB VRAM free with the model loaded. About 1.5× the 5070 Ti's step time,
+so `planner::step_seconds` (calibrated on the Ti) underestimates on this card.
+
+RTX 5070 Ti 16 GB (app diagnostics, 2026-10-11; 16gb preset, Turbo Q4_K, text encoder on the CPU):
+text to image 2048² at 3.67 s/step (29.8 s sampling, 5.9 s tiled decode), 36 s total; edit at
+1472² with one reference at 2.0 s/step (1.0 s encode, 1.7 s conditioning, 18.3 s sampling, 2.6 s
+decode), 24 s total; ESRGAN 4× of 1448² to 5792² in 22 s.

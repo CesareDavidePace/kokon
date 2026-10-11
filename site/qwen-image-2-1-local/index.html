@@ -51,7 +51,7 @@
         { "@type": "Question", "name": "How much VRAM does Qwen-Image 2.1 need?", "acceptedAnswer": { "@type": "Answer", "text": "With Kokon, 12 GB of VRAM is enough (tested on an RTX 5070 12 GB). 16 GB or more is more comfortable. Apple Silicon Macs work with 16 GB of unified memory, slowly; 32 GB is recommended." } },
         { "@type": "Question", "name": "Can I run Qwen-Image 2.1 without ComfyUI or Python?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Kokon runs it through stable-diffusion.cpp, a native C++ engine, and ships as one installer. It downloads and checks the model on first run." } },
         { "@type": "Question", "name": "Does Qwen-Image 2.1 run on AMD or Intel GPUs?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, through Vulkan on Windows (beta in Kokon), with 12 GB of VRAM or more." } },
-        { "@type": "Question", "name": "How fast is Qwen-Image 2.1 locally?", "acceptedAnswer": { "@type": "Answer", "text": "With the official 8-step Turbo model on an RTX 5070 Ti: about 22 s for a 1.5K image, about 40 s for native 2K, and 25 to 55 s for an edit. An M2 Pro Mac takes about 4 minutes for a 1-megapixel image." } }
+        { "@type": "Question", "name": "How fast is Qwen-Image 2.1 locally?", "acceptedAnswer": { "@type": "Answer", "text": "With the official 8-step Turbo model on an RTX 5070 Ti: about 24 s for an edit at 1.5K and about 36 s for a new image at native 2K. An M2 Pro Mac takes about 4 minutes for a 1-megapixel image." } }
       ]
     }
   ]
@@ -147,7 +147,7 @@
     <h2>How fast is it?</h2>
     <p>Measured with Qwen-Image 2.1 Turbo (8 steps):</p>
     <ul>
-      <li><strong>RTX 5070 Ti (16 GB):</strong> about 22 s for a new 1.5K image, about 40 s at native 2K, 25 to 55 s for an edit.</li>
+      <li><strong>RTX 5070 Ti (16 GB):</strong> about 24 s for an edit at 1.5K, about 36 s for a new image at native 2K, about 22 s for a 4× upscale.</li>
       <li><strong>RTX 5070 (12 GB):</strong> works with the 12 GB preset, a little slower than the 5070 Ti.</li>
       <li><strong>M2 Pro, 16 GB:</strong> about 4 minutes for a 1-megapixel image.</li>
     </ul>

@@ -55,6 +55,8 @@ body::before { content: ""; position: fixed; inset: 0; pointer-events: none; z-i
 .hero::before { content: ""; position: absolute; left: 50%; top: -240px; width: 1400px; height: 900px; transform: translateX(-50%); background: radial-gradient(ellipse at center, rgba(247,246,242,0.09) 0%, rgba(247,246,242,0) 60%); pointer-events: none; }
 .eyebrow { display: inline-flex; align-items: center; gap: 10px; padding: 6px 14px 6px 6px; border-radius: 999px; background: var(--card); box-shadow: inset 0 0 0 1px var(--line); font-size: 13.5px; color: var(--text-2); }
 .eyebrow b { font-weight: 600; color: var(--ink); background: var(--paper); padding: 3px 9px; border-radius: 999px; font-size: 12px; }
+.eyebrow > span { white-space: nowrap; }
+@media (max-width: 479px) { .eyebrow .eb-long { display: none; } }
 h1 { font-size: clamp(44px, 8.4vw, 104px); line-height: 1; letter-spacing: -0.045em; font-weight: 680; margin: 26px auto 0; max-width: 11.5em; }
 h1 .soft { color: var(--text-3); }
 .lede { font-size: clamp(17px, 2vw, 21px); color: var(--text-2); max-width: 36em; margin: 26px auto 0; letter-spacing: -0.012em; }

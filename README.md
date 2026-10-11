@@ -13,19 +13,19 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/GabrieleLozupone/kokon/releases/latest"><img src="https://img.shields.io/github/v/release/GabrieleLozupone/kokon?style=flat-square&color=6b6b6b&labelColor=333&label=release" alt="Latest release"></a>
-  <a href="https://github.com/GabrieleLozupone/kokon/releases"><img src="https://img.shields.io/github/downloads/GabrieleLozupone/kokon/total?style=flat-square&cacheSeconds=3600&color=6b6b6b&labelColor=333" alt="Downloads"></a>
-  <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-6b6b6b?labelColor=333&style=flat-square&logo=windows&logoColor=white" alt="Windows 10 and 11">
-  <img src="https://img.shields.io/badge/macOS-26%2B-6b6b6b?labelColor=333&style=flat-square&logo=apple&logoColor=white" alt="macOS 26 or newer">
+  <a href="https://github.com/GabrieleLozupone/kokon/releases/latest"><img src="https://img.shields.io/github/v/release/GabrieleLozupone/kokon?style=flat-square&labelColor=333&color=6b6b6b&label=release&cacheSeconds=3600&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjQzI5N0ZGIiBzdHJva2Utd2lkdGg9IjIuNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMTIuNiAyLjZBMiAyIDAgMCAwIDExLjIgMkg0YTIgMiAwIDAgMC0yIDJ2Ny4yYTIgMiAwIDAgMCAuNiAxLjRsOC43IDguN2EyLjQgMi40IDAgMCAwIDMuNCAwbDYuNi02LjZhMi40IDIuNCAwIDAgMCAwLTMuNHoiLz48Y2lyY2xlIGN4PSI3LjUiIGN5PSI3LjUiIHI9IjEuMiIgZmlsbD0iI0MyOTdGRiIvPjwvc3ZnPg%3D%3D" alt="Latest release"></a>
+  <a href="https://github.com/GabrieleLozupone/kokon/releases"><img src="https://img.shields.io/github/downloads/GabrieleLozupone/kokon/total?style=flat-square&labelColor=333&color=6b6b6b&cacheSeconds=3600&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjM0ZCOTUwIiBzdHJva2Utd2lkdGg9IjIuNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMTIgM3YxMiIvPjxwYXRoIGQ9Im03IDEwIDUgNSA1LTUiLz48cGF0aCBkPSJNNCAyMWgxNiIvPjwvc3ZnPg%3D%3D" alt="Downloads"></a>
+  <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-6b6b6b?style=flat-square&labelColor=333&color=6b6b6b&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iIzAwQTRFRiI%2BPHBhdGggZD0iTTIgMmg5LjV2OS41SDJ6TTEyLjUgMkgyMnY5LjVoLTkuNXpNMiAxMi41aDkuNVYyMkgyek0xMi41IDEyLjVIMjJWMjJoLTkuNXoiLz48L3N2Zz4%3D" alt="Windows 10 and 11">
+  <img src="https://img.shields.io/badge/macOS-26%2B-6b6b6b?style=flat-square&labelColor=333&color=6b6b6b&logo=apple&logoColor=white" alt="macOS 26 or newer">
   <br>
-  <img src="https://img.shields.io/badge/NVIDIA-12%20GB%2B%20VRAM-6b6b6b?labelColor=333&style=flat-square&logo=nvidia&logoColor=76B900" alt="NVIDIA, 12 GB of VRAM or more">
-  <img src="https://img.shields.io/badge/AMD-12%20GB%2B%20VRAM%20(beta)-6b6b6b?labelColor=333&style=flat-square&logo=amd&logoColor=white" alt="AMD, 12 GB of VRAM or more, beta">
-  <img src="https://img.shields.io/badge/Intel%20Arc-12%20GB%2B%20VRAM%20(beta)-6b6b6b?labelColor=333&style=flat-square&logo=intel&logoColor=white" alt="Intel Arc, 12 GB of VRAM or more, beta">
-  <img src="https://img.shields.io/badge/Apple%20Silicon-32%20GB%20recommended%20(beta)-6b6b6b?labelColor=333&style=flat-square&logo=apple&logoColor=white" alt="Apple Silicon, 32 GB of unified memory recommended, beta">
+  <img src="https://img.shields.io/badge/NVIDIA-12%20GB%2B%20VRAM-6b6b6b?style=flat-square&labelColor=333&color=6b6b6b&logo=nvidia&logoColor=76B900" alt="NVIDIA, 12 GB of VRAM or more">
+  <img src="https://img.shields.io/badge/AMD-12%20GB%2B%20VRAM%20(beta)-6b6b6b?style=flat-square&labelColor=333&color=6b6b6b&logo=amd&logoColor=ED1C24" alt="AMD, 12 GB of VRAM or more, beta">
+  <img src="https://img.shields.io/badge/Intel%20Arc-12%20GB%2B%20VRAM%20(beta)-6b6b6b?style=flat-square&labelColor=333&color=6b6b6b&logo=intel&logoColor=00C7FD" alt="Intel Arc, 12 GB of VRAM or more, beta">
+  <img src="https://img.shields.io/badge/Apple%20Silicon-32%20GB%20recommended%20(beta)-6b6b6b?style=flat-square&labelColor=333&color=6b6b6b&logo=apple&logoColor=white" alt="Apple Silicon, 32 GB of unified memory recommended, beta">
   <br>
-  <a href="#use-it-from-your-ai-agent"><img src="https://img.shields.io/badge/MCP-server%20included-6b6b6b?labelColor=333&style=flat-square" alt="MCP server included"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/GabrieleLozupone/kokon?style=flat-square&cacheSeconds=3600&color=6b6b6b&labelColor=333" alt="License"></a>
-  <a href="https://github.com/GabrieleLozupone/kokon/stargazers"><img src="https://img.shields.io/github/stars/GabrieleLozupone/kokon?style=flat-square&cacheSeconds=3600&color=6b6b6b&labelColor=333" alt="Stars"></a>
+  <a href="#use-it-from-your-ai-agent"><img src="https://img.shields.io/badge/MCP-server%20included-6b6b6b?style=flat-square&labelColor=333&color=6b6b6b&logo=modelcontextprotocol&logoColor=white" alt="MCP server included"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-6b6b6b?style=flat-square&labelColor=333&color=6b6b6b&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjNThBNkZGIiBzdHJva2Utd2lkdGg9IjIuNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMTIgM3YxOCIvPjxwYXRoIGQ9Ik03IDIxaDEwIi8%2BPHBhdGggZD0iTTMgN2gxOCIvPjxwYXRoIGQ9Im02IDctMyA3YTMuNSAzLjUgMCAwIDAgNiAweiIvPjxwYXRoIGQ9Im0xOCA3LTMgN2EzLjUgMy41IDAgMCAwIDYgMHoiLz48L3N2Zz4%3D" alt="License: AGPL-3.0"></a>
+  <a href="https://github.com/GabrieleLozupone/kokon/stargazers"><img src="https://img.shields.io/github/stars/GabrieleLozupone/kokon?style=flat-square&labelColor=333&color=6b6b6b&cacheSeconds=3600&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjRjVDNTE4IiBzdHJva2Utd2lkdGg9IjIuNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBmaWxsPSIjRjVDNTE4IiBkPSJNMTIgMi41bDIuOSA2IDYuNi45LTQuOCA0LjYgMS4yIDYuNUwxMiAxNy40bC01LjkgMy4xIDEuMi02LjVMMi41IDkuNGw2LjYtLjl6Ii8%2BPC9zdmc%2B" alt="Stars"></a>
 </p>
 
 <p align="center">
@@ -148,7 +148,7 @@ whole thing takes a few minutes, and the setup screen shows what Kokon can do wh
 | **GPU** | NVIDIA, 12 GB VRAM (RTX 3060 12 GB, 4070) · AMD / Intel 12 GB+ through Vulkan (beta) | NVIDIA, 16 GB+ VRAM (RTX 4080, 5070 Ti, 5080, 4090, 5090) |
 | **RAM** | 16 GB | 32 GB |
 | **Disk** | 15 GB free | 25 GB free on an SSD |
-| **Time per edit** <!-- TODO re-measure at CFG 1 before launch; RTX 5070 12 GB not timed yet --> | A little slower than the RTX 5070 Ti on a 12 GB RTX 5070 | About 1 minute at Balanced on a 16 GB RTX 5070 Ti |
+| **Time per image** <!-- RTX 5070 edit time not measured yet (text to image only, 10-11) --> | RTX 5070 12 GB: ~12 s per 1 MP image, ~42 s at native 2K (text to image) | RTX 5070 Ti 16 GB: ~24 s per edit at Balanced (1.5K), ~36 s for a new image at native 2K |
 
 **Mac (beta)**
 

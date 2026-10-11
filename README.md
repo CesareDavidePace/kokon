@@ -15,16 +15,16 @@
 <p align="center">
   <a href="https://github.com/GabrieleLozupone/kokon/releases/latest"><img src="https://img.shields.io/github/v/release/GabrieleLozupone/kokon?style=flat-square&labelColor=333&color=6b6b6b&label=release&cacheSeconds=3600&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjQzI5N0ZGIiBzdHJva2Utd2lkdGg9IjIuNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMTIuNiAyLjZBMiAyIDAgMCAwIDExLjIgMkg0YTIgMiAwIDAgMC0yIDJ2Ny4yYTIgMiAwIDAgMCAuNiAxLjRsOC43IDguN2EyLjQgMi40IDAgMCAwIDMuNCAwbDYuNi02LjZhMi40IDIuNCAwIDAgMCAwLTMuNHoiLz48Y2lyY2xlIGN4PSI3LjUiIGN5PSI3LjUiIHI9IjEuMiIgZmlsbD0iI0MyOTdGRiIvPjwvc3ZnPg%3D%3D" alt="Latest release"></a>
   <a href="https://github.com/GabrieleLozupone/kokon/releases"><img src="https://img.shields.io/github/downloads/GabrieleLozupone/kokon/total?style=flat-square&labelColor=333&color=6b6b6b&cacheSeconds=3600&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjM0ZCOTUwIiBzdHJva2Utd2lkdGg9IjIuNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMTIgM3YxMiIvPjxwYXRoIGQ9Im03IDEwIDUgNSA1LTUiLz48cGF0aCBkPSJNNCAyMWgxNiIvPjwvc3ZnPg%3D%3D" alt="Downloads"></a>
-  <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-6b6b6b?style=flat-square&labelColor=333&color=6b6b6b&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iIzAwQTRFRiI%2BPHBhdGggZD0iTTIgMmg5LjV2OS41SDJ6TTEyLjUgMkgyMnY5LjVoLTkuNXpNMiAxMi41aDkuNVYyMkgyek0xMi41IDEyLjVIMjJWMjJoLTkuNXoiLz48L3N2Zz4%3D" alt="Windows 10 and 11">
-  <img src="https://img.shields.io/badge/macOS-26%2B-6b6b6b?style=flat-square&labelColor=333&color=6b6b6b&logo=apple&logoColor=white" alt="macOS 26 or newer">
+  <img src="assets/readme/badges/windows.svg" alt="Windows 10 and 11">
+  <img src="assets/readme/badges/macos.svg" alt="macOS 26 or newer">
   <br>
-  <img src="https://img.shields.io/badge/NVIDIA-12%20GB%2B%20VRAM-6b6b6b?style=flat-square&labelColor=333&color=6b6b6b&logo=nvidia&logoColor=76B900" alt="NVIDIA, 12 GB of VRAM or more">
-  <img src="https://img.shields.io/badge/AMD-12%20GB%2B%20VRAM%20(beta)-6b6b6b?style=flat-square&labelColor=333&color=6b6b6b&logo=amd&logoColor=ED1C24" alt="AMD, 12 GB of VRAM or more, beta">
-  <img src="https://img.shields.io/badge/Intel%20Arc-12%20GB%2B%20VRAM%20(beta)-6b6b6b?style=flat-square&labelColor=333&color=6b6b6b&logo=intel&logoColor=00C7FD" alt="Intel Arc, 12 GB of VRAM or more, beta">
-  <img src="https://img.shields.io/badge/Apple%20Silicon-32%20GB%20recommended%20(beta)-6b6b6b?style=flat-square&labelColor=333&color=6b6b6b&logo=apple&logoColor=white" alt="Apple Silicon, 32 GB of unified memory recommended, beta">
+  <img src="assets/readme/badges/nvidia.svg" alt="NVIDIA, 12 GB of VRAM or more">
+  <img src="assets/readme/badges/amd.svg" alt="AMD, 12 GB of VRAM or more, beta">
+  <img src="assets/readme/badges/intel.svg" alt="Intel Arc, 12 GB of VRAM or more, beta">
+  <img src="assets/readme/badges/apple.svg" alt="Apple Silicon, 32 GB of unified memory recommended, beta">
   <br>
-  <a href="#use-it-from-your-ai-agent"><img src="https://img.shields.io/badge/MCP-server%20included-6b6b6b?style=flat-square&labelColor=333&color=6b6b6b&logo=modelcontextprotocol&logoColor=white" alt="MCP server included"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-6b6b6b?style=flat-square&labelColor=333&color=6b6b6b&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjNThBNkZGIiBzdHJva2Utd2lkdGg9IjIuNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMTIgM3YxOCIvPjxwYXRoIGQ9Ik03IDIxaDEwIi8%2BPHBhdGggZD0iTTMgN2gxOCIvPjxwYXRoIGQ9Im02IDctMyA3YTMuNSAzLjUgMCAwIDAgNiAweiIvPjxwYXRoIGQ9Im0xOCA3LTMgN2EzLjUgMy41IDAgMCAwIDYgMHoiLz48L3N2Zz4%3D" alt="License: AGPL-3.0"></a>
+  <a href="#use-it-from-your-ai-agent"><img src="assets/readme/badges/mcp.svg" alt="MCP server included"></a>
+  <a href="LICENSE"><img src="assets/readme/badges/license.svg" alt="License: AGPL-3.0"></a>
   <a href="https://github.com/GabrieleLozupone/kokon/stargazers"><img src="https://img.shields.io/github/stars/GabrieleLozupone/kokon?style=flat-square&labelColor=333&color=6b6b6b&cacheSeconds=3600&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjRjVDNTE4IiBzdHJva2Utd2lkdGg9IjIuNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBmaWxsPSIjRjVDNTE4IiBkPSJNMTIgMi41bDIuOSA2IDYuNi45LTQuOCA0LjYgMS4yIDYuNUwxMiAxNy40bC01LjkgMy4xIDEuMi02LjVMMi41IDkuNGw2LjYtLjl6Ii8%2BPC9zdmc%2B" alt="Stars"></a>
 </p>
 

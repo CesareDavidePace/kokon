@@ -182,6 +182,13 @@ summary::-webkit-details-marker { display: none; }
 summary::after { content: "+"; font-weight: 400; font-size: 26px; line-height: 1; color: var(--text-3); transition: transform 0.25s; }
 details[open] summary::after { transform: rotate(45deg); }
 details p { margin: -6px 0 22px; color: var(--text-2); max-width: 44em; }
+details p:has(+ .mac-steps) { margin-bottom: 12px; }
+/* Mac "Open Anyway" steps with screenshots (FAQ and setup guide) */
+.mac-steps { margin: 0 0 24px; padding-left: 1.4em; color: var(--text-2); max-width: 44em; }
+.mac-steps li { margin: 0 0 16px; padding-left: 4px; }
+.mac-steps img { display: block; margin-top: 12px; max-width: 100%; height: auto; }
+.mac-steps img.dialog { width: 230px; }
+.mac-steps img.settings { width: 520px; border-radius: 12px; box-shadow: 0 0 0 1px var(--line); }
 
 /* Maker */
 .maker { display: inline-flex; align-items: center; gap: 14px; margin-top: 56px; padding: 10px 22px 10px 10px; border-radius: 999px; background: var(--card); box-shadow: inset 0 0 0 1px var(--line); text-align: left; transition: background 0.2s; }

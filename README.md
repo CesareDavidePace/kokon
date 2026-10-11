@@ -405,9 +405,21 @@ release notes, or [build it yourself](#build-from-source).
 <br>
 
 Kokon is not notarized by Apple (that needs a paid Apple developer account), so macOS blocks
-it the first time. Try to open it once, then go to **System Settings → Privacy &
-Security**, scroll down and click **Open Anyway**. You only do this once; in-app updates don't
-trigger it again. You can also [build it yourself](#build-from-source).
+it the first time. You only do this once; in-app updates don't trigger it again.
+
+1. Open Kokon. macOS says **“Kokon” Not Opened**: click **Done** (not *Move to Trash*).
+
+   <img src="docs/media/mac/not-opened.png" alt="The macOS dialog “Kokon” Not Opened, with the buttons Move to Trash and Done" width="260">
+
+2. Open **System Settings → Privacy & Security** and scroll down to **Security**. Next to
+   “Kokon” was blocked to protect your Mac, click **Open Anyway**, then confirm with your
+   password or Touch ID.
+
+   <img src="docs/media/mac/open-anyway.png" alt="System Settings, Privacy and Security: “Kokon” was blocked to protect your Mac, with the Open Anyway button highlighted" width="560">
+
+3. Open Kokon again and click **Open** in the last prompt.
+
+You can also [build it yourself](#build-from-source).
 
 </details>
 

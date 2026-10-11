@@ -90,7 +90,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/style.css?v=3">
+<link rel="stylesheet" href="assets/style.css?v=4">
 <script type="application/ld+json">
 {
  "@context": "https://schema.org",
@@ -450,7 +450,13 @@
         <details><summary>Is it an alternative to Photoshop Generative Fill?</summary><p>For many edits, yes: paint an area and describe what should be there, or remove, replace and add objects. It runs offline and costs nothing, but it is an AI editor, not a full layer-based image editor.</p></details>
         <details><summary>Can I use the images commercially?</summary><p>Not with the default model. The app is open source (AGPL-3.0), but Qwen-Image 2.1 is released under the Qwen Research License: research and evaluation only, no commercial use without a license from the Qwen team. The optional upscaler is also non-commercial (CC BY-NC-SA 4.0).</p></details>
         <details><summary>Windows says the app is unrecognized. Is it safe?</summary><p>The beta installer is not code-signed yet, so SmartScreen warns about it. Click &quot;More info&quot; and then &quot;Run anyway&quot;. The code is public and every download the app makes is checked against a pinned hash.</p></details>
-        <details><summary>macOS says Kokon cannot be opened. What do I do?</summary><p>The beta is not notarized by Apple yet, so macOS blocks it the first time. Try to open it once, then go to System Settings → Privacy &amp; Security, scroll down and click &quot;Open Anyway&quot;. You only do this once; in-app updates don&#39;t trigger it again.</p></details>
+        <details id="mac-open"><summary>macOS says Kokon cannot be opened. What do I do?</summary><p>The beta is not notarized by Apple yet, so macOS blocks it the first time:</p>
+          <ol class="mac-steps">
+            <li>Open Kokon. macOS says <strong>&ldquo;Kokon&rdquo; Not Opened</strong>: click <strong>Done</strong> (not <em>Move to Trash</em>).<img class="dialog" src="assets/mac/not-opened.webp" width="534" height="550" alt="The macOS dialog &ldquo;Kokon&rdquo; Not Opened, with the buttons Move to Trash and Done" loading="lazy"></li>
+            <li>Open <strong>System Settings &rarr; Privacy &amp; Security</strong> and scroll down to <strong>Security</strong>. Next to &ldquo;Kokon&rdquo; was blocked to protect your Mac, click <strong>Open Anyway</strong> and confirm with your password or Touch ID.<img class="settings" src="assets/mac/open-anyway.webp" width="970" height="360" alt="System Settings, Privacy and Security: &ldquo;Kokon&rdquo; was blocked to protect your Mac, with the Open Anyway button highlighted" loading="lazy"></li>
+            <li>Open Kokon again and click <strong>Open</strong>. You only do this once; in-app updates don&#39;t trigger it again.</li>
+          </ol>
+        </details>
         <details><summary>Does it work offline?</summary><p>Yes. After setup has downloaded the models, everything runs offline.</p></details>
       </div>
     </div>

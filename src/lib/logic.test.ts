@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   activeOverrides, buildRequest, compareBase, diffPixels, emptyComposer, expansionPixels, expansionPreset, jobFraction, jobLabel, moveRef, needsPrompt, normalizeQuality, persistentAdvanced, pipelineSummary,
   planPipeline, remainingSeconds, sizeForWidth, timeAgo, upscaleRequest, upscaleTargets, versionLabels, type Ref,
-  formatBytes, installItemShort, installItemText, installProgress, installStep, installTimeLeft, timelineLinks, undoTarget, aspectLabel, parseRatio, sizeForRatio, expandToRatio, expandToSize, arcLayout,
+  neighbourAfterRemoval, previewIndex, formatBytes, installItemShort, installItemText, installProgress, installStep, installTimeLeft, timelineLinks, undoTarget, aspectLabel, parseRatio, sizeForRatio, expandToRatio, expandToSize, arcLayout,
 } from "./logic";
 import type { GenerationRecord, InstallItem, JobView, Plan } from "./types";
 
@@ -364,5 +364,24 @@ describe("timeline arcs", () => {
     expect(p[1].dx2).toBeLessThan(p[0].dx2);
     expect(p[0].dx2 + p[1].dx2).toBe(0);
     expect(p[0].dx1).toBe(0);
+  });
+});
+
+describe("gallery preview", () => {
+  it("stays on the same image when the list shifts", () => {
+    // A new image arrives at the top: the shown image moves down one place.
+    expect(previewIndex(["a", "b", "c"], "b", 1)).toBe(1);
+    expect(previewIndex(["new", "a", "b", "c"], "b", 1)).toBe(2);
+  });
+  it("falls back to the last position when the image is gone", () => {
+    expect(previewIndex(["a", "c"], "b", 1)).toBe(1);
+    expect(previewIndex(["a"], "b", 4)).toBe(0);
+    expect(previewIndex([], "b", 0)).toBeNull();
+  });
+  it("moves to a neighbour on removal", () => {
+    expect(neighbourAfterRemoval(["a", "b", "c"], "b")).toBe("c");
+    expect(neighbourAfterRemoval(["a", "b", "c"], "c")).toBe("b");
+    expect(neighbourAfterRemoval(["a"], "a")).toBeNull();
+    expect(neighbourAfterRemoval(["a"], "x")).toBeNull();
   });
 });

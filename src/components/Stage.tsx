@@ -12,9 +12,9 @@ import {
   addAsReference, cancelJob, focusPrompt, getState, itemSource, removeSessionItem, reusePrompt, selectedItem, selectItem, sessionLabels, sessionLinks, setState, submitRequest, toastError, toastInfo, useStore, type SessionItem,
 } from "../lib/store";
 import type { GenerationRecord, JobView, Mode, Size } from "../lib/types";
-import { CompareFrame } from "./Compare";
+import { CompareFrame, CompareFullscreen } from "./Compare";
 import { IconButton, Popover, useFit } from "./ui";
-import { FullscreenButton, ZoomImage } from "./Viewer";
+import { Fullscreen, FullscreenButton, isTyping, ZoomImage, type ViewerNav } from "./Viewer";
 import { fileManager, shortcut } from "../lib/platform";
 
 export const MODE_ICON: Record<Mode, React.ReactNode> = {
@@ -370,14 +370,14 @@ function InputActions({ item }: { item: SessionItem }) {
 
 /** A result or input fitted to the stage (never enlarged past its own size), with the
  * full-screen button in its top-right corner. */
-function PlainFrame({ src, alt, w, h }: { src: string; alt: string; w: number; h: number }) {
+function PlainFrame({ src, alt, w, h, onFullscreen }: { src: string; alt: string; w: number; h: number; onFullscreen: () => void }) {
   const { ref, box } = useFit(w / h);
   const bw = Math.min(box.w, w);
   return (
     <div className="stage-frame" ref={ref}>
       <div className="image-box" style={{ width: bw, height: bw * (h / w) }}>
         <img className="stage-img fill" src={src} alt={alt} draggable={false} />
-        <FullscreenButton hint="Click to zoom to 100 %" content={<ZoomImage src={src} alt={alt} />} />
+        <FullscreenButton onOpen={onFullscreen} />
       </div>
     </div>
   );
@@ -638,6 +638,45 @@ function Ring({ frac }: { frac: number }) {
   );
 }
 
+/** A version that has a picture to show (not a job still running or one that failed). */
+const viewable = (i: SessionItem) => !!(i.gen || i.input);
+
+/** Full screen for the selected version: follows the selection, and ←/→ (or the arrows on
+ * the sides) step through the versions of the timeline without leaving it. */
+function StageFullscreen({ item, session, showOriginal, onClose }: { item: SessionItem; session: SessionItem[]; showOriginal: boolean; onClose: () => void }) {
+  const nav = useMemo<ViewerNav>(() => {
+    const at = session.findIndex((i) => i.key === item.key);
+    const step = (d: number) => {
+      for (let j = at + d; j >= 0 && j < session.length; j += d) {
+        const key = session[j].key;
+        if (viewable(session[j])) return () => selectItem(key);
+      }
+      return undefined;
+    };
+    const shown = session.filter(viewable);
+    return { prev: step(-1), next: step(1), pos: `${shown.findIndex((i) => i.key === item.key) + 1} / ${shown.length}` };
+  }, [item.key, session]);
+
+  const g = item.gen;
+  const base = g ? compareBase(g) : null;
+  const from = g?.pipeline?.original_path ? g.pipeline.enlarged_from : null;
+  let content: React.ReactNode;
+  let hint = "Click to zoom to 100 %";
+  if (g && from && showOriginal) content = <ZoomImage key={`original-${g.id}`} src={urls.genOriginal(g.id)} alt={`${g.prompt} (before upscaling)`} />;
+  else if (g && base) {
+    content = <CompareFullscreen key={g.id} g={g} base={base} />;
+    hint = "Hold B for the original";
+  } else {
+    const src = g ? urls.gen(g.id) : urls.input(item.input!.id);
+    content = <ZoomImage key={src} src={src} alt={g?.prompt ?? item.input?.original_name ?? ""} />;
+  }
+  return (
+    <Fullscreen hint={hint} onClose={onClose} nav={nav}>
+      {content}
+    </Fullscreen>
+  );
+}
+
 export function Stage() {
   const item = useStore(selectedItem);
   const session = useStore((s) => s.session);
@@ -645,6 +684,29 @@ export function Stage() {
   const labels = useMemo(() => sessionLabels(session), [session]);
   // The result whose pre-upscale original is on screen instead of it.
   const [originalOf, setOriginalOf] = useState<string | null>(null);
+  const [full, setFull] = useState(false);
+  const canFull = !!item && viewable(item);
+
+  // F opens full screen on the selected version (Esc or F again closes it).
+  useEffect(() => {
+    if (full || !canFull) return;
+    const down = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== "f" || e.repeat || e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target) || getState().overlay) return;
+      setFull(true);
+    };
+    window.addEventListener("keydown", down);
+    return () => window.removeEventListener("keydown", down);
+  }, [full, canFull]);
+
+  // Nothing to show any more (the version was removed, or a new one is being made): leave full screen.
+  useEffect(() => {
+    if (full && !canFull) setFull(false);
+  }, [full, canFull]);
+
+  const fullscreen = full && canFull && item && (
+    <StageFullscreen item={item} session={session} showOriginal={!!(item.gen && originalOf === item.gen.id)} onClose={() => setFull(false)} />
+  );
+  const openFull = () => setFull(true);
 
   if (!item) {
     return (
@@ -677,11 +739,11 @@ export function Stage() {
     view = (
       <>
         {g && from && showOriginal ? (
-          <PlainFrame key={`original-${g.id}`} src={urls.genOriginal(g.id)} alt={`${g.prompt} (before upscaling)`} w={from.width} h={from.height} />
+          <PlainFrame key={`original-${g.id}`} src={urls.genOriginal(g.id)} alt={`${g.prompt} (before upscaling)`} w={from.width} h={from.height} onFullscreen={openFull} />
         ) : item.gen && base ? (
-          <CompareFrame key={`compare-${item.gen.id}`} g={item.gen} base={base} />
+          <CompareFrame key={`compare-${item.gen.id}`} g={item.gen} base={base} onFullscreen={openFull} />
         ) : (
-          <PlainFrame key={src} src={src} alt={item.gen?.prompt ?? item.input?.original_name ?? ""} w={w} h={h} />
+          <PlainFrame key={src} src={src} alt={item.gen?.prompt ?? item.input?.original_name ?? ""} w={w} h={h} onFullscreen={openFull} />
         )}
         <StageBar item={item} label={labels[item.key]} showOriginal={showOriginal} setShowOriginal={(on) => setOriginalOf(on && g ? g.id : null)} />
       </>
@@ -692,6 +754,7 @@ export function Stage() {
     <div className="stage">
       {view}
       <Timeline labels={labels} />
+      {fullscreen}
     </div>
   );
 }

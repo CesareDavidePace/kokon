@@ -101,7 +101,12 @@ export function NameField(props: { value: string; onSave: (v: string) => void; o
       className={`name-field ${props.className ?? ""}`}
       value={v}
       autoFocus
-      onFocus={(e) => e.currentTarget.select()}
+      // Caret at the end, nothing selected: typing adds to the name instead of replacing it.
+      onFocus={(e) => {
+        const n = e.currentTarget.value.length;
+        e.currentTarget.setSelectionRange(n, n);
+        e.currentTarget.scrollLeft = e.currentTarget.scrollWidth;
+      }}
       onChange={(e) => setV(e.target.value)}
       onClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => {

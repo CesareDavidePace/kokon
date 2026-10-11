@@ -656,3 +656,19 @@ export function diffPixels(after: Uint8ClampedArray, before: Uint8ClampedArray, 
   }
   return n ? changed / n : 0;
 }
+
+/** Where the gallery preview stands in `ids`: on the image it shows (`id`) wherever the list
+ * moved it, else at its last position `at` (clamped); null when the list is empty. */
+export function previewIndex(ids: string[], id: string, at: number): number | null {
+  if (!ids.length) return null;
+  const i = ids.indexOf(id);
+  return i >= 0 ? i : Math.min(Math.max(at, 0), ids.length - 1);
+}
+
+/** The image to show once `id` leaves the list: the next one, the previous at the end, or
+ * null when it was the only one (or not in the list). */
+export function neighbourAfterRemoval(ids: string[], id: string): string | null {
+  const i = ids.indexOf(id);
+  if (i < 0) return null;
+  return ids[i + 1] ?? ids[i - 1] ?? null;
+}

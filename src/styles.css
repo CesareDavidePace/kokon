@@ -419,6 +419,23 @@ pre.diag { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font
 .viewer-tag { color: #fff; font-weight: 600; }
 .viewer-close { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; color: #fff; background: rgba(255, 255, 255, 0.12); }
 .viewer-close:hover { background: rgba(255, 255, 255, 0.22); }
+/* previous / next on the sides of a picture; shown while the mouse moves */
+.nav-arrow { position: absolute; top: 50%; z-index: 3; width: 48px; height: 48px; margin-top: -24px; border-radius: 999px; display: grid; place-items: center; color: #fff; background: rgba(0, 0, 0, 0.5); transition: opacity 0.2s, background 0.15s; }
+.nav-arrow.left { left: 14px; }
+.nav-arrow.right { right: 14px; }
+.nav-arrow:hover { background: rgba(0, 0, 0, 0.72); }
+.nav-arrow.hidden { opacity: 0; }
+.nav-arrow:focus-visible { opacity: 1; }
+
+/* gallery preview: one image over the grid */
+.preview { position: absolute; inset: 0; z-index: 5; background: var(--bg); display: flex; flex-direction: column; }
+.preview-prompt { flex: 1; min-width: 0; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.preview-pos { font-size: 13px; font-variant-numeric: tabular-nums; }
+.preview-stage { position: relative; flex: 1; min-height: 0; }
+.preview-img { position: absolute; top: 0; bottom: 0; left: 76px; width: calc(100% - 152px); height: 100%; object-fit: contain; user-select: none; }
+.preview-bar { display: flex; align-items: center; gap: 6px; padding: 10px 16px 14px; flex: none; }
+.preview-bar .spacer { flex: 1; }
+.preview-bar .btn.primary { margin-left: 6px; }
 
 /* ---------- aspect ratio and size menus ---------- */
 .popover.wide { min-width: 0; }

@@ -50,7 +50,7 @@ Double-click or F2 to rename`}
             <span className="cover">{p.cover && <img src={urls.sourceThumb(p.cover)} alt="" draggable={false} loading="lazy" />}</span>
             <span className="proj-text">
               {renaming === p.id ? (
-                <NameField value={p.named ? p.title : ""} onSave={(v) => renameProject(p.id, v)} onDone={() => setRenaming(null)} />
+                <NameField value={p.title} onSave={(v) => renameProject(p.id, v)} onDone={() => setRenaming(null)} />
               ) : (
                 <span className="proj-title">{p.title}</span>
               )}
@@ -92,7 +92,7 @@ export function ProjectTitle() {
   const id = useStore((s) => s.projectId);
   const meta = useStore((s) => s.projects.find((p) => p.id === s.projectId));
   const [editing, setEditing] = useState(false);
-  if (editing) return <NameField className="title-field" value={meta?.named ? meta.title : ""} onSave={(v) => renameProject(id, v)} onDone={() => setEditing(false)} />;
+  if (editing) return <NameField className="title-field" value={meta?.title ?? ""} onSave={(v) => renameProject(id, v)} onDone={() => setEditing(false)} />;
   return (
     <button className={`project-title ${meta ? "" : "placeholder"}`} title="Rename project" onClick={() => setEditing(true)}>
       {meta?.title ?? "Untitled project"}

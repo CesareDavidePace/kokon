@@ -25,7 +25,7 @@ const DIFF_SIDE = 1024;
 const isTyping = (t: EventTarget | null) => t instanceof HTMLElement && (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName));
 
 /** The result with the selected comparison view, sized to fit the stage (or the screen). */
-export function CompareFrame({ g, base, fullscreen = false }: { g: GenerationRecord; base: CompareBase; fullscreen?: boolean }) {
+export function CompareFrame({ g, base, fullscreen = false, onFullscreen }: { g: GenerationRecord; base: CompareBase; fullscreen?: boolean; onFullscreen?: () => void }) {
   const mode = useStore((s) => s.compare);
   const flickerMs = useStore((s) => s.flickerMs);
   const { ref, box } = useFit(g.width / g.height);
@@ -123,20 +123,22 @@ export function CompareFrame({ g, base, fullscreen = false }: { g: GenerationRec
           </div>
         )}
         {!fullscreen && (
-          <FullscreenButton
-            hint="Hold B for the original"
-            content={
-              <>
-                <CompareFrame g={g} base={base} fullscreen />
-                <div className="viewer-compare-bar">
-                  <CompareBar />
-                </div>
-              </>
-            }
-          />
+          <FullscreenButton hint="Hold B for the original" onOpen={onFullscreen} content={<CompareFullscreen g={g} base={base} />} />
         )}
       </div>
     </div>
+  );
+}
+
+/** What full screen shows for a result with an original: the comparison and its controls. */
+export function CompareFullscreen({ g, base }: { g: GenerationRecord; base: CompareBase }) {
+  return (
+    <>
+      <CompareFrame g={g} base={base} fullscreen />
+      <div className="viewer-compare-bar">
+        <CompareBar />
+      </div>
+    </>
   );
 }
 

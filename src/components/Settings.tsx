@@ -179,10 +179,11 @@ export function Settings() {
                 <span>Check for updates once a day</span>
                 <Switch on={autoCheckEnabled(cfg.ui)} onChange={(v) => set({ ui: { ...cfg.ui, updateCheck: v } })} />
               </div>
-              <div className="field-row" style={{ marginTop: -10 }}>
-                <span className="muted">
-                  Kokon {appVersion} · only asks GitHub for the latest version number; nothing about you or your images is sent. Updates install when you click them.
-                </span>
+              <span className="muted" style={{ marginTop: -10 }}>
+                Only asks GitHub for the latest version number; nothing about you or your images is sent. Updates install when you click them.
+              </span>
+              <div className="field-row">
+                <span>You have Kokon {appVersion}</span>
                 <button className="btn" onClick={() => checkForUpdate(true)}>
                   Check now
                 </button>
@@ -204,17 +205,21 @@ export function Settings() {
 
           {tab === "models" && (
             <>
-              <button
-                className="btn"
-                style={{ alignSelf: "flex-start" }}
-                onClick={() => {
-                  if (dirty && !window.confirm("Discard the unsaved changes and open the model setup?")) return;
-                  setState({ overlay: null, needsSetup: true });
-                }}
-              >
-                <Download size={14} /> Set up models…
-              </button>
-              <span className="muted" style={{ marginTop: -10 }}>Downloads the official Qwen-Image 2.1 weights for your graphics card, or switches between the 12, 16, 24 and 32 GB presets.</span>
+              <div className="setting-card">
+                <div className="setting-card-text">
+                  <strong>Model setup</strong>
+                  <span className="muted">Downloads the official Qwen-Image 2.1 weights for your graphics card, or switches between the 12, 16, 24 and 32 GB presets.</span>
+                </div>
+                <button
+                  className="btn primary"
+                  onClick={() => {
+                    if (dirty && !window.confirm("Discard the unsaved changes and open the model setup?")) return;
+                    setState({ overlay: null, needsSetup: true });
+                  }}
+                >
+                  <Download size={15} /> Set up models…
+                </button>
+              </div>
               <PathField label="stable-diffusion.cpp folder" value={cfg.sdcppDir} folder onChange={(v) => set({ sdcppDir: v })} />
               {cfg.profiles.length > 1 ? (
                 <label className="field-row">

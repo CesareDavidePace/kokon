@@ -166,9 +166,9 @@ describe("upscaling", () => {
   it("describes plans", () => {
     const p = {
       output: { width: 2752, height: 1536 }, working: { width: 2080, height: 1152 }, content: { x: 12, y: 2, width: 2056, height: 1148 },
-      upscaler: "4x-UltraSharp", upscale: null,
+      upscaler: "4xNomos2_hq_mosr", upscale: null,
     } as unknown as Plan;
-    expect(planPipeline(p)).toBe("2080×1152 render → 2752×1536 output (UltraSharp)");
+    expect(planPipeline(p)).toBe("2080×1152 render → 2752×1536 output (MoSR)");
     const quick = { ...p, upscaler: null, upscale: { method: "quick", source: { width: 1376, height: 768 } } } as Plan;
     expect(planPipeline(quick)).toBe("1376×768 → 2752×1536 (Lanczos)");
   });

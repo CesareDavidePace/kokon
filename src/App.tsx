@@ -17,6 +17,8 @@ import { Stage } from "./components/Stage";
 import { Tour } from "./components/Tour";
 import { IconButton } from "./components/ui";
 import { shortcut } from "./lib/platform";
+import { WhatsNew, whatsNewDue } from "./components/WhatsNew";
+import { UpscalerCompare } from "./components/Upscalers";
 import { KokonMark, Welcome } from "./components/Welcome";
 import { autoCheckForUpdate, installUpdate } from "./lib/updates";
 
@@ -175,6 +177,7 @@ async function uploadBlobs(files: File[]) {
 export default function App() {
   const overlay = useStore((s) => s.overlay);
   const needsSetup = useStore((s) => s.needsSetup);
+  const compareUpscalers = useStore((s) => s.compareUpscalers);
   const sidebar = useStore((s) => s.sidebar);
   const editing = useStore((s) => s.composer.refs.length > 0 && s.session.length > 0);
   const [boot, setBoot] = useState<"connecting" | "ok" | string>("connecting");
@@ -207,11 +210,15 @@ export default function App() {
           tourPending.current = true;
           addExampleProjects().catch(() => {});
         }
-        setState({ needsSetup: !cfg.setupComplete, ...(welcomeSeen ? {} : { overlay: "welcome" }) });
+        // After an app update: what's new, with the engine download when the release needs a
+        // newer one (it can be postponed there; offered again only for another release).
+        const whatsNew = cfg.setupComplete && whatsNewDue(ui, st?.engine);
+        const engineUpdate = whatsNew && !!st?.engine?.update_needed;
+        setState({ needsSetup: !cfg.setupComplete, ...(!welcomeSeen ? { overlay: "welcome" } : whatsNew ? { overlay: "whats-new" } : {}) });
         setBoot("ok");
         autoCheckForUpdate();
-        // Preload the model so the first generation starts immediately.
-        if (cfg.setupComplete && st && st.server.state === "stopped") api.startBackend().then(refreshStatus, () => refreshStatus());
+        // Preload the model so the first generation starts immediately (not an engine about to be replaced).
+        if (cfg.setupComplete && !engineUpdate && st && st.server.state === "stopped") api.startBackend().then(refreshStatus, () => refreshStatus());
       } catch (e) {
         setBoot(String(e));
       }
@@ -355,6 +362,8 @@ export default function App() {
       </div>
       {overlay === "settings" && <SettingsDialog />}
       {overlay === "welcome" && <Welcome />}
+      {overlay === "whats-new" && <WhatsNew />}
+      {compareUpscalers && <UpscalerCompare />}
       <Tour />
       <Toasts />
     </div>

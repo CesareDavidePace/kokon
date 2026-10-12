@@ -17,25 +17,25 @@ const LEGACY_DATA_DIR: &str = "QwenLocalStudio";
 pub const DATA_DIR_NAME: &str = "KokonData";
 pub const DEFAULT_SERVER_PORT: u16 = 39150;
 pub const DEFAULT_SERVICE_PORT: u16 = 39151;
-/// ESRGAN models offered in Settings: (file stem, label, download URL). Chosen by visual A/B on
-/// a Qwen edit (2026-10-06): both keep fine texture that RealESRGAN_x4plus smooths away.
-pub const UPSCALER_CHOICES: &[(&str, &str, &str)] = &[
-    ("4x-UltraSharp", "UltraSharp", "https://huggingface.co/uwg/upscaler/resolve/main/ESRGAN/4x-UltraSharp.pth"),
-    ("4x_NMKD-Superscale-SP_178000_G", "Superscale-SP", "https://huggingface.co/uwg/upscaler/resolve/main/ESRGAN/4x_NMKD-Superscale-SP_178000_G.pth"),
+/// Schema 8 (2026-10-12): the upscalers folder setting is gone (always `<sdcpp>/models/upscalers`)
+/// and ESRGAN tile sizes reset to automatic.
+const SCHEMA_VERSION: u32 = 8;
+/// `upscaler_model` value for a plain Lanczos resize (no model).
+pub const LANCZOS: &str = "lanczos";
+/// Upscalers offered in Settings: (file stem, label). Superscale-SP is a setup download, MoSR is
+/// bundled with the app, UltraSharp is an optional download (`catalog::UPSCALER_DOWNLOADS`).
+pub const UPSCALER_CHOICES: &[(&str, &str)] = &[
+    ("4x_NMKD-Superscale-SP_178000_G", "Superscale-SP"),
+    (crate::catalog::UPSCALER_NAME, "MoSR (experimental)"),
+    ("4x-UltraSharp", "UltraSharp"),
+    (LANCZOS, "Lanczos (plain resize)"),
 ];
+/// Default model (user choice, 2026-10-12, after MoSR drew a grid on clean renders).
 pub const DEFAULT_UPSCALER: &str = UPSCALER_CHOICES[0].0;
-/// Default before schema 2; configs still on it are moved to [`DEFAULT_UPSCALER`].
-const OLD_DEFAULT_UPSCALER: &str = "RealESRGAN_x4plus";
-const SCHEMA_VERSION: u32 = 7;
-/// Profile id of the official Qwen-Image 2.1 weights (the default since schema 5).
-pub const OFFICIAL_PROFILE_ID: &str = "qwen-image-2.1";
-
-/// Where to download `name`, if it is one of [`UPSCALER_CHOICES`].
-pub fn upscaler_download_url(name: &str) -> Option<&'static str> {
-    UPSCALER_CHOICES.iter().find(|(n, _, _)| *n == name).map(|(_, _, u)| *u)
-}
 /// Extensions sd-server accepts for model-backed upscalers (common.cpp, commit 3f8527a).
 pub const UPSCALER_EXTENSIONS: &[&str] = &["pth", "safetensors", "gguf", "pt"];
+/// Profile id of the official Qwen-Image 2.1 weights (the default since schema 5).
+pub const OFFICIAL_PROFILE_ID: &str = "qwen-image-2.1";
 
 /// Where the text encoder's weights live. Compute always runs on the selected GPU except
 /// for `Cpu`, which also computes on the CPU (slow for image editing, measured ~35×).
@@ -255,12 +255,18 @@ pub struct AppConfig {
     /// Load all weights when the server starts (`--eager-load`) instead of on the first
     /// step of the first job (~7 s of per-segment loading).
     pub eager_load: bool,
-    /// Folder with ESRGAN models (`--hires-upscalers-dir`); None = `<sdcpp>\models\upscalers`.
-    pub upscalers_dir: Option<PathBuf>,
-    /// ESRGAN model name (file stem) used to enlarge results and for upscales.
+    /// Upscaler model (file stem in the upscalers folder); the bundled MoSR runs when its file
+    /// is missing.
     pub upscaler_model: String,
-    /// ESRGAN tile size in pixels; 0 = backend default (128).
+    /// Upscaler tile size in pixels; 0 = automatic (`planner::upscale_tile`).
     pub upscale_tile_size: u32,
+    /// Share of the upscaler's result kept over a plain Lanczos enlargement (0..1; 1 = only
+    /// the upscaler). Lower values tone down texture the model invents.
+    pub upscale_blend: f32,
+    /// Shrink the input before the upscaler so its x4 output is ~1.41x the target
+    /// (`pipeline::prescale_size`): the model then sees the kind of image it was trained on,
+    /// which avoided grid patterns on clean renders in an A/B on 8 images (2026-10-12).
+    pub upscale_prescale: bool,
     pub extra_server_args: Vec<String>,
     pub output_dir: PathBuf,
     pub keep_server_running: bool,
@@ -296,9 +302,10 @@ impl Default for AppConfig {
             vae_tile_size: 768,
             prefix_cache_type: "q8_0".into(),
             eager_load: true,
-            upscalers_dir: None,
             upscaler_model: DEFAULT_UPSCALER.into(),
             upscale_tile_size: 0,
+            upscale_blend: 1.0,
+            upscale_prescale: false,
             extra_server_args: vec![],
             output_dir: default_output_dir(),
             keep_server_running: false,
@@ -404,8 +411,14 @@ impl AppConfig {
                     if c.profiles.len() == 1 && c.profiles[0] == ModelProfile::default() {
                         c.profiles[0] = ModelProfile::official(&c.sdcpp_dir, c.preset());
                     }
-                    if c.schema_version < 2 && c.upscaler_model.trim() == OLD_DEFAULT_UPSCALER {
-                        c.upscaler_model = DEFAULT_UPSCALER.into();
+                    if c.schema_version < 8 {
+                        // ESRGAN tile sizes don't carry over to MoSR, which picks its own by
+                        // GPU memory. The custom upscalers folder key is ignored.
+                        c.upscale_tile_size = 0;
+                        // 0.9.0's default moves to the new one; a model picked by hand stays.
+                        if c.upscaler_model.trim() == "4x-UltraSharp" {
+                            c.upscaler_model = DEFAULT_UPSCALER.into();
+                        }
                     }
                     if c.schema_version < 7 {
                         // Turbo only (2026-10-09): the official profile moves from the base
@@ -466,9 +479,6 @@ impl AppConfig {
 
     pub fn relocate_paths(&mut self, old: &Path, new: &Path) {
         relocate(&mut self.sdcpp_dir, old, new);
-        if let Some(d) = self.upscalers_dir.as_mut() {
-            relocate(d, old, new);
-        }
         for p in &mut self.profiles {
             for f in [&mut p.diffusion_model, &mut p.vae, &mut p.text_encoder] {
                 relocate(f, old, new);
@@ -532,22 +542,31 @@ impl AppConfig {
         self.sage_attention && self.gpu_backend == GpuBackend::Cuda
     }
 
+    /// Folder of the upscaler (`--hires-upscalers-dir`).
     pub fn upscalers_dir(&self) -> PathBuf {
-        match &self.upscalers_dir {
-            Some(d) if !d.as_os_str().is_empty() => d.clone(),
-            _ => self.sdcpp_dir.join("models").join("upscalers"),
-        }
+        crate::catalog::join_rel(&self.sdcpp_dir, crate::catalog::UPSCALERS_SUBDIR)
     }
 
-    /// The configured ESRGAN model file, if present. sd-server resolves names the same
-    /// way: `<dir>/<name>.<ext>`, top level only.
-    pub fn upscaler_file(&self) -> Option<PathBuf> {
+    /// The upscaler that runs (name, file): the chosen model when its file is in the upscalers
+    /// folder (sd-server resolves `<dir>/<name>.<ext>` the same way), else the bundled MoSR.
+    pub fn upscaler(&self) -> Option<(String, PathBuf)> {
         let name = self.upscaler_model.trim();
-        if name.is_empty() {
+        if name == LANCZOS {
             return None;
         }
         let dir = self.upscalers_dir();
-        UPSCALER_EXTENSIONS.iter().map(|e| dir.join(format!("{name}.{e}"))).find(|p| p.is_file())
+        if !name.is_empty() && name != crate::catalog::UPSCALER_NAME {
+            if let Some(p) = UPSCALER_EXTENSIONS.iter().map(|e| dir.join(format!("{name}.{e}"))).find(|p| p.is_file()) {
+                return Some((name.to_string(), p));
+            }
+        }
+        let d = crate::catalog::UPSCALER;
+        d.is_present(&self.sdcpp_dir).then(|| (crate::catalog::UPSCALER_NAME.to_string(), d.path(&self.sdcpp_dir)))
+    }
+
+    /// The file of [`Self::upscaler`].
+    pub fn upscaler_file(&self) -> Option<PathBuf> {
+        self.upscaler().map(|(_, p)| p)
     }
 
     pub fn validate(&self) -> Result<(), AppError> {
@@ -568,6 +587,9 @@ impl AppConfig {
         }
         if self.profiles.is_empty() {
             return Err(AppError::new(ErrorCode::InvalidConfig, "No model profile configured."));
+        }
+        if !(0.0..=1.0).contains(&self.upscale_blend) {
+            return Err(AppError::new(ErrorCode::InvalidConfig, "Upscaler blend must be between 0 and 100 %."));
         }
         if self.vram_override_mib != 0 && !(4096..=196_608).contains(&self.vram_override_mib) {
             return Err(AppError::new(ErrorCode::InvalidConfig, "Simulated VRAM must be between 4096 and 196608 MiB (or 0 to detect it)."));
@@ -596,7 +618,8 @@ mod tests {
         assert!(!c.keep_server_running);
         assert!(c.validate().is_ok());
         assert_eq!(p.files().len(), 4);
-        assert_eq!(c.upscaler_model, "4x-UltraSharp");
+        assert_eq!(c.upscale_tile_size, 0, "automatic");
+        assert_eq!((c.upscaler_model.as_str(), c.upscale_blend, c.upscale_prescale), ("4x_NMKD-Superscale-SP_178000_G", 1.0, false));
         assert_eq!(c.upscalers_dir(), default_sdcpp_dir().join("models").join("upscalers"));
     }
 
@@ -694,18 +717,22 @@ mod tests {
     }
 
     #[test]
-    fn old_default_upscaler_is_migrated() {
+    fn schema_8_migration() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("config.json");
-        std::fs::write(&p, r#"{"schemaVersion":1,"upscalerModel":"RealESRGAN_x4plus"}"#).unwrap();
+        let old = r#"{"schemaVersion":7,"sdcppDir":"D:\\sd","upscalersDir":"E:\\esrgan","upscalerModel":"4x_NMKD-Superscale-SP_178000_G","upscaleTileSize":256}"#;
+        std::fs::write(&p, old).unwrap();
         let c = AppConfig::load_from(&p);
-        assert_eq!(c.upscaler_model, DEFAULT_UPSCALER);
         assert_eq!(c.schema_version, SCHEMA_VERSION);
-        // A choice made after the change is kept.
-        std::fs::write(&p, r#"{"schemaVersion":2,"upscalerModel":"RealESRGAN_x4plus"}"#).unwrap();
-        assert_eq!(AppConfig::load_from(&p).upscaler_model, "RealESRGAN_x4plus");
-        std::fs::write(&p, r#"{"schemaVersion":1,"upscalerModel":"4x_NMKD-Superscale-SP_178000_G"}"#).unwrap();
-        assert_eq!(AppConfig::load_from(&p).upscaler_model, "4x_NMKD-Superscale-SP_178000_G");
+        assert_eq!(c.upscale_tile_size, 0, "ESRGAN tile sizes reset to automatic");
+        assert_eq!(c.upscalers_dir(), crate::catalog::join_rel(Path::new(r"D:\sd"), "models/upscalers"), "the custom folder is no longer used");
+        assert_eq!(c.upscaler_model, "4x_NMKD-Superscale-SP_178000_G", "the model choice is kept");
+        assert!(!serde_json::to_string(&c).unwrap().contains("upscalersDir"), "the folder key is dropped on save");
+        std::fs::write(&p, r#"{"schemaVersion":7,"upscalerModel":"4x-UltraSharp"}"#).unwrap();
+        assert_eq!(AppConfig::load_from(&p).upscaler_model, DEFAULT_UPSCALER, "0.9.0's default moves to the new one");
+        // A tile size chosen after the change is kept.
+        std::fs::write(&p, r#"{"schemaVersion":8,"upscaleTileSize":512}"#).unwrap();
+        assert_eq!(AppConfig::load_from(&p).upscale_tile_size, 512);
     }
 
     #[test]
@@ -733,12 +760,23 @@ mod tests {
     fn upscaler_file_lookup() {
         let dir = tempfile::tempdir().unwrap();
         let mut c = AppConfig::default();
-        c.upscalers_dir = Some(dir.path().to_path_buf());
+        c.sdcpp_dir = dir.path().to_path_buf();
         assert!(c.upscaler_file().is_none());
-        std::fs::write(dir.path().join("4x-UltraSharp.pth"), b"x").unwrap();
-        assert_eq!(c.upscaler_file().unwrap(), dir.path().join("4x-UltraSharp.pth"));
-        c.upscaler_model = "  ".into();
-        assert!(c.upscaler_file().is_none());
+        std::fs::create_dir_all(c.upscalers_dir()).unwrap();
+        let f = c.upscalers_dir().join("4xNomos2_hq_mosr.pth");
+        std::fs::write(&f, b"partial").unwrap();
+        assert!(c.upscaler_file().is_none(), "a partial file is not installed");
+        std::fs::File::create(&f).unwrap().set_len(crate::catalog::UPSCALER.size).unwrap();
+        assert_eq!(c.upscaler().unwrap(), ("4xNomos2_hq_mosr".to_string(), f.clone()), "the chosen model is missing: the bundled MoSR runs");
+        let ss = c.upscalers_dir().join("4x_NMKD-Superscale-SP_178000_G.pth");
+        std::fs::write(&ss, b"x").unwrap();
+        assert_eq!(c.upscaler().unwrap(), ("4x_NMKD-Superscale-SP_178000_G".to_string(), ss));
+        c.upscaler_model = "4xNomos2_hq_mosr".into();
+        assert_eq!(c.upscaler_file().unwrap(), f);
+        c.upscaler_model = LANCZOS.into();
+        assert_eq!(c.upscaler(), None, "a plain resize, even with models installed");
+        c.upscale_blend = 1.5;
+        assert!(c.validate().is_err());
         // Older config files without the new fields keep loading with defaults.
         let old: AppConfig = serde_json::from_str(r#"{"serverPort": 41000, "vaeTileSize": 512}"#).unwrap();
         assert_eq!(old.profile().recommended_settings.area_quality, 2048 * 2048);

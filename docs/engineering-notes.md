@@ -22,7 +22,7 @@ Kokon.exe (Tauri 2 + React)      kokon-mcp.exe (MCP, stdio)      scripts
 | `crates/qls-core/src/geometry.rs` | Pure dimension math: 32-alignment, working canvas, outpaint/inpaint geometry |
 | `imaging.rs` | EXIF orientation, alpha-safe resize, padding, masks, compositing, PNG metadata/ICC |
 | `planner.rs` | Mode detection, resolution policy, upscale targets, memory budget (incl. Apple unified memory) |
-| `pipeline.rs` | Builds backend requests, post-processes results (crop back, ESRGAN tiling, composite) |
+| `pipeline.rs` | Builds backend requests, post-processes results (crop back, upscaler tiling, composite) |
 | `sdcpp.rs` | Inference adapter — the only code that knows sd-server's schema |
 | `process.rs` | sd-server launch/reuse/stop, log capture, truthful progress parsing |
 | `engine.rs` | Async job queue, cancellation, OOM retry, saving |
@@ -100,7 +100,7 @@ Details and the reasoning are in [platforms.md](platforms.md); the short version
   model from `--hires-upscalers-dir`, then re-sample at `denoising_strength`); reference
   latents and inpaint masks are carried into that pass. `cache_mode`/`cache_option`
   (e.g. `easycache`, `threshold=0.2`) work per request. `POST /sdcpp/v1/upscale`
-  (`{image, upscaler}`) runs ESRGAN synchronously, up to 8192 px per side.
+  (`{image, upscaler, tile_size}`) runs the upscaler model synchronously, up to 8192 px per side.
 - Qwen-Image 2.1 always decodes an alpha channel (≈1 % of pixels at alpha 247–254 on opaque
   images); outputs are made opaque unless transparency is requested.
 
@@ -113,12 +113,45 @@ ESRGAN → low-denoise refine at 2K) was removed on 2026-10-06: in A/B tests the
 edits look worse than a single pass.
 
 Whenever a result is larger than what the model rendered (edits restored to the source size,
-outpaint, sizes above the VRAM budget) it is enlarged with ESRGAN ×4 and then resized down to
-the exact size; Lanczos is only used for shrinking or factors below 1.1×.
+outpaint, sizes above the VRAM budget) it is enlarged with the upscaler model (×4) and then
+resized down to the exact size; Lanczos is only used for shrinking or factors below 1.1×.
+
+### Upscalers (2026-10-12)
+
+Default: Superscale-SP (ESRGAN, WTFPL, setup download), 128 px tiles with direct convolutions
+(13.2 s / +455 MB for 1472² on an RTX 5070 Ti, vs 24.7 s / +747 MB without). Also offered:
+MoSR (experimental, bundled), UltraSharp (optional download, non-commercial), Lanczos.
+`upscaleBlend` mixes the result with Lanczos; `upscalePrescale` shrinks the input so x4 lands
+~1.41x the target. Why MoSR is not the default: on clean full-size renders enlarged < ~2.8x it
+invents a fine crosshatch that the final downscale turns into a visible grid (the port matches
+PyTorch; the model does it). Superscale shows the same on JPEG blocks and dark areas; UltraSharp
+over-smooths skin and invents lines. A/B crops: `bench/out/upscale_ab-20261012-141057` (sdcpp
+workspace); the in-app comparison uses crops from it (`src/assets/upscalers`).
+
+#### MoSR in sd.cpp
+
+MoSR by Philip Hofmann (CC BY 4.0), 17 MB. Upstream sd.cpp has no MoSR, so the
+engine is the fork release `kokon-mosr-1` (3f8527a + `src/model/upscaler/mosr.hpp`, upstream
+PR #2128; Qwen output bit-identical to 3f8527a). Port vs PyTorch: mean error 0.04–0.16/255.
+
+- Launch: `--diffusion-conv-direct` on CUDA and Vulkan only (in sd.cpp it affects UNet/ControlNet
+  and this upscaler, never Qwen). On Metal it is ~4× slower. `--vae-conv-direct` makes Qwen's
+  decode ~1 s slower: not used.
+- Tile size per request (`planner::upscale_tile`): 768 px with ≥ 14 GiB of planning memory, 256 px
+  below (12 GB cards, 16–24 GB Macs); `upscaleTileSize` overrides it.
+- 1472² edit, ×4 (2026-10-12): RTX 5070 Ti CUDA 3.1 s / +1.55 GB at 768 px (3.8 s / +2.4 GB
+  without direct), ~5 s / +0.5 GB at 256 px; UltraSharp at 128 px took 24.5 s. Vulkan 3.3–3.55 s
+  / +1.25 GB (+4.2 GB without direct). M2 Pro Metal 54.6 s at 768 px, 78 s at 128 px.
+- The model ships inside the app (Tauri resource `bundled/`, fetched at build time by
+  `scripts/release/fetch-bundled.mjs`) and is copied into `<sdcpp>/models/upscalers/` at start;
+  Setup downloads it (mirror on this repo's `models-1` release, then the author's) only if that
+  fails.
+- Engine folders carry `kokon-engine.txt` with the release tag; without it (or with another
+  tag) Setup offers the engine download, and the app opens Setup once per release.
 
 Apple Silicon renders Fast at its full ~1 MP like a PC. Rendering 768² and enlarging it was
 removed on 2026-10-10: on the M2 Pro 16 GB it took 5 min 25 s against 4 min 20 s for a direct
-1376×768 render (the ESRGAN pass on Metal costs more than the smaller render saves).
+1376×768 render (the upscaler pass on Metal costs more than the smaller render saves).
 
 ### Turbo (the only image model since 2026-10-09)
 
@@ -153,7 +186,7 @@ old base file stays on disk until the user deletes it).
 - Open: Turbo Q6_K / Q8_0 vs Q4_K (the comparison script has `official8_q6_k`,
   `official8_q8_0`); Turbo at 1.5K and 2K on real prompts.
 
-The **Upscale** action runs the upscaler model (ESRGAN) straight on the image. The Detailed
+The **Upscale** action runs the upscaler model straight on the image. The Detailed
 method (a low-denoise img2img pass at about 2K first) was removed on 2026-10-09: Turbo's
 schedule leaves only 1–2 steps at strength 0.3. Requests with `"method": "detailed"` run as
 the upscaler model only.
@@ -179,8 +212,8 @@ path so it can be fetched by hand.
 
 In `%APPDATA%\Kokon\config.json`: `hardwarePreset` (`12gb|16gb|24gb|32gb`, written by the
 setup screen), `vramOverrideMib` (plan sizes as if the GPU had this much VRAM; 0 = detect;
-for testing), `upscalersDir` (null = default folder), `upscalerModel` (`4x-UltraSharp`; configs on the old
-`RealESRGAN_x4plus` default move to it), `upscaleTileSize` (0 = backend default 128),
+for testing), `upscaleTileSize` (0 = automatic, see the upscaler section; schema 8 reset it),
+`ui.engineUpdateSkipped` (engine release whose update was skipped in Setup),
 `prefixCacheType`, `eagerLoad`, `sageAttention`.
 
 ## Testing smaller cards on a bigger one

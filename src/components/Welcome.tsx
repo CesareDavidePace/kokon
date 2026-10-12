@@ -10,6 +10,7 @@ import replace from "../assets/showcase/replace.jpg";
 import restyle from "../assets/showcase/restyle.jpg";
 import text from "../assets/showcase/text.jpg";
 import { api } from "../lib/api";
+import { WHATS_NEW_VERSION } from "./WhatsNew";
 import { isMac } from "../lib/platform";
 import { autoCheckEnabled } from "../lib/updates";
 import { setState, toastError, useStore } from "../lib/store";
@@ -28,7 +29,8 @@ async function markSeen(updateCheck: boolean) {
   try {
     const cfg = await api.config();
     const ui = (cfg.ui ?? {}) as Record<string, unknown>;
-    if (!ui.welcomeSeen || autoCheckEnabled(ui) !== updateCheck) await api.saveConfig({ ...cfg, ui: { ...ui, welcomeSeen: true, updateCheck } });
+    // A new install starts on this release: its "what's new" notes are not shown.
+    if (!ui.welcomeSeen || autoCheckEnabled(ui) !== updateCheck) await api.saveConfig({ ...cfg, ui: { whatsNewSeen: WHATS_NEW_VERSION, ...ui, welcomeSeen: true, updateCheck } });
   } catch (e) {
     toastError(e);
   }

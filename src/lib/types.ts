@@ -79,6 +79,8 @@ export interface Plan {
   /** Calibrated to this machine after its first image; 0 = not measured yet. */
   estimated_seconds: number;
   upscaler: string | null;
+  /** Upscaler tile size in px (0 in plans of older versions). */
+  upscale_tile?: number;
   upscale: { method: UpscaleMethod; source: Size } | null;
 }
 
@@ -178,6 +180,8 @@ export interface StatusResponse {
   active_job: JobView | null;
   queue: { queued: number; jobs: JobView[] };
   upscaler?: { model: string; available: boolean };
+  /** The installed engine predates `release` (needed for the upscaler): Setup updates it. */
+  engine?: { release: string; update_needed: boolean };
   setup_complete: boolean;
 }
 
@@ -217,9 +221,14 @@ export interface AppConfig {
   vaeTileSize: number;
   prefixCacheType: string;
   eagerLoad: boolean;
-  upscalersDir: string | null;
+  /** Upscaler model (file stem); the bundled MoSR runs when its file is missing. */
   upscalerModel: string;
+  /** Upscaler tile size in px; 0 = automatic (ESRGAN 128; MoSR 768, or 256 under 14 GB). */
   upscaleTileSize: number;
+  /** Share of the upscaler's result kept over a Lanczos enlargement (0..1). */
+  upscaleBlend: number;
+  /** Shrink the input before upscaling (enlargements under ~2.8x). */
+  upscalePrescale: boolean;
   extraServerArgs: string[];
   outputDir: string;
   keepServerRunning: boolean;
@@ -237,7 +246,7 @@ export type InstallItemState = "present" | "pending" | "downloading" | "verifyin
 export interface InstallItem {
   id: string;
   label: string;
-  kind: "engine" | "model" | "optional";
+  kind: "engine" | "model";
   size: number;
   received: number;
   state: InstallItemState;
@@ -247,6 +256,9 @@ export interface InstallItem {
   page: string;
   path: string;
 }
+
+/** An upscaler offered in Settings (`GET /upscalers`). */
+export interface UpscalerItem { name: string; label: string; installed: boolean; size: number | null; page: string | null }
 
 export interface InstallStatus {
   running: boolean;

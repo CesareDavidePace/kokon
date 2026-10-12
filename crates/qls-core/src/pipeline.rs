@@ -462,6 +462,37 @@ impl Stitcher {
     }
 }
 
+/// Factor of the model's x4 output over the target that [`prescale_size`] aims for: the output
+/// is then shrunk ~1.41x, like the downscaled photos these models are trained on.
+pub const PRESCALE_OVERSHOOT: f64 = std::f64::consts::SQRT_2;
+
+/// Input size for an `scale`x upscaler so its output is about [`PRESCALE_OVERSHOOT`] times
+/// `target`: smaller than `content` for factors below ~2.8 (x4 model), else unchanged.
+pub fn prescale_size(content: Size, target: Size, scale: u32) -> Size {
+    let factor = (target.width as f64 / content.width as f64).max(target.height as f64 / content.height as f64);
+    let s = (factor * PRESCALE_OVERSHOOT / scale as f64).min(1.0);
+    if s >= 1.0 {
+        return content;
+    }
+    Size::new(((content.width as f64 * s).round() as u32).max(16), ((content.height as f64 * s).round() as u32).max(16))
+}
+
+/// Keeps `amount` (0..1) of the upscaler's result `up` and the rest of a Lanczos enlargement of
+/// `src` to the same size; alpha comes from `up`.
+pub fn blend_with_lanczos(mut up: RgbaImage, src: &RgbaImage, amount: f32) -> RgbaImage {
+    if amount >= 1.0 {
+        return up;
+    }
+    let base = imaging::resize(src, up.width(), up.height());
+    let a = amount.clamp(0.0, 1.0);
+    for (o, b) in up.pixels_mut().zip(base.pixels()) {
+        for c in 0..3 {
+            o[c] = (o[c] as f32 * a + b[c] as f32 * (1.0 - a)).round() as u8;
+        }
+    }
+    up
+}
+
 /// PNG (base64) of one tile for the upscale endpoint (alpha is dropped by the server).
 pub fn tile_png_b64(input: &RgbaImage, tile: &Tile) -> AppResult<String> {
     png_b64(&imaging::crop(input, tile.rect))
@@ -470,13 +501,29 @@ pub fn tile_png_b64(input: &RgbaImage, tile: &Tile) -> AppResult<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prescale_and_blend() {
+        let c = Size::new(1448, 1448);
+        // x1.41 (1.5K render to 2K): half the input, so x4 lands at 1.41x the target.
+        let p = prescale_size(c, Size::new(2048, 2048), 4);
+        assert_eq!(p, Size::new(724, 724));
+        assert_eq!(prescale_size(c, Size::new(2896, 2896), 4).width, 1024, "x2: ~0.71x");
+        assert_eq!(prescale_size(c, Size::new(5792, 5792), 4), c, "x4: the full input");
+        // Blend: 0 = Lanczos, 1 = the upscaler, alpha from the upscaler.
+        let src = RgbaImage::from_pixel(2, 2, image::Rgba([100, 100, 100, 255]));
+        let up = RgbaImage::from_pixel(8, 8, image::Rgba([200, 0, 50, 255]));
+        assert_eq!(blend_with_lanczos(up.clone(), &src, 1.0), up);
+        assert_eq!(blend_with_lanczos(up.clone(), &src, 0.0).get_pixel(3, 3).0, [100, 100, 100, 255]);
+        assert_eq!(blend_with_lanczos(up, &src, 0.5).get_pixel(3, 3).0, [150, 50, 75, 255]);
+    }
     use crate::config::RecommendedSettings;
     use crate::geometry::ExpansionUnits;
     use crate::planner::{GenerationRequest, Mode, OutpaintSpec, PlanInputs, Quality, ResolutionMode, UpscaleSpec, plan};
     use crate::sdcpp::b64_decode;
 
     fn env(sizes: Vec<Size>) -> PlanInputs {
-        PlanInputs { image_sizes: sizes, vram_total_mib: Some(16303), upscaler: Some("RealESRGAN_x4plus".into()), ..Default::default() }
+        PlanInputs { image_sizes: sizes, vram_total_mib: Some(16303), upscaler: Some("4xNomos2_hq_mosr".into()), ..Default::default() }
     }
     fn esrgan_opts() -> BackendOptions {
         BackendOptions { server_vae_tile_size: 768 }

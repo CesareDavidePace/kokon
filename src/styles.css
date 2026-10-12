@@ -538,3 +538,13 @@ pre.diag { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font
 .tour-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--surface-3); }
 .tour-dots i.on { background: var(--text); }
 @media (prefers-reduced-motion: reduce) { .tour-hole, .tour-card { transition: none; } }
+
+/* Upscalers: separator in the Advanced menu and the comparison dialog. */
+.menu-sep { border: 0; border-top: 1px solid var(--border); margin: 4px 0; width: 100%; }
+.upscaler-compare { width: min(880px, 94vw); max-height: 92vh; overflow-y: auto; background: var(--bg); border-radius: 18px; box-shadow: var(--shadow); padding: 22px 24px; display: flex; flex-direction: column; gap: 12px; }
+.upscaler-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.upscaler-grid figure { margin: 0; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.upscaler-grid img { width: 100%; aspect-ratio: 1; image-rendering: pixelated; border-radius: 10px; background: var(--surface); }
+.upscaler-grid figcaption { display: flex; flex-direction: column; gap: 2px; font-size: 12px; line-height: 1.4; color: var(--text-2); }
+.upscaler-grid figcaption strong { color: var(--text); font-size: 13px; }
+@media (max-width: 760px) { .upscaler-grid { grid-template-columns: repeat(2, 1fr); } }

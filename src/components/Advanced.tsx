@@ -2,6 +2,7 @@ import { Dices, RotateCcw } from "lucide-react";
 import { updateComposer, useStore } from "../lib/store";
 import type { Advanced, OutputFormat, Plan } from "../lib/types";
 import { Seg, Switch } from "./ui";
+import { UpscalerSettings } from "./Upscalers";
 
 // Verified against sd-server 3f8527a capabilities; replaced by the live list when loaded.
 // Steps, CFG and scheduler are fixed by the Turbo model's 8-step schedule (no CFG).
@@ -110,6 +111,9 @@ export function AdvancedPanel({ plan }: { plan: Plan | null }) {
       <button className="btn" onClick={() => updateComposer({ advanced: {}, seed: null })}>
         <RotateCcw size={14} /> Reset to automatic
       </button>
+
+      <hr className="menu-sep" />
+      <UpscalerSettings />
     </>
   );
 }

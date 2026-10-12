@@ -5,8 +5,9 @@ This product is licensed under the GNU Affero General Public License, version 3 
 (AGPL-3.0-only, see LICENSE). Commercial licenses for uses the AGPL does not allow are
 available from the copyright holder (see the README).
 
-Model weights and the upscaler that Kokon downloads at setup are not part of this product;
-they come from their authors under their own licenses (see the README).
+Model weights that Kokon downloads at setup are not part of this product; they come from
+their authors under their own licenses (see the README). The upscaler model included in the
+installer keeps its own license too (CC BY 4.0, see below).
 
 
 Third-party software included in the Kokon installer
@@ -24,6 +25,12 @@ Third-party software included in the Kokon installer
   and Zod (https://zod.dev), MIT, bundled in kokon-mcp.
 - Other Rust crates and npm packages, each under its own license as listed in Cargo.lock,
   package-lock.json and mcp/package-lock.json.
+- 4xNomos2_hq_mosr upscaler model by Philip Hofmann (Phhofm), from
+  https://github.com/Phhofm/models/releases/tag/4xNomos2_hq_mosr, licensed under the
+  Creative Commons Attribution 4.0 International License (CC BY 4.0,
+  https://creativecommons.org/licenses/by/4.0/). Included unmodified; Setup downloads the same
+  file from a mirror (https://github.com/GabrieleLozupone/kokon/releases/tag/models-1) if the
+  installed copy is missing.
 
 
 Downloaded by the setup screen (not part of this product)
@@ -31,8 +38,10 @@ Downloaded by the setup screen (not part of this product)
 
 Every file is pinned by URL, size and SHA-256 in crates/qls-core/src/catalog.rs.
 
-- stable-diffusion.cpp by leejet (https://github.com/leejet/stable-diffusion.cpp), MIT,
-  release master-929-3f8527a: CUDA 12, Vulkan or Metal build.
+- stable-diffusion.cpp by leejet (https://github.com/leejet/stable-diffusion.cpp), MIT:
+  CUDA 12, Vulkan or Metal build of commit 3f8527a with MoSR upscaler support added, from the
+  fork release https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/tag/kokon-mosr-1
+  (proposed upstream as https://github.com/leejet/stable-diffusion.cpp/pull/2128).
 - ggml by the ggml authors (https://github.com/ggml-org/ggml), MIT, included in the
   stable-diffusion.cpp builds.
 - NVIDIA CUDA 12 runtime and cuBLAS DLLs (NVIDIA cards only), redistributed in the
@@ -46,8 +55,7 @@ Every file is pinned by URL, size and SHA-256 in crates/qls-core/src/catalog.rs.
   https://huggingface.co/Qwen/Qwen-Image-2.1 for the terms.
 - Qwen3-VL 8B Instruct text encoder and vision projector by the Qwen team, from
   https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF; see that page for the terms.
-- 4x-UltraSharp upscaler by Kim2091 (optional), CC BY-NC-SA 4.0 (non-commercial), from
+- 4x_NMKD-Superscale-SP_178000_G upscaler by Nmkd (the default), WTFPL, from
   https://huggingface.co/uwg/upscaler.
-
-Selectable in Settings but not downloaded by Kokon: 4x_NMKD-Superscale-SP_178000_G by NMKD,
-placed by hand from https://huggingface.co/uwg/upscaler; see that page for the terms.
+- 4x-UltraSharp upscaler by Kim2091 (optional, downloaded from Settings), CC BY-NC-SA 4.0
+  (non-commercial), from https://huggingface.co/uwg/upscaler.

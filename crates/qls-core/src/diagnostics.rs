@@ -220,32 +220,47 @@ pub fn setup_checks(cfg: &AppConfig, server_ok: Option<bool>) -> SetupReport {
         });
     }
     checks.push(upscaler_check(cfg));
+    if exe_ok {
+        checks.push(engine_release_check(cfg));
+    }
     let backend_version = if exe_ok { backend_version(&exe) } else { None };
-    // The server and the ESRGAN model are optional: neither blocks starting.
-    let ready = checks.iter().filter(|c| c.id != "server" && c.id != "upscaler").all(|c| c.ok);
+    // Informational: the server starts on demand; an engine of an older release still
+    // generates (enlargements fall back to Lanczos), and Setup offers the update.
+    let ready = checks.iter().filter(|c| c.id != "server" && c.id != "engine_release").all(|c| c.ok);
     SetupReport { ready, checks, devices, backend_version }
 }
 
-/// ESRGAN model for sharper enlargements. Optional: without it Lanczos is used. The app
-/// never downloads models, so the check explains where to get it.
+/// The upscaler model (MoSR): enlarges results and runs Upscale. Shipped with the app and
+/// otherwise downloaded by Setup.
 pub fn upscaler_check(cfg: &AppConfig) -> Check {
-    let dir = cfg.upscalers_dir();
-    match cfg.upscaler_file() {
-        Some(p) => {
+    let label = "Upscaler".to_string();
+    let chosen = cfg.upscaler_model.trim();
+    if chosen == crate::config::LANCZOS {
+        return Check { id: "upscaler", label, ok: true, detail: "Lanczos (plain resize, no model)".into() };
+    }
+    match cfg.upscaler() {
+        Some((name, p)) => {
             let size = std::fs::metadata(&p).map(|m| fmt_size(m.len())).unwrap_or_default();
-            Check { id: "upscaler", label: "ESRGAN upscaler (optional)".into(), ok: true, detail: format!("{} ({size})", p.display()) }
+            let fallback = if name != chosen { format!("{chosen} not found in {}; using ", cfg.upscalers_dir().display()) } else { String::new() };
+            Check { id: "upscaler", label, ok: true, detail: format!("{fallback}{} ({size})", p.display()) }
         }
-        None => Check {
-            id: "upscaler",
-            label: "ESRGAN upscaler (optional)".into(),
-            ok: false,
-            detail: {
-                let name = cfg.upscaler_model.trim();
-                let get = crate::config::upscaler_download_url(name)
-                    .map(|u| format!(" Download {u} (64 MB) into that folder for sharper results."))
-                    .unwrap_or_default();
-                format!("Not found: {}\\{name}.pth — enlargements use Lanczos.{get}", dir.display())
-            },
+        None => Check { id: "upscaler", label, ok: false, detail: format!("Missing: {} — install it from Setup.", crate::catalog::UPSCALER.path(&cfg.sdcpp_dir).display()) },
+    }
+}
+
+/// Whether the installed engine is the catalog's release (needed for the upscaler).
+pub fn engine_release_check(cfg: &AppConfig) -> Check {
+    let engines: Vec<_> = crate::catalog::engine_downloads(cfg.gpu_backend).into_iter().filter(|d| d.engine_tag.is_some()).collect();
+    let tags: Vec<Option<String>> = engines.iter().map(|d| d.installed_tag(&cfg.sdcpp_dir)).collect();
+    let ok = tags.iter().all(|t| t.as_deref() == Some(crate::catalog::ENGINE_TAG));
+    Check {
+        id: "engine_release",
+        label: "Engine release".into(),
+        ok,
+        detail: if ok {
+            crate::catalog::ENGINE_TAG.into()
+        } else {
+            format!("An older engine is installed; Setup updates it to {} (needed for the upscaler).", crate::catalog::ENGINE_TAG)
         },
     }
 }
@@ -288,17 +303,25 @@ mod tests {
         assert!(r.checks.iter().any(|c| c.id == "server_exe" && !c.ok));
         assert_eq!(r.checks.iter().filter(|c| c.id == "model_file").count(), 4);
         let up = r.checks.iter().find(|c| c.id == "upscaler").unwrap();
-        assert!(!up.ok && up.detail.contains("4x-UltraSharp.pth") && up.detail.contains("huggingface.co/uwg/upscaler"));
+        assert!(!up.ok && up.detail.contains("4xNomos2_hq_mosr.pth"));
+        assert!(!r.checks.iter().any(|c| c.id == "engine_release"), "no engine, nothing to compare");
     }
 
     #[test]
-    fn upscaler_check_is_optional() {
+    fn upscaler_and_engine_release_checks() {
         let dir = tempfile::tempdir().unwrap();
         let mut cfg = AppConfig::default();
-        cfg.upscalers_dir = Some(dir.path().to_path_buf());
-        assert!(!upscaler_check(&cfg).ok);
-        std::fs::write(dir.path().join("4x-UltraSharp.pth"), vec![0u8; 2048]).unwrap();
+        cfg.sdcpp_dir = dir.path().to_path_buf();
+        cfg.gpu_backend = crate::config::GpuBackend::Cuda;
+        assert!(!upscaler_check(&cfg).ok, "required");
+        let up = crate::catalog::UPSCALER;
+        std::fs::create_dir_all(up.path(dir.path()).parent().unwrap()).unwrap();
+        std::fs::File::create(up.path(dir.path())).unwrap().set_len(up.size).unwrap();
         let c = upscaler_check(&cfg);
-        assert!(c.ok && c.detail.contains("4x-UltraSharp.pth"));
+        assert!(c.ok && c.detail.contains("4xNomos2_hq_mosr.pth"));
+        let e = engine_release_check(&cfg);
+        assert!(!e.ok && e.detail.contains(crate::catalog::ENGINE_TAG));
+        crate::catalog::ENGINE_CUDA.write_tag(dir.path()).unwrap();
+        assert!(engine_release_check(&cfg).ok);
     }
 }

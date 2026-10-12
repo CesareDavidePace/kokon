@@ -162,7 +162,8 @@ function InfoPanel({ g }: { g: GenerationRecord }) {
 function UpscaleMenu(props: { source: string; size: Size; original?: Size | null; parentId?: string | null; close: () => void }) {
   const { width: w, height: h } = props.size;
   const up = useStore((s) => s.status?.upscaler);
-  const via = up?.available ? upscalerLabel(up.model) : "Lanczos";
+  const oldEngine = useStore((s) => !!s.status?.engine?.update_needed);
+  const via = up?.available && !oldEngine ? upscalerLabel(up.model) : "Lanczos";
   const [customW, setCustomW] = useState(Math.min(MAX_UPSCALE_SIDE, w * 2));
   const targets = upscaleTargets(w, h, props.original);
   const custom = sizeForWidth(w, h, customW);

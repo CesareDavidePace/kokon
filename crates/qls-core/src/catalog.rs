@@ -2,8 +2,8 @@
 //! with, the official Qwen-Image 2.1 Turbo weights, and the VRAM presets that choose between them.
 //!
 //! Every file is pinned by URL, size and SHA-256 (from the Hugging Face / GitHub APIs,
-//! 2026-10-08). If a link moves, the wizard reports it and asks the user to download the
-//! file by hand from `page` and to open an issue at [`ISSUES_URL`].
+//! 2026-10-08; engines and upscaler 2026-10-12). If a link moves, the wizard reports it and
+//! asks the user to download the file by hand from `page` and to open an issue at [`ISSUES_URL`].
 
 use std::path::{Path, PathBuf};
 
@@ -23,9 +23,13 @@ pub enum FileKind {
     /// stable-diffusion.cpp binaries (a zip extracted into the folder).
     Engine,
     Model,
-    /// Not needed to run (the ESRGAN upscaler; Lanczos is used without it).
-    Optional,
 }
+
+/// Release of the engine builds below. Written into [`ENGINE_MARKER`] after extraction, so an
+/// engine of another release (files present, marker missing or different) is updated.
+pub const ENGINE_TAG: &str = "kokon-mosr-1";
+/// File in an engine's folder naming the release it was extracted from.
+pub const ENGINE_MARKER: &str = "kokon-engine.txt";
 
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct Download {
@@ -33,6 +37,8 @@ pub struct Download {
     pub label: &'static str,
     pub kind: FileKind,
     pub url: &'static str,
+    /// Tried in order when `url` fails for good (moved link, refused, changed file).
+    pub fallback_urls: &'static [&'static str],
     /// Page where the file can be downloaded by hand when `url` stops working.
     pub page: &'static str,
     pub size: u64,
@@ -43,6 +49,8 @@ pub struct Download {
     /// Files a zip provides (relative to the stable-diffusion.cpp folder); their presence
     /// means it is installed.
     pub provides: &'static [&'static str],
+    /// For an engine zip: the release its folder must be marked with ([`ENGINE_MARKER`]).
+    pub engine_tag: Option<&'static str>,
 }
 
 /// `base` + a catalog path written with `/`, as native components.
@@ -59,57 +67,87 @@ impl Download {
         join_rel(sdcpp_dir, self.dest)
     }
 
-    /// Installed: a zip's files exist, or the file exists with the expected size. The hash is
-    /// checked after every download; a size match is enough for files already on disk.
+    /// Every URL to try, in order.
+    pub fn urls(&self) -> impl Iterator<Item = &'static str> {
+        std::iter::once(self.url).chain(self.fallback_urls.iter().copied())
+    }
+
+    /// Installed: a zip's files exist (an engine's folder also carries its release marker), or
+    /// the file exists with the expected size. The hash is checked after every download; a
+    /// size match is enough for files already on disk.
     pub fn is_present(&self, sdcpp_dir: &Path) -> bool {
         if self.is_zip() {
-            return self.provides.iter().all(|f| join_rel(sdcpp_dir, f).is_file());
+            let files = self.provides.iter().all(|f| join_rel(sdcpp_dir, f).is_file());
+            return files && self.engine_tag.is_none_or(|t| self.installed_tag(sdcpp_dir).as_deref() == Some(t));
         }
         std::fs::metadata(self.path(sdcpp_dir)).map(|m| m.is_file() && m.len() == self.size).unwrap_or(false)
     }
+
+    /// The release an engine folder is marked with, if any.
+    pub fn installed_tag(&self, sdcpp_dir: &Path) -> Option<String> {
+        std::fs::read_to_string(zip_dir(self, sdcpp_dir).join(ENGINE_MARKER)).ok().map(|s| s.trim().to_string())
+    }
+
+    /// Marks an extracted engine with its release.
+    pub fn write_tag(&self, sdcpp_dir: &Path) -> std::io::Result<()> {
+        match self.engine_tag {
+            Some(t) => std::fs::write(zip_dir(self, sdcpp_dir).join(ENGINE_MARKER), t),
+            None => Ok(()),
+        }
+    }
 }
 
-const SDCPP_RELEASE: &str = "https://github.com/leejet/stable-diffusion.cpp/releases/tag/master-929-3f8527a";
+/// Upstream release the CUDA runtime comes from (the fork's build links the same one).
+const SDCPP_UPSTREAM_RELEASE: &str = "https://github.com/leejet/stable-diffusion.cpp/releases/tag/master-929-3f8527a";
+const SDCPP_RELEASE: &str = "https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/tag/kokon-mosr-1";
 
-/// stable-diffusion.cpp commit 3f8527a (2026-09-27): the build every backend fact in the
-/// README was verified on. CUDA 12 build; it runs on RTX 20xx to RTX 50xx.
+/// stable-diffusion.cpp commit 3f8527a (2026-09-27, the build every backend fact in the
+/// README was verified on) plus the MoSR upscaler (fork commit 2e3312d, upstream PR #2128).
+/// Qwen output is bit-identical to 3f8527a. CUDA 12 build; it runs on RTX 20xx to RTX 50xx.
 pub const ENGINE_CUDA: Download = Download {
     id: "engine_cuda",
     label: "stable-diffusion.cpp (CUDA 12)",
     kind: FileKind::Engine,
-    url: "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-929-3f8527a/sd-master-3f8527a-bin-win-cuda12-x64.zip",
+    url: "https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/download/kokon-mosr-1/sd-mosr-upscaler-2e3312d-bin-win-cuda12-x64.zip",
+    fallback_urls: &[],
     page: SDCPP_RELEASE,
-    size: 337_915_440,
-    sha256: "217d6dead9abd3f827fc338268555cc179234e7e6330ef21ecb1c985e19d2dc7",
-    dest: "sd-master-3f8527a-bin-win-cuda12-x64.zip",
+    size: 337_895_587,
+    sha256: "1922fcb034c8f246dbe2c3e4fe5dae6407c0c27df3629558cc8af9dac5adead1",
+    dest: "sd-mosr-upscaler-2e3312d-bin-win-cuda12-x64.zip",
     provides: &["sd-server.exe", "stable-diffusion.dll", "ggml-cuda.dll"],
+    engine_tag: Some(ENGINE_TAG),
 };
 
+/// CUDA 12.8.1, unchanged since the upstream release: no marker, never downloaded again.
 pub const CUDA_RUNTIME: Download = Download {
     id: "cuda_runtime",
     label: "CUDA 12 runtime (cuBLAS)",
     kind: FileKind::Engine,
     url: "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-929-3f8527a/cudart-sd-bin-win-cu12-x64.zip",
-    page: SDCPP_RELEASE,
+    fallback_urls: &[],
+    page: SDCPP_UPSTREAM_RELEASE,
     size: 563_452_046,
     sha256: "fe20366827d357c00797eebb58244dddab7fd9a348d70090c3871004c320f38d",
     dest: "cudart-sd-bin-win-cu12-x64.zip",
     provides: &["cudart64_12.dll", "cublas64_12.dll", "cublasLt64_12.dll"],
+    engine_tag: None,
 };
 
 /// Same commit, Vulkan build: AMD, Intel and NVIDIA cards through the GPU driver's Vulkan
 /// runtime (nothing else to install). Kept in its own folder so it can sit next to the
-/// CUDA build. SHA-256 from GitHub's asset digest, checked against a download 2026-10-09.
+/// CUDA build. SHA-256 from GitHub's asset digest, checked against a download 2026-10-12.
 pub const ENGINE_VULKAN: Download = Download {
     id: "engine_vulkan",
     label: "stable-diffusion.cpp (Vulkan)",
     kind: FileKind::Engine,
-    url: "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-929-3f8527a/sd-master-3f8527a-bin-win-vulkan-x64.zip",
+    url: "https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/download/kokon-mosr-1/sd-mosr-upscaler-2e3312d-bin-win-vulkan-x64.zip",
+    fallback_urls: &[],
     page: SDCPP_RELEASE,
-    size: 30_067_605,
-    sha256: "60e6850d650417409f18c2170ab5e27335db96da70cd3d1ad1e930bcffc2fd35",
-    dest: "engine-vulkan/sd-master-3f8527a-bin-win-vulkan-x64.zip",
+    size: 30_081_934,
+    sha256: "fe6ac9f9b93f3ab081c0d4f7031e4c8dfb6f9d413c748345c6aa8c02c2e3f74b",
+    dest: "engine-vulkan/sd-mosr-upscaler-2e3312d-bin-win-vulkan-x64.zip",
     provides: &["engine-vulkan/sd-server.exe", "engine-vulkan/stable-diffusion.dll", "engine-vulkan/ggml-vulkan.dll"],
+    engine_tag: Some(ENGINE_TAG),
 };
 
 /// Same commit, macOS build: universal binary with the Metal shaders embedded, needs
@@ -118,12 +156,14 @@ pub const ENGINE_METAL: Download = Download {
     id: "engine_metal",
     label: "stable-diffusion.cpp (Metal)",
     kind: FileKind::Engine,
-    url: "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-929-3f8527a/sd-master-3f8527a-bin-Darwin-macOS-26.6.2-arm64.zip",
+    url: "https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/download/kokon-mosr-1/sd-mosr-upscaler-2e3312d-bin-Darwin-macOS-26.6.2-arm64.zip",
+    fallback_urls: &[],
     page: SDCPP_RELEASE,
-    size: 35_049_086,
-    sha256: "1c8ee6c8e413e3335b1223bbc657ea5d86dae1819f8426a98b84c265587eb192",
-    dest: "engine-metal/sd-master-3f8527a-bin-Darwin-macOS-26.6.2-arm64.zip",
+    size: 35_071_182,
+    sha256: "6a89473230e0f3623c2dcd7815d9578e87b2a0d1871567bd941240fe3662c25e",
+    dest: "engine-metal/sd-mosr-upscaler-2e3312d-bin-Darwin-macOS-26.6.2-arm64.zip",
     provides: &["engine-metal/sd-server", "engine-metal/libstable-diffusion.dylib"],
+    engine_tag: Some(ENGINE_TAG),
 };
 
 /// The engine files of a backend, in download order.
@@ -150,11 +190,13 @@ pub const TURBO_Q4_K: Download = Download {
     label: "Qwen-Image 2.1 Turbo Q4_K",
     kind: FileKind::Model,
     url: "https://huggingface.co/DogukanUrker/Qwen-Image-2.1-Turbo-GGUF/resolve/main/qwen-image-2.1-turbo-Q4_K.gguf",
+    fallback_urls: &[],
     page: TURBO_GGUF,
     size: 4_050_916_384,
     sha256: "f8d5611b495848b632f8ae14dc7da6525fe2796eb80998f8dee5e04d0a2f69eb",
     dest: "models/qwen21/qwen-image-2.1-turbo-Q4_K.gguf",
     provides: &[],
+    engine_tag: None,
 };
 
 pub const VAE: Download = Download {
@@ -162,11 +204,13 @@ pub const VAE: Download = Download {
     label: "Qwen-Image 2.1 VAE",
     kind: FileKind::Model,
     url: "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/vae/qwen_image_2.1_vae_bf16.safetensors",
+    fallback_urls: &[],
     page: "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/tree/main/vae",
     size: 675_509_688,
     sha256: "bb21f7473051e1ac368515dd3f2e15cd44d7a11748ee8823e1ddca3e4876b7c9",
     dest: "models/qwen21/qwen_image_2.1_vae_bf16.safetensors",
     provides: &[],
+    engine_tag: None,
 };
 
 /// Text encoder from Qwen's own GGUF repository (the one sd.cpp's docs point to).
@@ -175,11 +219,13 @@ pub const TEXT_ENCODER_Q4_K_M: Download = Download {
     label: "Qwen3-VL 8B text encoder Q4_K_M",
     kind: FileKind::Model,
     url: "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3VL-8B-Instruct-Q4_K_M.gguf",
+    fallback_urls: &[],
     page: QWEN_TE,
     size: 5_027_784_800,
     sha256: "67d1659bfe71b89d50b45a4ad1a9e5b997e5bb16ce5da66a6a6167abd569e9e2",
     dest: "models/qwen21/Qwen3VL-8B-Instruct-Q4_K_M.gguf",
     provides: &[],
+    engine_tag: None,
 };
 
 pub const TEXT_ENCODER_Q8_0: Download = Download {
@@ -187,11 +233,13 @@ pub const TEXT_ENCODER_Q8_0: Download = Download {
     label: "Qwen3-VL 8B text encoder Q8_0",
     kind: FileKind::Model,
     url: "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3VL-8B-Instruct-Q8_0.gguf",
+    fallback_urls: &[],
     page: QWEN_TE,
     size: 8_709_519_456,
     sha256: "0d264b3941185d00a74f75c4245521dae088ff1efc90ab8d1754e83f5844adb0",
     dest: "models/qwen21/Qwen3VL-8B-Instruct-Q8_0.gguf",
     provides: &[],
+    engine_tag: None,
 };
 
 /// Vision projector: lets the text encoder see reference images (needed for editing).
@@ -200,25 +248,86 @@ pub const VISION_PROJECTOR: Download = Download {
     label: "Qwen3-VL vision projector",
     kind: FileKind::Model,
     url: "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-8B-Instruct-F16.gguf",
+    fallback_urls: &[],
     page: QWEN_TE,
     size: 1_159_029_824,
     sha256: "ca524100ebf825c9a870db1c580d03879e0da0ab2541697e2458e64891cf9d38",
     dest: "models/qwen21/mmproj-Qwen3VL-8B-Instruct-F16.gguf",
     provides: &[],
+    engine_tag: None,
 };
 
-/// Default ESRGAN model (CC BY-NC-SA 4.0). Must match `config::UPSCALER_CHOICES[0]`.
+/// Name sd-server knows the upscaler by (its file stem in `--hires-upscalers-dir`).
+pub const UPSCALER_NAME: &str = "4xNomos2_hq_mosr";
+/// Folder of the upscaler, relative to the stable-diffusion.cpp folder.
+pub const UPSCALERS_SUBDIR: &str = "models/upscalers";
+
+/// 4xNomos2_hq_mosr by Philip Hofmann (CC BY 4.0), a MoSR model: enlarges results and runs
+/// Upscale. Replaced the ESRGAN models on 2026-10-12: more natural skin, hair and text, and
+/// ~8x faster than UltraSharp on an RTX 5070 Ti. Bundled with the app (copied into place at
+/// start, see `installer::install_bundled`); downloaded from our mirror, then the author's
+/// release, only when that copy is missing.
 pub const UPSCALER: Download = Download {
     id: "upscaler",
-    label: "4x-UltraSharp upscaler",
-    kind: FileKind::Optional,
+    label: "4xNomos2 MoSR upscaler",
+    kind: FileKind::Model,
+    url: "https://github.com/GabrieleLozupone/kokon/releases/download/models-1/4xNomos2_hq_mosr.pth",
+    fallback_urls: &["https://github.com/Phhofm/models/releases/download/4xNomos2_hq_mosr/4xNomos2_hq_mosr.pth"],
+    page: "https://github.com/Phhofm/models/releases/tag/4xNomos2_hq_mosr",
+    size: 17_213_494,
+    sha256: "c60dbfc7e6f7d27e03517d1bec3f3cbd16e8cd4288eefd1358952f73f8497ddc",
+    dest: "models/upscalers/4xNomos2_hq_mosr.pth",
+    provides: &[],
+    engine_tag: None,
+};
+
+const ESRGAN_MODELS: &str = "https://huggingface.co/uwg/upscaler/tree/main/ESRGAN";
+
+/// 4x_NMKD-Superscale-SP_178000_G by Nmkd (ESRGAN, WTFPL): the default upscaler since
+/// 2026-10-12. Sharper and more natural than UltraSharp on most renders; can draw a faint grid
+/// on JPEG blocks and dark areas (`AppConfig::upscale_blend` tones it down).
+pub const SUPERSCALE: Download = Download {
+    id: "upscaler_superscale",
+    label: "Superscale-SP upscaler",
+    kind: FileKind::Model,
+    url: "https://huggingface.co/uwg/upscaler/resolve/main/ESRGAN/4x_NMKD-Superscale-SP_178000_G.pth",
+    fallback_urls: &[],
+    page: ESRGAN_MODELS,
+    size: 66_958_607,
+    sha256: "1d1b0078fe71446e0469d8d4df59e96baa80d83cda600d68237d655830821bcc",
+    dest: "models/upscalers/4x_NMKD-Superscale-SP_178000_G.pth",
+    provides: &[],
+    engine_tag: None,
+};
+
+/// 4x-UltraSharp by Kim2091 (ESRGAN, CC BY-NC-SA 4.0: non-commercial): the default before
+/// 2026-10-12, now an optional download (very clean, but smooths skin into an AI look and can
+/// invent lines).
+pub const ULTRASHARP: Download = Download {
+    id: "upscaler_ultrasharp",
+    label: "UltraSharp upscaler",
+    kind: FileKind::Model,
     url: "https://huggingface.co/uwg/upscaler/resolve/main/ESRGAN/4x-UltraSharp.pth",
-    page: "https://huggingface.co/uwg/upscaler/tree/main/ESRGAN",
+    fallback_urls: &[],
+    page: ESRGAN_MODELS,
     size: 66_961_958,
     sha256: "a5812231fc936b42af08a5edba784195495d303d5b3248c24489ef0c4021fe01",
     dest: "models/upscalers/4x-UltraSharp.pth",
     provides: &[],
+    engine_tag: None,
 };
+
+/// Every upscaler model Kokon can install, in the order Settings lists them.
+pub const UPSCALER_DOWNLOADS: &[Download] = &[SUPERSCALE, UPSCALER, ULTRASHARP];
+
+/// The download of the upscaler named `name` (file stem).
+pub fn upscaler_download(name: &str) -> Option<Download> {
+    UPSCALER_DOWNLOADS.iter().copied().find(|d| d.dest.rsplit('/').next().and_then(|f| f.rsplit_once('.')).is_some_and(|(stem, _)| stem == name))
+}
+
+/// Upscaler files Settings offers to delete when they are not the selected model (in the
+/// app's own folder only).
+pub const LEGACY_UPSCALERS: &[&str] = &["models/upscalers/4x-UltraSharp.pth", "models/upscalers/4x_NMKD-Superscale-SP_178000_G.pth"];
 
 /// Hardware presets: which weights to download and how to run them, by VRAM.
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -309,12 +418,9 @@ pub fn recommended_preset(vram_mib: Option<u64>) -> &'static Preset {
 }
 
 /// Everything a preset needs on `backend`, in download order (small, essential files first).
-pub fn downloads_for(p: &Preset, backend: GpuBackend, with_upscaler: bool) -> Vec<Download> {
+pub fn downloads_for(p: &Preset, backend: GpuBackend) -> Vec<Download> {
     let mut v = engine_downloads(backend);
-    v.extend([VAE, VISION_PROJECTOR, p.text_encoder, p.diffusion]);
-    if with_upscaler {
-        v.push(UPSCALER);
-    }
+    v.extend([UPSCALER, SUPERSCALE, VAE, VISION_PROJECTOR, p.text_encoder, p.diffusion]);
     v
 }
 
@@ -350,23 +456,62 @@ mod tests {
 
     #[test]
     fn catalog_is_well_formed() {
-        let all = [ENGINE_CUDA, CUDA_RUNTIME, ENGINE_VULKAN, ENGINE_METAL, TURBO_Q4_K, VAE, TEXT_ENCODER_Q4_K_M, TEXT_ENCODER_Q8_0, VISION_PROJECTOR, UPSCALER];
+        let all = [ENGINE_CUDA, CUDA_RUNTIME, ENGINE_VULKAN, ENGINE_METAL, TURBO_Q4_K, VAE, TEXT_ENCODER_Q4_K_M, TEXT_ENCODER_Q8_0, VISION_PROJECTOR, UPSCALER, SUPERSCALE, ULTRASHARP];
         for d in all {
-            assert!(d.url.starts_with("https://"), "{}", d.id);
+            assert!(d.urls().all(|u| u.starts_with("https://")), "{}", d.id);
             assert_eq!(d.sha256.len(), 64, "{}", d.id);
             assert!(d.sha256.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()), "{}", d.id);
             assert!(d.size > 0);
             assert!(!d.dest.contains('\\') && d.provides.iter().all(|f| !f.contains('\\')), "portable paths: {}", d.id);
             assert_eq!(d.is_zip(), d.kind == FileKind::Engine, "{}", d.id);
         }
-        // The default upscaler matches the one Settings offers first.
-        assert!(UPSCALER.dest.ends_with(&format!("{}.pth", crate::config::DEFAULT_UPSCALER)));
+        // Every engine build is marked with this release; the unchanged CUDA runtime is not.
+        for d in [ENGINE_CUDA, ENGINE_VULKAN, ENGINE_METAL] {
+            assert_eq!(d.engine_tag, Some(ENGINE_TAG), "{}", d.id);
+            assert!(d.url.contains(&format!("/{ENGINE_TAG}/")), "{}", d.id);
+        }
+        assert_eq!(CUDA_RUNTIME.engine_tag, None);
+        // sd-server finds the upscaler by file stem in the upscalers folder.
+        assert_eq!(UPSCALER.dest, format!("{UPSCALERS_SUBDIR}/{UPSCALER_NAME}.pth"));
+        assert_eq!(UPSCALER.urls().count(), 2, "mirror, then the author's release");
+        assert!(LEGACY_UPSCALERS.iter().all(|f| f.starts_with(UPSCALERS_SUBDIR) && *f != UPSCALER.dest));
+        // Every model offered in Settings can be installed, except the plain resize.
+        for (name, _) in crate::config::UPSCALER_CHOICES {
+            assert_eq!(upscaler_download(name).is_some(), *name != crate::config::LANCZOS, "{name}");
+        }
+        assert_eq!(upscaler_download(crate::config::DEFAULT_UPSCALER).unwrap().id, "upscaler_superscale");
         for p in PRESETS {
-            assert_eq!(downloads_for(p, GpuBackend::Cuda, true).len(), 7);
-            let vk = downloads_for(p, GpuBackend::Vulkan, false);
-            assert_eq!(vk.len(), 5);
+            let cuda = downloads_for(p, GpuBackend::Cuda);
+            assert_eq!(cuda.len(), 8);
+            assert!(cuda.iter().any(|d| d.id == "upscaler") && cuda.iter().any(|d| d.id == "upscaler_superscale"), "MoSR (bundled) and the default model");
+            let vk = downloads_for(p, GpuBackend::Vulkan);
+            assert_eq!(vk.len(), 7);
             assert!(vk.iter().all(|d| d.id != "engine_cuda" && d.id != "cuda_runtime"));
         }
+    }
+
+    #[test]
+    fn engines_of_another_release_need_updating() {
+        let dir = tempfile::tempdir().unwrap();
+        for f in ENGINE_CUDA.provides.iter().chain(CUDA_RUNTIME.provides) {
+            std::fs::write(join_rel(dir.path(), f), b"x").unwrap();
+        }
+        assert!(!ENGINE_CUDA.is_present(dir.path()), "an engine without the marker is from an older release");
+        assert!(CUDA_RUNTIME.is_present(dir.path()), "the runtime needs no marker");
+        std::fs::write(dir.path().join(ENGINE_MARKER), "kokon-old").unwrap();
+        assert!(!ENGINE_CUDA.is_present(dir.path()));
+        ENGINE_CUDA.write_tag(dir.path()).unwrap();
+        assert_eq!(ENGINE_CUDA.installed_tag(dir.path()).as_deref(), Some(ENGINE_TAG));
+        assert!(ENGINE_CUDA.is_present(dir.path()));
+        // Each build has its own marker: the CUDA one does not count for Vulkan.
+        std::fs::create_dir_all(dir.path().join("engine-vulkan")).unwrap();
+        for f in ENGINE_VULKAN.provides {
+            std::fs::write(join_rel(dir.path(), f), b"x").unwrap();
+        }
+        assert!(!ENGINE_VULKAN.is_present(dir.path()));
+        ENGINE_VULKAN.write_tag(dir.path()).unwrap();
+        assert!(dir.path().join("engine-vulkan").join(ENGINE_MARKER).is_file());
+        assert!(ENGINE_VULKAN.is_present(dir.path()));
     }
 
     #[test]
@@ -379,6 +524,7 @@ mod tests {
         for f in ENGINE_CUDA.provides {
             std::fs::write(dir.path().join(f), b"x").unwrap();
         }
+        ENGINE_CUDA.write_tag(dir.path()).unwrap();
         assert!(ENGINE_CUDA.is_present(dir.path()));
         let hint = manual_download_hint(&ENGINE_CUDA, dir.path());
         assert!(hint.contains("extract it into") && hint.contains(ISSUES_URL));
@@ -388,6 +534,7 @@ mod tests {
         for f in ENGINE_VULKAN.provides {
             std::fs::write(join_rel(dir.path(), f), b"x").unwrap();
         }
+        ENGINE_VULKAN.write_tag(dir.path()).unwrap();
         assert!(ENGINE_VULKAN.is_present(dir.path()));
         let mut cfg = crate::config::AppConfig::default();
         cfg.sdcpp_dir = dir.path().to_path_buf();

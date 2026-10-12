@@ -5,6 +5,8 @@ node_modules
 /mcp/build
 /src-tauri/target
 /src-tauri/binaries/*.exe
+# Model files bundled with the app, fetched at build time (scripts/release/fetch-bundled.mjs)
+/src-tauri/resources/*.pth
 *.log
 /.test-data
 /dist-release

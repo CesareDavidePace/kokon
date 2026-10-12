@@ -4,6 +4,7 @@
 import type {
   GpuBackend,
   AppConfig, AppErrorBody, GenerationRecord, GenerationRequest, HardwareReport, InputRecord, InstallStatus, JobView, Plan, ServiceEvent, SetupReport, StatusResponse,
+  UpscalerItem,
 } from "./types";
 
 export class ApiError extends Error {
@@ -54,7 +55,15 @@ export const api = {
   status: () => call<StatusResponse>("/status"),
   setup: () => call<SetupReport>("/setup"),
   hardware: (backend?: GpuBackend) => call<HardwareReport>(backend ? `/setup/hardware?backend=${backend}` : "/setup/hardware"),
-  install: (preset: string, upscaler: boolean, backend: GpuBackend) => call<InstallStatus>("/setup/install", { method: "POST", body: json({ preset, upscaler, backend }) }),
+  /** `apply = false`: only download (an engine update), keeping the configured preset and settings. */
+  install: (preset: string, backend: GpuBackend, apply = true) => call<InstallStatus>("/setup/install", { method: "POST", body: json({ preset, backend, apply }) }),
+  upscalers: () => call<{ selected: string; active: string | null; items: UpscalerItem[] }>("/upscalers"),
+  /** Progress in `installStatus` (preset "upscaler:<name>"). */
+  downloadUpscaler: (name: string) => call<InstallStatus>(`/upscalers/${encodeURIComponent(name)}/download`, { method: "POST" }),
+  /** ESRGAN models of earlier versions in the app's own folder. */
+  legacyUpscalers: (keep: string) => call<{ files: string[]; bytes: number }>(`/setup/legacy-upscalers?keep=${encodeURIComponent(keep)}`),
+  /** `keep`: the model chosen in Settings, even if not saved yet. */
+  removeLegacyUpscalers: (keep: string) => call<{ freed_bytes: number }>(`/setup/legacy-upscalers?keep=${encodeURIComponent(keep)}`, { method: "DELETE" }),
   installStatus: () => call<InstallStatus>("/setup/install"),
   cancelInstall: () => call<InstallStatus>("/setup/install/cancel", { method: "POST" }),
   config: () => call<AppConfig>("/config"),

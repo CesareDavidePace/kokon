@@ -307,9 +307,12 @@ pub struct Plan {
     pub notes: Vec<String>,
     pub optimized_for_vram: bool,
     pub estimated_seconds: f32,
-    /// ESRGAN model used to enlarge the result; None = Lanczos.
+    /// Upscaler model used to enlarge the result; None = Lanczos.
     #[serde(default)]
     pub upscaler: Option<String>,
+    /// Tile size the upscaler runs with ([`upscale_tile`]); 0 in records of older versions.
+    #[serde(default)]
+    pub upscale_tile: u32,
     #[serde(default)]
     pub upscale: Option<UpscalePlan>,
     /// Exact noise schedule (Turbo's); empty when no diffusion runs.
@@ -324,8 +327,12 @@ pub struct PlanInputs {
     /// (mask size, bounding box of painted area, coverage 0..1)
     pub mask: Option<(Size, Option<Rect>, f64)>,
     pub vram_total_mib: Option<u64>,
-    /// ESRGAN model available to the server (`AppConfig::upscaler_file`).
+    /// Upscaler model available to the server (`AppConfig::upscaler_file`).
     pub upscaler: Option<String>,
+    /// Upscaler tile size ([`upscale_tile`]); 0 = the large-memory default.
+    pub upscale_tile: u32,
+    /// The Metal engine (Apple Silicon): much slower upscaler.
+    pub metal: bool,
     /// The server was launched with `--vae-tiling` (tiles every decode by default).
     pub server_vae_tiling: bool,
     /// SageAttention is enabled (faster steps; used for estimates only).
@@ -558,9 +565,46 @@ pub fn uses_guidance(cfg: f32) -> bool {
     (cfg - 1.0).abs() > 1e-4
 }
 
-/// One ESRGAN x4 pass over `input` pixels (~10 s per MP incl. model load, measured).
-pub fn esrgan_seconds(input: u64) -> f32 {
-    1.0 + 9.0 * input as f32 / 1_048_576.0
+/// Upscaler tile size with at least this much GPU memory (MiB): the 16 GB presets and up.
+pub const LARGE_UPSCALE_TILE_MIB: u64 = 14 * 1024;
+pub const LARGE_UPSCALE_TILE: u32 = 768;
+pub const SMALL_UPSCALE_TILE: u32 = 256;
+/// ESRGAN tiles: with direct convolutions 128 px is as fast as 256–512 px on an RTX 5070 Ti
+/// (13.2–13.7 s for 1472², 2026-10-12) at a fraction of the memory (+455 MB vs +3.4 GB).
+pub const ESRGAN_UPSCALE_TILE: u32 = 128;
+
+/// Whether `model` is the MoSR upscaler (anything else is an ESRGAN model).
+pub fn is_mosr(model: &str) -> bool {
+    model == crate::catalog::UPSCALER_NAME
+}
+
+/// Tile size of the upscaler: `override_px` when set; ESRGAN 128 px; MoSR 768 px on 16 GB
+/// cards and Macs with 32 GB+ (about +1.55 GB on CUDA with direct convolutions), 256 px below
+/// (12 GB cards, 16–24 GB Macs: about +0.5 GB). Unknown GPU: the 16 GB default preset's.
+pub fn upscale_tile(override_px: u32, vram_mib: Option<u64>, model: &str) -> u32 {
+    match (override_px, vram_mib) {
+        (t, _) if t > 0 => t,
+        _ if !is_mosr(model) => ESRGAN_UPSCALE_TILE,
+        (_, Some(v)) if v < LARGE_UPSCALE_TILE_MIB => SMALL_UPSCALE_TILE,
+        _ => LARGE_UPSCALE_TILE,
+    }
+}
+
+/// One x4 pass over `input` pixels, model load included. Measured on a 1472² edit
+/// (2026-10-12), RTX 5070 Ti, CUDA with direct convolutions: MoSR 3.1 s at 768 px tiles and
+/// ~5 s at 128–256 px (Vulkan within 10%), Superscale-SP (ESRGAN) 13.2 s at 128 px. M2 Pro,
+/// Metal: MoSR 54.6 s at 768 px and 78 s at 128 px; ESRGAN not measured (estimated ~3x MoSR).
+pub fn esrgan_seconds(input: u64, tile: u32, metal: bool, mosr: bool) -> f32 {
+    let large = tile == 0 || tile >= 512;
+    let per_mp = match (mosr, metal, large) {
+        (true, false, true) => 1.4,
+        (true, false, false) => 2.3,
+        (true, true, true) => 25.0,
+        (true, true, false) => 32.0,
+        (false, false, _) => 6.1,
+        (false, true, _) => 90.0,
+    };
+    0.5 + per_mp * input as f32 / 1_048_576.0
 }
 
 /// VAE decode with 768 px tiles: ~1.3 s at 1 MP, ~3.9 s at 2048x1152.
@@ -912,7 +956,8 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
     let mut estimated_seconds =
         if quick_upscale { 2.0 } else { estimate_seconds(working.canvas, &references, steps, batch_count, inputs.sage_attention, cfg) };
     if inputs.upscaler.is_some() && (enlarge || quick_upscale) {
-        estimated_seconds += esrgan_seconds(working.content.area()) * batch_count as f32;
+        let mosr = inputs.upscaler.as_deref().is_some_and(is_mosr);
+        estimated_seconds += esrgan_seconds(working.content.area(), inputs.upscale_tile, inputs.metal, mosr) * batch_count as f32;
     }
     estimated_seconds = match inputs.speed_factor {
         Some(f) => estimated_seconds * f,
@@ -949,6 +994,7 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
         optimized_for_vram: optimized,
         estimated_seconds,
         upscaler: inputs.upscaler.clone(),
+        upscale_tile: if inputs.upscale_tile > 0 { inputs.upscale_tile } else { LARGE_UPSCALE_TILE },
         upscale,
         custom_sigmas: if quick_upscale { Vec::new() } else { TURBO_SIGMAS.to_vec() },
     })
@@ -1037,7 +1083,7 @@ mod tests {
 
     #[test]
     fn mac_fast_renders_the_full_size() {
-        let mac = |sizes: &[(u32, u32)]| PlanInputs { unified_memory: true, vram_total_mib: Some(4600), upscaler: Some("4x-UltraSharp".into()), ..inputs(sizes) };
+        let mac = |sizes: &[(u32, u32)]| PlanInputs { unified_memory: true, vram_total_mib: Some(4600), upscaler: Some("4xNomos2_hq_mosr".into()), ..inputs(sizes) };
         let mut r = req("a lighthouse at dusk");
         r.quality = Quality::Fast;
         let p = plan(&r, &mac(&[]), &rec()).unwrap();
@@ -1139,7 +1185,7 @@ mod tests {
     }
 
     fn env(upscaler: bool) -> PlanInputs {
-        PlanInputs { upscaler: upscaler.then(|| "RealESRGAN_x4plus".to_string()), sage_attention: true, ..inputs(&[]) }
+        PlanInputs { upscaler: upscaler.then(|| "4xNomos2_hq_mosr".to_string()), sage_attention: true, ..inputs(&[]) }
     }
 
     #[test]
@@ -1178,7 +1224,7 @@ mod tests {
         assert_eq!(p.output, Size::new(3840, 2160), "exact requested size is delivered");
         assert!(p.working.area() as f64 <= (token_budget(Some(16303)) * 256) as f64 * 1.02, "alignment padding only");
         assert!((p.content.width as f64 / p.content.height as f64 / (3840.0 / 2160.0) - 1.0).abs() < 0.01);
-        assert!(p.notes.iter().any(|n| n.contains("enlarged to 3840×2160 with RealESRGAN_x4plus")), "{:?}", p.notes);
+        assert!(p.notes.iter().any(|n| n.contains("enlarged to 3840×2160 with 4xNomos2_hq_mosr")), "{:?}", p.notes);
     }
 
     #[test]
@@ -1281,6 +1327,36 @@ mod tests {
         assert!(t(UpscaleSpec { scale: Some(8.0), ..Default::default() }).is_err(), "over 8192 px");
         assert!(t(UpscaleSpec { width: Some(8000), height: Some(8000), ..Default::default() }).is_err(), "over 40 MP");
         assert!(t(UpscaleSpec { scale: Some(-1.0), ..Default::default() }).is_err());
+    }
+
+    #[test]
+    fn upscaler_tile_follows_memory() {
+        let m = "4xNomos2_hq_mosr";
+        assert_eq!(upscale_tile(0, Some(16_303), m), 768, "16 GB card");
+        assert_eq!(upscale_tile(0, Some(12_282), m), 256, "12 GB card");
+        assert_eq!(upscale_tile(0, Some(8_192), m), 256);
+        assert_eq!(upscale_tile(0, None, m), 768, "unknown GPU: the default preset's");
+        assert_eq!(upscale_tile(0, Some(LARGE_UPSCALE_TILE_MIB), m), 768);
+        assert_eq!(upscale_tile(512, Some(8_192), m), 512, "the setting wins");
+        assert_eq!(upscale_tile(0, Some(16_303), "4x_NMKD-Superscale-SP_178000_G"), 128, "ESRGAN");
+        // Planned with the job, so the engine and the estimate agree.
+        let p = plan(&req("a lighthouse"), &PlanInputs { upscale_tile: 256, ..env(true) }, &rec()).unwrap();
+        assert_eq!(p.upscale_tile, 256);
+    }
+
+    #[test]
+    fn upscaler_estimates() {
+        let mp = 1472 * 1472;
+        // Measured 2026-10-12 (1472² edit): 3.1 s CUDA tile 768, ~5 s tile 256, 54.6 s M2 Pro.
+        assert!((esrgan_seconds(mp, 768, false, true) - 3.1).abs() < 0.6);
+        assert!((esrgan_seconds(mp, 256, false, true) - 5.0).abs() < 0.6);
+        assert!((esrgan_seconds(mp, 768, true, true) - 54.6).abs() < 3.0);
+        assert!(esrgan_seconds(mp, 256, true, true) > esrgan_seconds(mp, 768, true, true));
+        assert!((esrgan_seconds(mp, 128, false, false) - 13.2).abs() < 1.0, "Superscale-SP");
+        let r = GenerationRequest { mode: Mode::Upscale, upscale: Some(UpscaleSpec { scale: Some(2.0), ..Default::default() }), ..Default::default() };
+        let i = PlanInputs { image_sizes: vec![Size::new(1472, 1472)], upscale_tile: 768, upscaler: Some("4xNomos2_hq_mosr".into()), ..env(true) };
+        let (pc, mac) = (plan(&r, &i, &rec()).unwrap(), plan(&r, &PlanInputs { metal: true, ..i.clone() }, &rec()).unwrap());
+        assert!(mac.estimated_seconds > pc.estimated_seconds * 5.0, "{} vs {}", mac.estimated_seconds, pc.estimated_seconds);
     }
 
     #[test]

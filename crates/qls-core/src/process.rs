@@ -92,16 +92,18 @@ pub fn build_server_args(cfg: &AppConfig, profile: &ModelProfile) -> Vec<String>
     if cfg.eager_load && placement != TextEncoderPlacement::Disk {
         a.push("--eager-load".into());
     }
-    // ESRGAN models for the hires refine and `/sdcpp/v1/upscale`; the server scans the
+    // The upscaler for `/sdcpp/v1/upscale` (tile size sent per request); the server scans the
     // folder lazily, so a model added later is picked up without a restart.
     let up_dir = cfg.upscalers_dir();
     if up_dir.is_dir() {
         a.push("--hires-upscalers-dir".into());
         a.push(p(&up_dir));
     }
-    if cfg.upscale_tile_size > 0 {
-        let t = cfg.upscale_tile_size.to_string();
-        a.extend(["--upscale-tile-size".into(), t.clone(), "--hires-upscale-tile-size".into(), t]);
+    if cfg.gpu_backend != crate::config::GpuBackend::Metal {
+        // Direct convolutions in the upscaler (it only affects UNet/ControlNet models besides,
+        // never Qwen). MoSR at 1472², 768 px tiles on an RTX 5070 Ti: CUDA 3.8 s / +2.4 GB →
+        // 3.1 s / +1.55 GB; Vulkan +4.2 GB → +1.25 GB. On Metal it is ~4x slower (M2 Pro).
+        a.push("--diffusion-conv-direct".into());
     }
     if cfg.vram_reserve_gib > 0.0 {
         // A negative --max-vram reserves that much free VRAM (sd-server --help).
@@ -730,9 +732,9 @@ mod tests {
     fn default_launch_args() {
         let mut cfg = AppConfig::default();
         cfg.gpu_backend = crate::config::GpuBackend::Cuda; // the default is Metal on a Mac
-        cfg.sdcpp_dir = std::path::PathBuf::from(r"C:\AI\sdcpp");
+        // A folder without an upscalers subfolder.
+        cfg.sdcpp_dir = std::env::temp_dir().join("qls-no-sdcpp-here");
         cfg.apply_preset(crate::catalog::preset("16gb").unwrap());
-        cfg.upscalers_dir = Some(std::env::temp_dir().join("qls-no-upscalers-here"));
         let a = build_server_args(&cfg, cfg.profile());
         let s = a.join(" ");
         let m = |f: &str| crate::catalog::join_rel(&cfg.sdcpp_dir, &format!("models/qwen21/{f}")).display().to_string();
@@ -744,22 +746,28 @@ mod tests {
         assert!(s.contains("--backend cuda0 --params-backend te=cpu"));
         assert!(s.contains("--fa --sage-attn --vae-tiling --vae-tile-size 768 --vae-tile-overlap 0.125"));
         assert!(s.contains("--model-args qwen_image_2_1_prefix_cache_type=q8_0 --eager-load"));
-        assert!(s.ends_with("--max-vram -1"));
+        assert!(s.ends_with("--diffusion-conv-direct --max-vram -1"));
         assert!(!s.contains("0.0.0.0"));
         assert!(!s.contains("--hires-upscalers-dir"), "missing folder is not passed");
-        assert!(!s.contains("upscale-tile-size"));
+        assert!(!s.contains("upscale-tile-size"), "the tile size is sent with each request");
+        assert!(!s.contains("--vae-conv-direct"), "slower for Qwen's VAE");
     }
 
     #[test]
     fn upscaler_args() {
         let dir = tempfile::tempdir().unwrap();
         let mut cfg = AppConfig::default();
-        cfg.upscalers_dir = Some(dir.path().to_path_buf());
+        cfg.sdcpp_dir = dir.path().to_path_buf();
+        std::fs::create_dir_all(cfg.upscalers_dir()).unwrap();
         cfg.upscale_tile_size = 256;
-        let a = build_server_args(&cfg, cfg.profile());
-        let i = a.iter().position(|x| x == "--hires-upscalers-dir").unwrap();
-        assert_eq!(a[i + 1], dir.path().to_string_lossy());
-        assert!(a.join(" ").contains("--upscale-tile-size 256 --hires-upscale-tile-size 256"));
+        for (backend, direct) in [(crate::config::GpuBackend::Cuda, true), (crate::config::GpuBackend::Vulkan, true), (crate::config::GpuBackend::Metal, false)] {
+            cfg.gpu_backend = backend;
+            let a = build_server_args(&cfg, cfg.profile());
+            let i = a.iter().position(|x| x == "--hires-upscalers-dir").unwrap();
+            assert_eq!(a[i + 1], cfg.upscalers_dir().to_string_lossy());
+            assert_eq!(a.iter().any(|x| x == "--diffusion-conv-direct"), direct, "{backend:?}: direct convolutions are ~4x slower on Metal");
+            assert!(!a.join(" ").contains("upscale-tile-size"));
+        }
     }
 
     /// Captured from sd-cli 3f8527a (bench hires_fast: 1376x768 -> ESRGAN -> 2048x1152,

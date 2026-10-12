@@ -117,13 +117,26 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> AppResult<T> + Send + '
     tokio::task::spawn_blocking(f).await.map_err(AppError::internal)?
 }
 
+/// How results are enlarged (from the plan and the settings).
+#[derive(Debug, Clone, Copy)]
+struct EnlargeOptions {
+    /// Upscaler tile size in px (0 = server default).
+    tile: u32,
+    /// Share of the upscaler's result kept over Lanczos (`AppConfig::upscale_blend`).
+    blend: f32,
+    /// Shrink the input first (`AppConfig::upscale_prescale`).
+    prescale: bool,
+}
+
 /// Planner inputs from the configuration and measured facts.
 pub fn plan_inputs(cfg: &AppConfig, image_sizes: Vec<Size>, mask: Option<(Size, Option<crate::geometry::Rect>, f64)>, vram_total_mib: Option<u64>) -> PlanInputs {
     PlanInputs {
         image_sizes,
         mask,
         vram_total_mib,
-        upscaler: cfg.upscaler_file().map(|_| cfg.upscaler_model.trim().to_string()),
+        upscale_tile: crate::planner::upscale_tile(cfg.upscale_tile_size, vram_total_mib, &cfg.upscaler().map(|u| u.0).unwrap_or_default()),
+        upscaler: cfg.upscaler().map(|u| u.0),
+        metal: cfg.gpu_backend == crate::config::GpuBackend::Metal,
         server_vae_tiling: cfg.vae_tile_size > 0,
         sage_attention: cfg.uses_sage_attention(),
         speed_factor: None,
@@ -176,7 +189,30 @@ impl Engine {
             || g.gpu_backend != new.gpu_backend;
         *g = new;
         *self.backend_version.lock().unwrap() = None;
+        drop(g);
+        self.place_bundled_upscaler();
         Ok(restart)
+    }
+
+    /// Copies the upscaler shipped with the app into the configured folder when it is missing
+    /// there (new install, another folder chosen). Failures leave it to the setup download.
+    pub fn place_bundled_upscaler(&self) {
+        let Some(bundle) = crate::installer::bundle_dir() else { return };
+        let dir = self.config().sdcpp_dir;
+        match crate::installer::install_bundled(&crate::catalog::UPSCALER, &dir, &bundle) {
+            Ok(true) => tracing::info!("bundled upscaler copied into {}", dir.display()),
+            Ok(false) => {}
+            Err(e) => tracing::warn!("could not copy the bundled upscaler into {}: {e}", dir.display()),
+        }
+    }
+
+    /// The installed engine is from an older release than the catalog's and the running
+    /// server (if any) cannot run the upscaler: Setup offers the update.
+    pub fn engine_update_needed(&self) -> bool {
+        let cfg = self.config();
+        let current = crate::catalog::engine_downloads(cfg.gpu_backend).iter().all(|d| d.is_present(&cfg.sdcpp_dir));
+        // An engine built by hand or an external server may lack the marker yet run MoSR.
+        !current && !self.server.capabilities().is_some_and(|c| c.has_upscaler(crate::catalog::UPSCALER_NAME, true))
     }
 
     /// The store holding generation `id`: the gallery, or the private-mode store.
@@ -545,20 +581,17 @@ impl Engine {
         self.check_cancel(id)?;
         self.update(id, |j| j.view.status = JobStatus::Preparing);
 
-        // Which upscalers the running server really has (an external server may lack
-        // --hires-upscalers-dir): enlargements fall back to Lanczos.
-        // Fresh, because the server rescans the upscalers folder on every request.
+        // Whether the running server can use the upscaler (an engine older than MoSR lists the
+        // file but cannot run it; an external server may lack --hires-upscalers-dir):
+        // enlargements fall back to Lanczos. Fresh, because the server rescans the folder.
         let client = SdcppClient::new(cfg.server_port);
         let caps = client.capabilities(Duration::from_secs(5)).await.ok().or_else(|| self.server.capabilities()).unwrap_or_default();
         let esrgan = plan.upscaler.clone().filter(|n| caps.has_upscaler(n, true));
         let needs_esrgan = plan.upscale.is_some() || plan.output.area() as f64 > plan.content.area() as f64 * 1.21;
         if needs_esrgan && plan.upscaler.is_some() && esrgan.is_none() {
-            let name = plan.upscaler.clone().unwrap_or_default();
-            self.update(id, |j| j.view.notes.push(format!("The inference server did not list the upscaler model {name}; Lanczos was used instead.")));
-        } else if plan.upscaler.is_none() && plan.upscale.is_some() {
-            self.update(id, |j| {
-                j.view.notes.push(format!("Upscaler model {} not found; enlarged with Lanczos. Put {}.pth in the upscalers folder for sharper results.", cfg.upscaler_model, cfg.upscaler_model))
-            });
+            self.update(id, |j| j.view.notes.push("The inference engine cannot run the upscaler (update it in Setup); enlarged with Lanczos.".into()));
+        } else if plan.upscaler.is_none() && needs_esrgan && cfg.upscaler_model.trim() != crate::config::LANCZOS {
+            self.update(id, |j| j.view.notes.push("The upscaler model is missing (install it in Setup); enlarged with Lanczos.".into()));
         }
         let quick_upscale = plan.upscale.is_some();
         let icc = images.first().and_then(|i| i.icc_profile.clone());
@@ -697,7 +730,8 @@ impl Engine {
             let target = pipeline::enlarge_target(&post);
             // Kept when the upscaler enlarges it, so the user can still see and save it.
             let original = target.map(|_| content.clone());
-            let (content, enlarged_with) = self.enlarge(id, &client, content, target, esrgan.as_deref()).await?;
+            let how = EnlargeOptions { tile: plan.upscale_tile, blend: cfg.upscale_blend, prescale: cfg.upscale_prescale };
+            let (content, enlarged_with) = self.enlarge(id, &client, content, target, esrgan.as_deref(), how).await?;
             let original = original.filter(|_| enlarged_with.is_some());
             self.update(id, |j| {
                 j.view.status = JobStatus::Saving;
@@ -751,10 +785,10 @@ impl Engine {
         }
     }
 
-    /// Enlarges `content` with ESRGAN when [`pipeline::finish`] would resize it up to
-    /// `target` by more than ~1.1x. Returns the (possibly larger) content and how the
-    /// enlargement is done; ESRGAN failures fall back to Lanczos with a note.
-    async fn enlarge(&self, id: &str, client: &SdcppClient, content: image::RgbaImage, target: Option<Size>, esrgan: Option<&str>) -> AppResult<(image::RgbaImage, Option<String>)> {
+    /// Enlarges `content` with the upscaler model when [`pipeline::finish`] would resize it
+    /// up to `target` by more than ~1.1x. Returns the (possibly larger) content and how the
+    /// enlargement is done; upscaler failures fall back to Lanczos with a note.
+    async fn enlarge(&self, id: &str, client: &SdcppClient, content: image::RgbaImage, target: Option<Size>, esrgan: Option<&str>, how: EnlargeOptions) -> AppResult<(image::RgbaImage, Option<String>)> {
         let Some(target) = target else { return Ok((content, None)) };
         let size = Size::new(content.width(), content.height());
         let factor = (target.width as f64 / size.width as f64).max(target.height as f64 / size.height as f64);
@@ -768,23 +802,33 @@ impl Engine {
             j.view.step = None;
         });
         let content = Arc::new(content);
-        let r = self.esrgan_enlarge(id, client, content.clone(), target, name).await;
+        let r = self.esrgan_enlarge(id, client, content.clone(), target, name, how).await;
+        let r = match r {
+            Ok(Some(img)) if how.blend < 1.0 => {
+                let src = content.clone();
+                blocking(move || Ok(pipeline::blend_with_lanczos(img, &src, how.blend))).await.map(Some)
+            }
+            r => r,
+        };
         let content = Arc::try_unwrap(content).unwrap_or_else(|a| (*a).clone());
         match r {
             Ok(Some(img)) => Ok((img, Some(name.to_string()))),
             Ok(None) => Ok((content, None)),
             Err(e) if e.code == ErrorCode::Cancelled => Err(e),
             Err(e) => {
-                tracing::warn!("ESRGAN upscale failed, using Lanczos: {} {:?}", e.message, e.detail);
+                tracing::warn!("upscaler failed, using Lanczos: {} {:?}", e.message, e.detail);
                 self.update(id, |j| j.view.notes.push(format!("Upscaler model failed ({}); enlarged with Lanczos.", e.message)));
                 Ok((content, Some("Lanczos".into())))
             }
         }
     }
 
-    async fn esrgan_enlarge(&self, id: &str, client: &SdcppClient, content: Arc<image::RgbaImage>, target: Size, upscaler: &str) -> AppResult<Option<image::RgbaImage>> {
-        // Tiles are sized for an x4 model, the common case (an x2 model just gets smaller results).
-        let Some(ep) = pipeline::esrgan_plan(Size::new(content.width(), content.height()), target, 4) else { return Ok(None) };
+    async fn esrgan_enlarge(&self, id: &str, client: &SdcppClient, content: Arc<image::RgbaImage>, target: Size, upscaler: &str, how: EnlargeOptions) -> AppResult<Option<image::RgbaImage>> {
+        // Requests are sized for the x4 model; the server tiles each one at `how.tile` px.
+        let size = Size::new(content.width(), content.height());
+        let input = if how.prescale { pipeline::prescale_size(size, target, 4) } else { size };
+        let Some(ep) = pipeline::esrgan_plan(input, target, 4) else { return Ok(None) };
+        let tile_px = how.tile;
         let c = content.clone();
         let input = Arc::new(blocking(move || Ok(imaging::resize(&c, ep.input.width, ep.input.height))).await?);
         let mut stitcher = pipeline::Stitcher::new(ep.input);
@@ -792,7 +836,7 @@ impl Engine {
             self.check_cancel(id)?;
             let (inp, t) = (input.clone(), *tile);
             let png = blocking(move || pipeline::tile_png_b64(&inp, &t)).await?;
-            let resp = client.upscale(&UpscaleRequest { image: png, upscaler: Some(upscaler.to_string()), tile_size: None, output_format: "png".into() }).await?;
+            let resp = client.upscale(&UpscaleRequest { image: png, upscaler: Some(upscaler.to_string()), tile_size: (tile_px > 0).then_some(tile_px), output_format: "png".into() }).await?;
             let up = blocking(move || Ok(imaging::decode_image(&crate::sdcpp::b64_decode(&resp.images[0].b64_json)?)?.pixels)).await?;
             stitcher.add(tile, &up)?;
         }
@@ -1194,15 +1238,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut cfg = AppConfig::default();
         cfg.gpu_backend = crate::config::GpuBackend::Cuda; // SageAttention is CUDA only
-        cfg.upscalers_dir = Some(dir.path().to_path_buf());
+        cfg.sdcpp_dir = dir.path().to_path_buf();
         let i = plan_inputs(&cfg, vec![], None, Some(16303));
         assert_eq!(i.upscaler, None, "no model file -> Lanczos");
-        assert!(i.server_vae_tiling && i.sage_attention);
-        std::fs::write(dir.path().join("4x-UltraSharp.pth"), b"x").unwrap();
+        assert!(i.server_vae_tiling && i.sage_attention && !i.metal);
+        assert_eq!(i.upscale_tile, 128, "the ESRGAN default's tile");
+        std::fs::create_dir_all(cfg.upscalers_dir()).unwrap();
+        std::fs::File::create(crate::catalog::UPSCALER.path(dir.path())).unwrap().set_len(crate::catalog::UPSCALER.size).unwrap();
         cfg.vae_tile_size = 0;
-        let i = plan_inputs(&cfg, vec![], None, None);
-        assert_eq!(i.upscaler.as_deref(), Some("4x-UltraSharp"));
-        assert!(!i.server_vae_tiling);
+        cfg.gpu_backend = crate::config::GpuBackend::Metal;
+        let i = plan_inputs(&cfg, vec![], None, Some(12_000));
+        assert_eq!(i.upscaler.as_deref(), Some("4xNomos2_hq_mosr"));
+        assert_eq!(i.upscale_tile, 256, "smaller tiles under 14 GB");
+        assert!(!i.server_vae_tiling && i.metal);
     }
 
     #[test]

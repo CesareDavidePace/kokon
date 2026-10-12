@@ -394,16 +394,19 @@ export function upscaleRequest(source: string, target: Size, parentId?: string |
 }
 
 const dims = (s: Size) => `${s.width}×${s.height}`;
-/** ESRGAN models offered for enlargement: [file stem, label]. Mirrors UPSCALER_CHOICES in config.rs. */
+/** Upscaler models offered in Settings: [file stem, label]. Mirrors UPSCALER_CHOICES in config.rs. */
 export const UPSCALERS: [string, string][] = [
-  ["4x-UltraSharp", "UltraSharp"],
   ["4x_NMKD-Superscale-SP_178000_G", "Superscale-SP"],
+  ["4xNomos2_hq_mosr", "MoSR"],
+  ["4x-UltraSharp", "UltraSharp"],
+  ["lanczos", "Lanczos"],
 ];
+const UPSCALER_LABELS: Record<string, string> = Object.fromEntries(UPSCALERS);
 
-/** Short name of the upscaler that ran or will run: "UltraSharp", "Superscale-SP", "Lanczos"... */
-export const upscalerLabel = (name: string | null | undefined) => (!name || name === "Lanczos" ? "Lanczos" : UPSCALERS.find(([n]) => n === name)?.[1] ?? name);
+/** Short name of the upscaler that ran or will run: "Superscale-SP", "MoSR", "Lanczos"... */
+export const upscalerLabel = (name: string | null | undefined) => (!name || name === "Lanczos" ? "Lanczos" : UPSCALER_LABELS[name] ?? name);
 
-/** "1376×768 → 5120×2880 (UltraSharp)" for the Details panel; two-pass records from
+/** "1376×768 → 5120×2880 (MoSR)" for the Details panel; two-pass records from
  * older versions read "1376×768 → refined 2048×1152 (Fast, 6 steps, UltraSharp) → ...". */
 export function pipelineSummary(g: GenerationRecord): string | null {
   const p = g.pipeline;

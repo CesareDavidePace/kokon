@@ -10,7 +10,7 @@ import { api, ApiError, setPrivateInputs, subscribe } from "./api";
 import { buildRequest, emptyComposer, needsPrompt, newKey, persistentAdvanced, refFromGen, refFromInput, timelineLinks, undoTarget, versionLabels, type CompareMode, type Composer, type Ref } from "./logic";
 import type { AppErrorBody, GenerationRecord, GenerationRequest, InputRecord, JobView, ServerState, StatusResponse } from "./types";
 
-export type Overlay = null | "gallery" | "settings" | "inpaint" | "expand" | "welcome";
+export type Overlay = null | "gallery" | "settings" | "inpaint" | "expand" | "welcome" | "whats-new";
 
 export interface SessionItem {
   key: string;
@@ -68,6 +68,8 @@ export interface State {
   /** Last submitted prompt (Up arrow in an empty prompt brings it back). */
   lastPrompt: string;
   overlay: Overlay;
+  /** The upscaler comparison, shown over any overlay (Settings, the Advanced menu). */
+  compareUpscalers: boolean;
   toasts: Toast[];
   galleryVersion: number;
   needsSetup: boolean;
@@ -275,6 +277,7 @@ let state: State = {
   composer: emptyComposer(loadPrefs()),
   lastPrompt: "",
   overlay: null,
+  compareUpscalers: false,
   toasts: [],
   galleryVersion: 0,
   needsSetup: false,

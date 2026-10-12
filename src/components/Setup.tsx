@@ -1,11 +1,11 @@
-import { Bug, Check, ChevronDown, CircleAlert, Download, ExternalLink, FolderOpen, Info, Loader2, Pause, Play, RefreshCw, Settings2 } from "lucide-react";
+import { Bug, Check, ChevronDown, CircleAlert, Download, ExternalLink, FolderOpen, Loader2, Pause, Play, RefreshCw, Settings2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { formatBytes, installItemShort, installProgress, installStep, installTimeLeft } from "../lib/logic";
 import { native } from "../lib/native";
 import { refreshStatus, setState, toastError, useStore } from "../lib/store";
 import type { GpuBackend, HardwareReport, InstallItem, InstallStatus, SetupReport } from "../lib/types";
-import { Seg, Switch } from "./ui";
+import { Seg } from "./ui";
 import { ReadyTips, Showcase } from "./Welcome";
 
 const gb = (mib: number) => `${Math.round(mib / 1024)} GB`;
@@ -30,7 +30,7 @@ function ItemIcon({ it }: { it: InstallItem }) {
     case "done":
       return <Check size={16} />;
     case "failed":
-      return it.kind === "optional" ? <Info size={16} /> : <CircleAlert size={16} />;
+      return <CircleAlert size={16} />;
     case "downloading":
     case "verifying":
     case "extracting":
@@ -69,10 +69,7 @@ function FileList({ items }: { items: InstallItem[] }) {
       {items.map((it) => (
         <div className={`setup-file ${it.state}`} key={it.id}>
           <ItemIcon it={it} />
-          <span className="name">
-            {it.label}
-            {it.kind === "optional" ? <span className="muted"> · optional</span> : null}
-          </span>
+          <span className="name">{it.label}</span>
           <span className="state">{installItemShort(it)}</span>
         </div>
       ))}
@@ -88,11 +85,11 @@ export function Setup() {
   const [inst, setInst] = useState<InstallStatus | null>(null);
   const [preset, setPreset] = useState<string | null>(null);
   const [backend, setBackend] = useState<GpuBackend | null>(null);
-  const [upscaler, setUpscaler] = useState(true);
   const [showFiles, setShowFiles] = useState(false);
   const [checking, setChecking] = useState(false);
   const wasRunning = useRef(false);
   const setupDone = useStore((s) => s.status?.setup_complete ?? false);
+  const engineUpdate = useStore((s) => s.status?.engine);
 
   const refresh = async (engine: GpuBackend | null = backend) => {
     setChecking(true);
@@ -142,7 +139,7 @@ export function Setup() {
   const install = async () => {
     if (!preset) return;
     try {
-      setInst(await api.install(preset, upscaler, backend ?? hw?.backend ?? "cuda"));
+      setInst(await api.install(preset, backend ?? hw?.backend ?? "cuda"));
     } catch (e) {
       toastError(e);
     }
@@ -150,8 +147,11 @@ export function Setup() {
 
   const start = async () => {
     try {
-      const cfg = await api.config();
-      await api.saveConfig({ ...cfg, setupComplete: true });
+      const [cfg, st] = await Promise.all([api.config(), refreshStatus()]);
+      // An engine update the user chose not to install now: don't open Setup for it again.
+      const ui = { ...((cfg.ui ?? {}) as Record<string, unknown>) };
+      if (st?.engine?.update_needed) ui.engineUpdateSkipped = st.engine.release;
+      await api.saveConfig({ ...cfg, setupComplete: true, ui });
       setState({ needsSetup: false });
       // Load the model in the background; the status indicator shows progress.
       api.startBackend().then(refreshStatus, toastError);
@@ -165,20 +165,18 @@ export function Setup() {
   const running = inst?.running ?? false;
   // While (or after) installing this preset, show the live list; otherwise what is on disk.
   const live = !!inst && inst.preset === preset && inst.items.length > 0 && (running || inst.items.some((i) => i.state !== "pending" && i.state !== "present"));
-  const items = (live ? inst!.items : chosen?.files ?? []).filter((i) => i.kind !== "optional" || live || upscaler);
+  const items = live ? inst!.items : chosen?.files ?? [];
   const missing = items.filter((i) => i.state !== "present" && i.state !== "done");
   const failed = items.filter((i) => i.state === "failed");
   const paused = !running && items.some((i) => i.state === "cancelled" || (i.state === "pending" && i.received > 0));
   const toDownload = missing.reduce((a, i) => a + Math.max(0, i.size - i.received), 0);
   const prog = installProgress(items);
   const lowSpace = hw?.free_bytes != null && chosen != null && hw.free_bytes < chosen.disk_bytes;
-  const presetInstalled = missing.filter((i) => i.kind !== "optional").length === 0;
+  const presetInstalled = missing.length === 0;
   const ready = !!report?.ready && !running;
   const rate = inst?.bytes_per_sec ?? 0;
   const vram = hw?.vram_mib ?? null;
-  const optionalMissing = chosen?.files.some((f) => f.kind === "optional" && f.state !== "present");
-  // Wanted extras not on disk yet (e.g. the upscaler added after the first setup).
-  const extrasMissing = missing.some((i) => i.kind === "optional");
+  const engineMissing = missing.filter((i) => i.kind === "engine");
 
   return (
     <div className="setup">
@@ -190,6 +188,13 @@ export function Setup() {
             leaves your computer.
           </p>
         </div>
+
+        {setupDone && engineUpdate?.update_needed && engineMissing.length > 0 && !running && (
+          <div className="setup-note">
+            This version of Kokon enlarges images with Superscale-SP by default, adds an upscaler strength slider and the experimental MoSR model. It needs the updated engine:
+            press Install to download it ({formatBytes(engineMissing.reduce((a, i) => a + Math.max(0, i.size - i.received), 0))}). Until then, images are enlarged with Lanczos.
+          </div>
+        )}
 
         {!hw ? (
           <div className="setup-card">
@@ -338,18 +343,12 @@ export function Setup() {
                 {items.length} files · {missing.length ? `${formatBytes(toDownload)} to download` : "all installed"}
               </button>
               {(showFiles || running) && <FileList items={items} />}
-              {optionalMissing && !running && !paused && (
-                <div className="field-row" style={{ paddingTop: 4 }}>
-                  <span>Include the 4x-UltraSharp upscaler for sharper enlargements (67 MB, CC BY-NC-SA 4.0, non-commercial)</span>
-                  <Switch on={upscaler} onChange={setUpscaler} label="Include the upscaler" />
-                </div>
-              )}
             </div>
           </>
         )}
 
         <div className="setup-actions">
-          {hw && !running && !paused && (!presetInstalled || extrasMissing) && (
+          {hw && !running && !paused && !presetInstalled && (
             <button className="btn primary big" disabled={!chosen || lowSpace} onClick={install}>
               <Download size={16} /> {failed.length ? "Try again" : `Install · ${formatBytes(toDownload)}`}
             </button>
@@ -377,7 +376,7 @@ export function Setup() {
         {report && !report.ready && !running && !paused && missing.length === 0 && (
           <div className="setup-note">
             {report.checks
-              .filter((c) => !c.ok && c.id !== "upscaler")
+              .filter((c) => !c.ok)
               .map((c, i) => (
                 <div key={i}>
                   <strong>{c.label}</strong>: {c.detail}
@@ -386,8 +385,8 @@ export function Setup() {
           </div>
         )}
         <p className="muted setup-foot">
-          Qwen-Image 2.1 Turbo is released by Alibaba's Qwen team under the Qwen Research License: research and evaluation only, no commercial use. By downloading it you accept that license. Downloads come only from GitHub
-          (stable-diffusion.cpp) and Hugging Face, and every file is verified with its SHA-256 checksum.
+          Qwen-Image 2.1 Turbo is released by Alibaba's Qwen team under the Qwen Research License: research and evaluation only, no commercial use. By downloading it you accept that license. The upscalers are Superscale-SP by Nmkd
+          (WTFPL) and the experimental 4xNomos2_hq_mosr by Philip Hofmann (CC BY 4.0). Downloads come only from GitHub (stable-diffusion.cpp, upscaler) and Hugging Face, and every file is verified with its SHA-256 checksum.
         </p>
       </div>
     </div>

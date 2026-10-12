@@ -303,10 +303,8 @@ impl Installer {
                         i.error = Some(e);
                         i.hint = Some(hint);
                     });
-                    // Optional files never block; keep going so other files still install.
-                    if d.kind != FileKind::Optional {
-                        all_ok = false;
-                    }
+                    // Keep going so the other files still install.
+                    all_ok = false;
                 }
             }
         }
@@ -319,6 +317,52 @@ impl Installer {
             std::fs::create_dir_all(parent).map_err(|e| Failure::Permanent(format!("Cannot create {}: {e}", parent.display())))?;
         }
         let part = part_path(&target);
+        // A link that still fails after its retries moves on to the next one (mirror, then
+        // the original); the first link's error is the one reported.
+        let mut first_error = None;
+        for url in d.urls() {
+            let from = Download { url, ..*d };
+            match self.fetch_verified(client, &from, &part).await {
+                Ok(()) => {
+                    first_error = None;
+                    break;
+                }
+                Err(Failure::Cancelled) => return Err(Failure::Cancelled),
+                Err(f) => {
+                    let e = f.message();
+                    tracing::warn!("{}: {url} failed ({e})", d.id);
+                    first_error.get_or_insert(e);
+                    if d.fallback_urls.is_empty() {
+                        // Kept, so the next try resumes it.
+                        break;
+                    }
+                    // Another server's partial file must not be resumed.
+                    remove_part(&part);
+                }
+            }
+        }
+        if let Some(e) = first_error {
+            return Err(Failure::Permanent(e));
+        }
+        if d.is_zip() {
+            self.set(d.id, |i| i.state = ItemState::Extracting);
+            let (p, out) = (part.clone(), crate::catalog::zip_dir(d, dir));
+            tokio::task::spawn_blocking(move || extract_zip(&p, &out))
+                .await
+                .map_err(|e| Failure::Transient(e.to_string()))?
+                .map_err(Failure::Permanent)?;
+            let _ = std::fs::remove_file(&part);
+            d.write_tag(dir).map_err(|e| Failure::Permanent(format!("Cannot mark the engine as installed: {e}")))?;
+        } else {
+            std::fs::rename(&part, &target).map_err(|e| Failure::Permanent(format!("Cannot save {}: {e}", target.display())))?;
+        }
+        Ok(())
+    }
+
+    /// Downloads `d` from `d.url` into `part` and checks its hash (retrying interruptions and
+    /// one checksum mismatch).
+    async fn fetch_verified(&self, client: &reqwest::Client, d: &Download, part: &Path) -> Result<(), Failure> {
+        let part = part.to_path_buf();
         let mut mismatches = 0;
         let mut attempt = 0;
         loop {
@@ -346,17 +390,6 @@ impl Installer {
             }
             tracing::warn!("{}: checksum mismatch, downloading again", d.id);
             attempt = 0;
-        }
-        if d.is_zip() {
-            self.set(d.id, |i| i.state = ItemState::Extracting);
-            let (p, out) = (part.clone(), crate::catalog::zip_dir(d, dir));
-            tokio::task::spawn_blocking(move || extract_zip(&p, &out))
-                .await
-                .map_err(|e| Failure::Transient(e.to_string()))?
-                .map_err(Failure::Permanent)?;
-            let _ = std::fs::remove_file(&part);
-        } else {
-            std::fs::rename(&part, &target).map_err(|e| Failure::Permanent(format!("Cannot save {}: {e}", target.display())))?;
         }
         Ok(())
     }
@@ -645,6 +678,60 @@ pub fn space_needed(dir: &Path, downloads: &[Download]) -> (u64, u64) {
     (download, disk)
 }
 
+/// Folder of the model files shipped inside the app (Tauri resources): next to the
+/// executables on Windows, `Contents/Resources` on a Mac. `QLS_BUNDLE_DIR` overrides it.
+pub fn bundle_dir() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("QLS_BUNDLE_DIR") {
+        return Some(PathBuf::from(p));
+    }
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    [dir.join("bundled"), dir.join("..").join("Resources").join("bundled")].into_iter().find(|p| p.is_dir())
+}
+
+/// Copies `d` from the app's bundle into the stable-diffusion.cpp folder when it is missing
+/// there, checking its hash. Ok(true) when it was copied.
+pub fn install_bundled(d: &Download, dir: &Path, bundle: &Path) -> std::io::Result<bool> {
+    let name = d.dest.rsplit('/').next().unwrap_or(d.dest);
+    let src = bundle.join(name);
+    if d.is_zip() || d.is_present(dir) || !std::fs::metadata(&src).is_ok_and(|m| m.len() == d.size) {
+        return Ok(false);
+    }
+    let target = d.path(dir);
+    if let Some(p) = target.parent() {
+        std::fs::create_dir_all(p)?;
+    }
+    let tmp = part_path(&target);
+    std::fs::copy(&src, &tmp)?;
+    if sha256_file(&tmp)? != d.sha256 {
+        remove_part(&tmp);
+        return Err(std::io::Error::other(format!("the bundled {name} is damaged")));
+    }
+    std::fs::rename(&tmp, &target)?;
+    Ok(true)
+}
+
+/// ESRGAN models in the app's own upscalers folder other than those named in `keep` (the
+/// selected model), with their sizes.
+pub fn legacy_upscalers(dir: &Path, keep: &[&str]) -> Vec<(PathBuf, u64)> {
+    crate::catalog::LEGACY_UPSCALERS
+        .iter()
+        .map(|f| crate::catalog::join_rel(dir, f))
+        .filter(|p| p.file_stem().and_then(|s| s.to_str()).is_none_or(|s| !keep.contains(&s)))
+        .filter_map(|p| std::fs::metadata(&p).ok().filter(|m| m.is_file()).map(|m| (p, m.len())))
+        .collect()
+}
+
+/// Deletes [`legacy_upscalers`]; returns the bytes freed.
+pub fn remove_legacy_upscalers(dir: &Path, keep: &[&str]) -> AppResult<u64> {
+    let mut freed = 0;
+    for (p, size) in legacy_upscalers(dir, keep) {
+        std::fs::remove_file(&p).map_err(|e| AppError::io("delete the old upscaler", &p, e))?;
+        freed += size;
+    }
+    Ok(freed)
+}
+
 /// Free space on the drive that holds `dir` (or its nearest existing parent).
 pub fn free_space(dir: &Path) -> Option<u64> {
     let mut p = dir.to_path_buf();
@@ -858,7 +945,7 @@ mod tests {
         std::fs::write(&f, b"abc").unwrap();
         assert_eq!(sha256_file(&f).unwrap(), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
         let p = crate::catalog::preset("16gb").unwrap();
-        let all = crate::catalog::downloads_for(p, crate::config::GpuBackend::Cuda, false);
+        let all = crate::catalog::downloads_for(p, crate::config::GpuBackend::Cuda);
         let (dl, disk) = space_needed(dir.path(), &all);
         assert_eq!(dl, all.iter().map(|d| d.size).sum::<u64>());
         assert!(disk > dl, "zips need room to extract");
@@ -896,7 +983,39 @@ mod tests {
         assert_eq!(content_range_total(&h), Some(337_915_440));
     }
 
-    /// Real download of the smallest catalog file (QLS_TEST_DOWNLOAD=1; ~67 MB).
+    #[test]
+    fn bundled_upscaler_is_copied_once_and_checked() {
+        let (dir, bundle) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let d = Download { size: 3, sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", ..crate::catalog::UPSCALER };
+        assert!(!install_bundled(&d, dir.path(), bundle.path()).unwrap(), "nothing bundled (dev build)");
+        std::fs::write(bundle.path().join("4xNomos2_hq_mosr.pth"), b"abd").unwrap();
+        assert!(install_bundled(&d, dir.path(), bundle.path()).is_err(), "a damaged copy is refused");
+        assert!(!d.is_present(dir.path()) && !part_path(&d.path(dir.path())).exists());
+        std::fs::write(bundle.path().join("4xNomos2_hq_mosr.pth"), b"abc").unwrap();
+        assert!(install_bundled(&d, dir.path(), bundle.path()).unwrap());
+        assert!(d.is_present(dir.path()));
+        assert!(!install_bundled(&d, dir.path(), bundle.path()).unwrap(), "already in place");
+    }
+
+    #[test]
+    fn legacy_upscalers_only_in_the_app_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(legacy_upscalers(dir.path(), &[]).is_empty());
+        let up = dir.path().join("models").join("upscalers");
+        std::fs::create_dir_all(&up).unwrap();
+        std::fs::write(up.join("4x-UltraSharp.pth"), vec![0u8; 100]).unwrap();
+        std::fs::write(up.join("4xNomos2_hq_mosr.pth"), b"keep").unwrap();
+        std::fs::write(up.join("my-own.pth"), b"keep").unwrap();
+        std::fs::write(up.join("4x_NMKD-Superscale-SP_178000_G.pth"), b"in use").unwrap();
+        let ss = &["4x_NMKD-Superscale-SP_178000_G"][..];
+        assert_eq!(legacy_upscalers(dir.path(), ss), vec![(up.join("4x-UltraSharp.pth"), 100)], "the selected model is never offered");
+        assert_eq!(remove_legacy_upscalers(dir.path(), ss).unwrap(), 100);
+        assert!(!up.join("4x-UltraSharp.pth").exists() && up.join("4xNomos2_hq_mosr.pth").exists() && up.join("my-own.pth").exists());
+        assert!(up.join("4x_NMKD-Superscale-SP_178000_G.pth").exists());
+        assert_eq!(remove_legacy_upscalers(dir.path(), ss).unwrap(), 0);
+    }
+
+    /// Real download of the smallest catalog file (QLS_TEST_DOWNLOAD=1; ~17 MB).
     #[tokio::test]
     async fn real_download_with_resume() {
         if std::env::var("QLS_TEST_DOWNLOAD").is_err() {
@@ -911,7 +1030,7 @@ mod tests {
         let client = reqwest::Client::new();
         {
             let resp = client.get(d.url).header(reqwest::header::RANGE, "bytes=0-1048575").send().await.unwrap();
-            assert_eq!(resp.status().as_u16(), 206, "Hugging Face supports ranges");
+            assert_eq!(resp.status().as_u16(), 206, "GitHub's release CDN supports ranges");
             std::fs::write(part_path(&target), resp.bytes().await.unwrap()).unwrap();
         }
         let (tx, rx) = std::sync::mpsc::channel();

@@ -61,6 +61,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/setup/hardware", get(setup_hardware))
         .route("/setup/install", get(install_status).post(install_start))
         .route("/setup/install/cancel", post(install_cancel))
+        .route("/setup/legacy-upscalers", get(legacy_upscalers).delete(remove_legacy_upscalers))
+        .route("/upscalers", get(list_upscalers))
+        .route("/upscalers/{name}/download", post(download_upscaler))
         .route("/config", get(get_config).put(put_config))
         .route("/backend/start", post(backend_start))
         .route("/backend/stop", post(backend_stop))
@@ -180,6 +183,8 @@ async fn status(State(s): St) -> Json<Value> {
     let jobs = s.engine.jobs();
     let queued = jobs.iter().filter(|j| j.status == qls_core::engine::JobStatus::Queued).count();
     let cfg = s.engine.config();
+    let e = s.engine.clone();
+    let engine_update = tokio::task::spawn_blocking(move || e.engine_update_needed()).await.unwrap_or(false);
     Json(json!({
         "service": { "version": APP_VERSION, "pid": std::process::id(), "uptime_s": s.started.elapsed().as_secs() },
         "server": {
@@ -191,7 +196,8 @@ async fn status(State(s): St) -> Json<Value> {
             "schedulers": srv.capabilities.as_ref().map(|c| c.schedulers.clone()).unwrap_or_default(),
             "upscale": srv.capabilities.as_ref().map(|c| c.upscale),
         },
-        "upscaler": { "model": cfg.upscaler_model, "available": cfg.upscaler_file().is_some() },
+        "upscaler": { "model": cfg.upscaler().map(|u| u.0).unwrap_or_else(|| cfg.upscaler_model.clone()), "available": cfg.upscaler_file().is_some() },
+        "engine": { "release": catalog::ENGINE_TAG, "update_needed": engine_update },
         "profile": { "id": cfg.profile().id, "display_name": cfg.profile().display_name },
         "gpu": gpu,
         "active_job": s.engine.active_job(),
@@ -201,6 +207,8 @@ async fn status(State(s): St) -> Json<Value> {
 }
 
 async fn setup(State(s): St) -> ApiResult<Json<Value>> {
+    let e = s.engine.clone();
+    let _ = tokio::task::spawn_blocking(move || e.place_bundled_upscaler()).await;
     let cfg = s.engine.config();
     let srv_ok = s.engine.server.status().state == qls_core::process::ServerState::Ready;
     let report = tokio::task::spawn_blocking(move || diagnostics::setup_checks(&cfg, Some(srv_ok))).await.map_err(AppError::internal)?;
@@ -232,7 +240,7 @@ async fn setup_hardware(State(s): St, Query(q): Query<HardwareQ>) -> ApiResult<J
         let presets: Vec<Value> = catalog::PRESETS
             .iter()
             .map(|p| {
-                let files = catalog::downloads_for(p, backend, true);
+                let files = catalog::downloads_for(p, backend);
                 let (download, disk) = installer::space_needed(&dir, &files);
                 json!({
                     "id": p.id, "label": if unified { p.unified_label } else { p.label }, "summary": if unified { p.unified_summary } else { p.summary }, "verified": p.verified, "min_vram_mib": p.min_vram_mib,
@@ -269,8 +277,9 @@ struct InstallBody {
     preset: String,
     /// Engine to install; default: the configured one.
     backend: Option<GpuBackend>,
+    /// Make the preset active when done (false: an engine update keeps the current settings).
     #[serde(default = "yes")]
-    upscaler: bool,
+    apply: bool,
 }
 
 fn yes() -> bool {
@@ -295,8 +304,9 @@ async fn install_start(State(s): St, Json(b): Json<InstallBody>) -> ApiResult<Js
     let engine = s.engine.clone();
     // Below ~8 GiB of planning memory (a 16 GB Mac) only streaming weights from disk fits.
     let small_unified = s.engine.gpu().is_some_and(|g| g.unified && g.planning_mib() < 8 * 1024);
+    let apply = b.apply;
     let on_finish = Box::new(move |complete: bool| {
-        if !complete {
+        if !complete || !apply {
             return;
         }
         let mut c = engine.config();
@@ -309,8 +319,56 @@ async fn install_start(State(s): St, Json(b): Json<InstallBody>) -> ApiResult<Js
             tracing::error!("could not save the installed preset: {}", e.message);
         }
     });
-    s.engine.installer.start(cfg.sdcpp_dir.clone(), preset.id, catalog::downloads_for(preset, backend, b.upscaler), on_finish)?;
+    // The bundled upscaler first, so it is not downloaded again.
+    let e = s.engine.clone();
+    let _ = tokio::task::spawn_blocking(move || e.place_bundled_upscaler()).await;
+    s.engine.installer.start(cfg.sdcpp_dir.clone(), preset.id, catalog::downloads_for(preset, backend), on_finish)?;
     Ok(Json(serde_json::to_value(s.engine.installer.status()).unwrap()))
+}
+
+/// The upscalers Settings offers, with whether each is installed and what it takes to get it.
+async fn list_upscalers(State(s): St) -> Json<Value> {
+    let cfg = s.engine.config();
+    let active = cfg.upscaler().map(|u| u.0);
+    let items: Vec<Value> = qls_core::config::UPSCALER_CHOICES
+        .iter()
+        .map(|(name, label)| {
+            let d = catalog::upscaler_download(name);
+            let installed = d.is_none_or(|d| d.is_present(&cfg.sdcpp_dir));
+            json!({ "name": name, "label": label, "installed": installed, "size": d.map(|d| d.size), "page": d.map(|d| d.page) })
+        })
+        .collect();
+    Json(json!({ "selected": cfg.upscaler_model, "active": active, "items": items }))
+}
+
+/// Downloads one upscaler model (progress in `/setup/install`).
+async fn download_upscaler(State(s): St, AxPath(name): AxPath<String>) -> ApiResult<Json<Value>> {
+    let d = catalog::upscaler_download(&name).ok_or_else(|| AppError::invalid(format!("Unknown upscaler {name}.")))?;
+    let dir = s.engine.config().sdcpp_dir;
+    s.engine.installer.start(dir, &format!("upscaler:{name}"), vec![d], Box::new(|_| {}))?;
+    Ok(Json(serde_json::to_value(s.engine.installer.status()).unwrap()))
+}
+
+/// Upscaler models of earlier versions in the app's own folder (Settings offers to delete
+/// them; files elsewhere are never touched).
+#[derive(Deserialize)]
+struct KeepQ {
+    /// Another model to keep besides the saved one (an unsaved choice in Settings).
+    keep: Option<String>,
+}
+
+async fn legacy_upscalers(State(s): St, Query(q): Query<KeepQ>) -> Json<Value> {
+    let cfg = s.engine.config();
+    let files = installer::legacy_upscalers(&cfg.sdcpp_dir, &[cfg.upscaler_model.trim(), q.keep.as_deref().unwrap_or("")]);
+    let bytes: u64 = files.iter().map(|(_, n)| n).sum();
+    Json(json!({ "files": files.iter().map(|(p, _)| p).collect::<Vec<_>>(), "bytes": bytes }))
+}
+
+async fn remove_legacy_upscalers(State(s): St, Query(q): Query<KeepQ>) -> ApiResult<Json<Value>> {
+    let cfg = s.engine.config();
+    let keep = q.keep.unwrap_or_default();
+    let freed = tokio::task::spawn_blocking(move || installer::remove_legacy_upscalers(&cfg.sdcpp_dir, &[cfg.upscaler_model.trim(), keep.as_str()])).await.map_err(AppError::internal)??;
+    Ok(Json(json!({ "freed_bytes": freed })))
 }
 
 async fn install_status(State(s): St) -> Json<Value> {
@@ -386,6 +444,12 @@ async fn diagnostics_json(State(s): St) -> ApiResult<Json<Value>> {
         let _ = writeln!(text, "CUDA backend: {}", if cuda { "available" } else { "NOT available" });
         let _ = writeln!(text, "\n[Inference server]");
         let _ = writeln!(text, "stable-diffusion.cpp: {}", version.clone().unwrap_or_else(|| "unknown".into()));
+        let tags: Vec<String> = catalog::engine_downloads(cfg.gpu_backend)
+            .iter()
+            .filter(|d| d.engine_tag.is_some())
+            .map(|d| d.installed_tag(&cfg.sdcpp_dir).unwrap_or_else(|| "none".into()))
+            .collect();
+        let _ = writeln!(text, "Engine release: {} (expected {})", tags.join(", "), catalog::ENGINE_TAG);
         let _ = writeln!(text, "State: {:?}, owned: {}, pid: {:?}, port: {}", srv.state, srv.owned, srv.pid, cfg.server_port);
         if let Some(e) = &srv.error {
             let _ = writeln!(text, "Last error: {} {}", e.message, e.detail.clone().unwrap_or_default());
@@ -409,7 +473,9 @@ async fn diagnostics_json(State(s): St) -> ApiResult<Json<Value>> {
         let _ = writeln!(text, "Device: {}, text encoder: {:?}, VRAM reserve: {} GiB, flash attention: {}, sage attention: {}", cfg.device, cfg.text_encoder_placement, cfg.vram_reserve_gib, cfg.flash_attention, cfg.sage_attention);
         let _ = writeln!(text, "VAE tile size: {}, upscale tile size: {}", cfg.vae_tile_size, cfg.upscale_tile_size);
         let up = diagnostics::upscaler_check(&cfg);
-        let _ = writeln!(text, "ESRGAN upscaler: {}", up.detail);
+        let model = cfg.upscaler().map(|u| u.0).unwrap_or_default();
+        let tile = qls_core::planner::upscale_tile(cfg.upscale_tile_size, cfg.planning_vram_mib(gpus.as_ref().and_then(|g| g.first()).map(|g| g.planning_mib())), &model);
+        let _ = writeln!(text, "Upscaler: {} (tile {tile} px, blend {:.0} %, pre-shrink {})", up.detail, cfg.upscale_blend * 100.0, cfg.upscale_prescale);
         let _ = writeln!(text, "Ports: server {}, service {}", cfg.server_port, cfg.service_port);
         let _ = writeln!(text, "Output: {}", cfg.output_dir.display());
         let _ = writeln!(text, "Data: {}", qls_core::config::data_dir().display());

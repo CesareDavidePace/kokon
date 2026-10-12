@@ -186,8 +186,8 @@ preset later from Settings → Models → **Set up models…**
 | 24 GB | Qwen-Image 2.1 Turbo Q4_K | Qwen3-VL 8B Q4_K_M | ~12 GB | not yet |
 | 32 GB+ | Qwen-Image 2.1 Turbo Q4_K | Qwen3-VL 8B Q8_0 (8.7 GB) | ~16 GB | not yet |
 
-Every preset also gets stable-diffusion.cpp (the CUDA 12 build on NVIDIA, the Vulkan build on AMD and Intel, the Metal build on a Mac), the Qwen-Image 2.1 VAE, the
-Qwen3-VL vision projector and, optionally, the 4x-UltraSharp upscaler. The image model is Qwen's
+Every preset also gets stable-diffusion.cpp (the CUDA 12 build on NVIDIA, the Vulkan build on AMD and Intel, the Metal build on a Mac), the Qwen-Image 2.1 VAE and the
+Qwen3-VL vision projector and the Superscale-SP upscaler (67 MB). The image model is Qwen's
 official 8-step [Qwen-Image 2.1 Turbo](https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo) through
 [DogukanUrker/Qwen-Image-2.1-Turbo-GGUF](https://huggingface.co/DogukanUrker/Qwen-Image-2.1-Turbo-GGUF);
 the other sources are
@@ -233,14 +233,14 @@ opened in Explorer or Finder. A few things make that loop fast:
 flowchart LR
     A["📷 Your photo<br>+ a sentence"] --> B["Planner<br><sub>mode · size · memory budget</sub>"]
     B --> C["Qwen-Image 2.1<br><sub>stable-diffusion.cpp<br>on your GPU</sub>"]
-    C --> D["AI upscaler<br><sub>ESRGAN, back to<br>full size</sub>"]
+    C --> D["AI upscaler<br><sub>Superscale-SP, back to<br>full size</sub>"]
     D --> E["🖼️ Result<br><sub>gallery + recipe</sub>"]
     M["🤖 Claude · Cursor · scripts"] -. "MCP / local API" .-> B
 ```
 
 The planner decides what kind of job your request is, picks a working size that fits your GPU
 and runs a single diffusion pass. When the result has to be larger than what the model rendered,
-it is enlarged with ESRGAN instead of a plain resize. For brushed edits, Kokon marks the area on
+it is enlarged with an AI upscaler instead of a plain resize. For brushed edits, Kokon marks the area on
 a second reference image so the model knows exactly where to work. Without that, Qwen-Image 2.1
 cannot see the mask.
 
@@ -353,8 +353,8 @@ Full requests (`/jobs`) also accept `"mode": "upscale"` with `"upscale": {"scale
 
 Kokon makes only two kinds of network request:
 
-- **Setup:** `github.com` for the stable-diffusion.cpp release and `huggingface.co` for the
-  models.
+- **Setup:** `github.com` for the stable-diffusion.cpp release (and the MoSR upscaler, if the copy
+  that comes with the app is missing) and `huggingface.co` for the models and the other upscalers.
 - **Update check:** at most once a day, the app fetches `latest.json` from this repository's
   latest GitHub release, a small file with the newest version number. Nothing about you or your
   images is sent. Turn it off on the welcome screen or in Settings → General. Updates are
@@ -468,8 +468,9 @@ image model has its own license: Qwen-Image 2.1 and its Turbo model are released
 use**. That includes selling or using commercially the images you make with it. For commercial
 use, ask the Qwen team for a license (model-business@notice.qwencloud.com).
 
-The Qwen3-VL text encoder is Apache-2.0. The optional 4x-UltraSharp upscaler is CC BY-NC-SA
-4.0, also non-commercial only.
+The Qwen3-VL text encoder is Apache-2.0. The default upscaler, Superscale-SP by Nmkd, is WTFPL,
+and the experimental MoSR by Philip Hofmann is CC BY 4.0: both allow commercial use. The optional
+UltraSharp upscaler is CC BY-NC-SA 4.0, non-commercial only.
 
 </details>
 
@@ -491,12 +492,24 @@ recent Apple systems show them in HDR, and every other viewer shows a normal JPE
 <summary><b>Which upscaler is used, and can I change it?</b></summary>
 <br>
 
-Settings → Models offers two ESRGAN models: **UltraSharp** (default, downloaded by the setup
-screen) and **Superscale-SP**. To use Superscale-SP, put
-`4x_NMKD-Superscale-SP_178000_G.pth` from
-[uwg/upscaler](https://huggingface.co/uwg/upscaler/tree/main/ESRGAN) into
-`<stable-diffusion.cpp folder>/models/upscalers/`. Without an upscaler everything still works,
-with a plain resize instead.
+By default **Superscale-SP** by Nmkd (ESRGAN), downloaded by the setup screen. Pick another one
+in the Advanced menu next to the prompt, or in Settings → Models; **Compare upscalers** there
+shows each one on the same crops (a face, a JPEG photo, a night street, text, a landscape, a 4×
+upscale):
+
+- **Superscale-SP** (default): sharp and natural on most images; on JPEG photos and dark areas it
+  can draw a faint grid.
+- **MoSR** (experimental, 17 MB, comes with the app): the fastest, good for 4× upscales, but on
+  clean images enlarged less than about 3× it draws a fine grid. It needs Kokon's build of
+  [stable-diffusion.cpp](https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/tag/kokon-mosr-1)
+  ([pull request](https://github.com/leejet/stable-diffusion.cpp/pull/2128) to the original project).
+- **UltraSharp** (optional download): very clean, but smooths skin into an artificial look and can
+  invent lines. Non-commercial license.
+- **Lanczos**: a plain resize, never invents anything.
+
+**Upscaler strength** (0–100 %) mixes the upscaler's result with a plain resize, to tone down
+texture it invents. Settings → Models also has **Shrink the image before upscaling**, which
+gives the upscaler a smaller image, like the ones it was trained on.
 
 </details>
 
@@ -638,7 +651,8 @@ Model weights and the upscaler are downloaded from their authors and keep their 
 Kokon builds on [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) by
 leejet, [Qwen-Image 2.1](https://huggingface.co/Qwen/Qwen-Image-2.1) and its Turbo model by the
 Qwen team, DogukanUrker's Turbo GGUF conversions, [Tauri](https://tauri.app) and
-4x-UltraSharp by Kim2091. Thank you.
+the upscalers by Nmkd (Superscale-SP), Philip Hofmann (4xNomos2 MoSR) and Kim2091 (UltraSharp).
+Thank you.
 
 <p align="center">
   <br>

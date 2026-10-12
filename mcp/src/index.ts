@@ -38,7 +38,7 @@ const DESCRIPTIONS: Record<keyof typeof schemas, { title: string; description: s
   upscale_image: {
     title: "Upscale image",
     description:
-      "Enlarge an image (default 2x, or to a width/height up to 8192 px). Runs the configured ESRGAN upscaler model on the image (UltraSharp by default; seconds, adds no new content). Saves a new file; the input is never overwritten.",
+      "Enlarge an image (default 2x, or to a width/height up to 8192 px). Runs the upscaler model chosen in Kokon (Superscale-SP by default; seconds on a PC GPU, longer on a Mac; adds no new content). Saves a new file; the input is never overwritten.",
   },
   get_image_info: {
     title: "Image info",

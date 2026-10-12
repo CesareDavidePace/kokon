@@ -1,10 +1,12 @@
-import { Activity, Copy, Cpu, Download, FolderOpen, HardDrive, RefreshCw, RotateCcw, Settings2, X } from "lucide-react";
+import { Activity, Copy, Cpu, Download, FolderOpen, HardDrive, RefreshCw, RotateCcw, Settings2, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { api } from "../lib/api";
 import { native } from "../lib/native";
 import { getState, refreshStatus, setState, startTour, toastError, toastInfo } from "../lib/store";
-import { UPSCALERS } from "../lib/logic";
+import { formatBytes } from "../lib/logic";
+import { UpscalerControls } from "./Upscalers";
+import { WHATS_NEW_VERSION } from "./WhatsNew";
 import type { AppConfig, Check, ModelProfile, SetupReport, TextEncoderPlacement } from "../lib/types";
 import { IconButton, Seg, Switch } from "./ui";
 import { autoCheckEnabled, checkForUpdate } from "../lib/updates";
@@ -88,6 +90,7 @@ export function Settings() {
   const [cfg, setCfg] = useState<AppConfig | null>(null);
   const [devices, setDevices] = useState<[string, string][]>([]);
   const [upscaler, setUpscaler] = useState<Check | null>(null);
+  const [legacy, setLegacy] = useState<{ files: string[]; bytes: number } | null>(null);
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
@@ -100,6 +103,22 @@ export function Settings() {
       () => {},
     );
   }, []);
+  // Upscaler files not in use, keeping the model chosen here even before Save.
+  const draftModel = cfg?.upscalerModel;
+  useEffect(() => {
+    if (draftModel !== undefined) api.legacyUpscalers(draftModel).then(setLegacy, () => {});
+  }, [draftModel]);
+
+  const removeLegacy = async () => {
+    if (!cfg || !legacy || !window.confirm(`Delete the upscaler files not in use (${formatBytes(legacy.bytes)})?\n\n${legacy.files.join("\n")}`)) return;
+    try {
+      const r = await api.removeLegacyUpscalers(cfg.upscalerModel);
+      toastInfo(`Deleted (${formatBytes(r.freed_bytes)} freed)`);
+      api.legacyUpscalers(cfg.upscalerModel).then(setLegacy, () => {});
+    } catch (e) {
+      toastError(e);
+    }
+  };
 
   const close = () => setState({ overlay: null });
   useEffect(() => {
@@ -118,6 +137,19 @@ export function Settings() {
     setDirty(true);
   };
   const setProfile = (patch: Partial<ModelProfile>) => set({ profiles: cfg.profiles.map((p) => (p.id === profile.id ? { ...p, ...patch } : p)) });
+  // Upscaler options apply at once, like in the Advanced menu: saved on top of the stored
+  // settings (other unsaved fields stay a draft) and mirrored in the draft, so Save keeps them.
+  const applyNow = async (patch: Partial<AppConfig>) => {
+    setCfg((c) => (c ? { ...c, ...patch } : c));
+    try {
+      const saved = await api.config();
+      await api.saveConfig({ ...saved, ...patch });
+      api.setup().then((s: SetupReport) => setUpscaler(s.checks.find((c) => c.id === "upscaler") ?? null), () => {});
+      refreshStatus();
+    } catch (e) {
+      toastError(e);
+    }
+  };
 
   const save = async () => {
     try {
@@ -189,6 +221,12 @@ export function Settings() {
                 </button>
               </div>
               <div className="field-row">
+                <span>What's new in Kokon {WHATS_NEW_VERSION}</span>
+                <button className="btn" onClick={() => setState({ overlay: "whats-new" })}>
+                  Show
+                </button>
+              </div>
+              <div className="field-row">
                 <span>Welcome screen: what Kokon is and how it keeps your work private</span>
                 <button className="btn" onClick={() => setState({ overlay: "welcome" })}>
                   Show
@@ -239,21 +277,32 @@ export function Settings() {
               <PathField label="VAE" value={profile.vae} onChange={(v) => setProfile({ vae: v })} />
               <PathField label="Text encoder (Qwen3-VL)" value={profile.textEncoder} onChange={(v) => setProfile({ textEncoder: v })} />
               <PathField label="Vision projector (mmproj)" value={profile.visionProjector ?? ""} onChange={(v) => setProfile({ visionProjector: v || null })} />
-              <PathField label="Upscalers folder (ESRGAN)" value={cfg.upscalersDir ?? `${cfg.sdcppDir.replace(/[\\/]+$/, "")}\\models\\upscalers`} folder onChange={(v) => set({ upscalersDir: v || null })} />
-              <label className="field-row">
-                <span>Upscaler model (ESRGAN)</span>
-                <select className="select" value={cfg.upscalerModel} onChange={(e) => set({ upscalerModel: e.target.value })}>
-                  {UPSCALERS.map(([name, label], i) => (
-                    <option key={name} value={name}>
-                      {label}
-                      {i === 0 ? " (default)" : ""}
-                    </option>
-                  ))}
-                  {!UPSCALERS.some(([n]) => n === cfg.upscalerModel) && <option value={cfg.upscalerModel}>{cfg.upscalerModel}</option>}
-                </select>
-              </label>
-              <span className="muted">Enlarges every result from the model's output to its final size, and runs the Upscale button.</span>
-              {upscaler && <span className="muted">{upscaler.ok ? `Found: ${upscaler.detail}` : upscaler.detail}</span>}
+              <UpscalerControls
+                model={cfg.upscalerModel}
+                blend={cfg.upscaleBlend}
+                onModel={(m) => applyNow({ upscalerModel: m })}
+                onBlend={(b) => setCfg({ ...cfg, upscaleBlend: b })}
+                onBlendDone={() => applyNow({ upscaleBlend: cfg.upscaleBlend })}
+              />
+              {upscaler && !upscaler.ok && <span className="muted">{upscaler.detail}</span>}
+              <div className="field-row">
+                <span>Shrink the image before upscaling</span>
+                <Switch on={cfg.upscalePrescale} onChange={(v) => applyNow({ upscalePrescale: v })} />
+              </div>
+              <span className="muted" style={{ marginTop: -10 }}>
+                Gives the upscaler a smaller image, like the ones it was trained on: fewer invented patterns on clean renders and faster, slightly less fine detail. Only for enlargements under 2.8×.
+              </span>
+              {legacy && legacy.files.length > 0 && (
+                <div className="setting-card">
+                  <div className="setting-card-text">
+                    <strong>Upscaler files not in use</strong>
+                    <span className="muted">{legacy.files.map((f) => f.split(/[\\/]/).pop()).join(", ")}: not the selected model. Only Kokon's own folder is checked.</span>
+                  </div>
+                  <button className="btn" onClick={removeLegacy}>
+                    <Trash2 size={15} /> Delete ({formatBytes(legacy.bytes)})
+                  </button>
+                </div>
+              )}
             </>
           )}
 
@@ -364,9 +413,10 @@ export function Settings() {
                 </div>
               )}
               <label className="field-row">
-                <span>ESRGAN tile size (px, 0 = default 128)</span>
+                <span>Upscaler tile size (px, 0 = automatic)</span>
                 <input className="input" type="number" min={0} max={1024} step={64} style={{ width: 90 }} value={cfg.upscaleTileSize} onChange={(e) => set({ upscaleTileSize: Math.max(0, Math.round(Number(e.target.value) || 0)) })} />
               </label>
+              <span className="muted" style={{ marginTop: -10 }}>Automatic: 768 px with 16 GB of GPU memory or more (fastest), 256 px below (about 1 GB less).</span>
               {!mac && (
                 <>
                   <label className="field-row">

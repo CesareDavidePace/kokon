@@ -47,10 +47,10 @@ Kokon's code is open source under the GNU AGPL-3.0. The models keep their own li
 
 ```
 SHA-256  Kokon_0.9.1_x64-setup.exe
-TODO
+b9f52106e0cc02067b5983210f3be2874dc8aa9aab2407207806c5592208b752
 
 SHA-256  Kokon_0.9.1_aarch64.dmg
-TODO
+187ef09fbb441293e01386f7d3d13badc40b2e03f47953f9dfb694d0bde0b9ff
 ```
 
 ## Feedback

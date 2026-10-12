@@ -7,7 +7,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { handlers, schemas, toErrorResult, type ToolContext, type ToolResult } from "./tools.js";
 import { ServiceClient } from "./service.js";
 
-const VERSION = "0.9.0";
+const VERSION = "0.9.1";
 
 const DESCRIPTIONS: Record<keyof typeof schemas, { title: string; description: string }> = {
   generate_image: {

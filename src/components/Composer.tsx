@@ -301,8 +301,8 @@ export function Composer() {
 
   const placeholder = !hasImages
     ? hasProject
-      ? "Describe a new image…"
-      : "Describe an image to create, or drop one in to edit it…"
+      ? "Describe a new image: subject, what it's doing, setting…"
+      : "Describe an image (subject, action, setting) or drop one in to edit…"
     : c.refs.length > 1
       ? "Describe how to combine image 1, image 2…"
       : c.mask

@@ -138,6 +138,7 @@ svg { display: block; flex: none; }
 .empty { display: flex; flex-direction: column; align-items: center; gap: 14px; color: var(--text-3); text-align: center; }
 .empty h1 { font-size: 26px; font-weight: 600; letter-spacing: -0.02em; color: var(--text); margin: 0; }
 .empty p { margin: 0; font-size: 14px; }
+.empty p.tip { font-size: 12px; max-width: 420px; text-align: center; opacity: 0.75; }
 .empty .hint { display: flex; gap: 18px; font-size: 12px; margin-top: 4px; }
 .empty .hint span { display: flex; gap: 6px; align-items: center; }
 

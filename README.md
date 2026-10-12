@@ -35,6 +35,7 @@
   <a href="#examples">Examples</a> ·
   <a href="#use-it-from-your-ai-agent">AI agents</a> ·
   <a href="#faq">FAQ</a> ·
+  <a href="docs/prompting.md">Prompt guide</a> ·
   <a href="docs/engineering-notes.md">How it works</a>
 </p>
 
@@ -210,6 +211,8 @@ Other weights, such as fine-tunes, can be selected in Settings → Models.
 | A brushed area + an action | **Inpaint**: Change, Remove, Replace or Add | Remove needs no prompt |
 | Dragged edges | **Expand** the photo (outpainting) | Or type pixel or percent values |
 | Any result | **Upscale** to 2×, 4K, the source size or a custom width | With the upscaler model, in seconds |
+
+**New to prompts?** [How to write prompts](docs/prompting.md) shows what works for new images and edits, with tested examples.
 
 <p align="center">
   <img src="docs/media/screenshot-app.png" alt="The Kokon window: a cat-and-cowboy western showdown built from three generated images, combined, edited and expanded, with its version tree, the compare views and the prompt box" width="860">

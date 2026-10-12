@@ -764,6 +764,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut c = AppConfig::default();
         c.sdcpp_dir = dir.path().to_path_buf();
+        c.upscaler_model = UPSCALER_CHOICES[0].0.into(); // the PC default (Macs: Lanczos)
         assert!(c.upscaler_file().is_none());
         std::fs::create_dir_all(c.upscalers_dir()).unwrap();
         let f = c.upscalers_dir().join("4xNomos2_hq_mosr.pth");

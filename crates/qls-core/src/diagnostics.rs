@@ -297,6 +297,7 @@ mod tests {
     fn checks_flag_missing_files() {
         let mut cfg = AppConfig::default();
         cfg.sdcpp_dir = std::env::temp_dir().join("qls-does-not-exist");
+        cfg.upscaler_model = crate::config::UPSCALER_CHOICES[0].0.into(); // the PC default (Macs: Lanczos)
         cfg.profiles = vec![crate::config::ModelProfile::official(&cfg.sdcpp_dir, cfg.preset())];
         let r = setup_checks(&cfg, None);
         assert!(!r.ready);
@@ -313,6 +314,7 @@ mod tests {
         let mut cfg = AppConfig::default();
         cfg.sdcpp_dir = dir.path().to_path_buf();
         cfg.gpu_backend = crate::config::GpuBackend::Cuda;
+        cfg.upscaler_model = crate::config::UPSCALER_CHOICES[0].0.into(); // the PC default (Macs: Lanczos)
         assert!(!upscaler_check(&cfg).ok, "required");
         let up = crate::catalog::UPSCALER;
         std::fs::create_dir_all(up.path(dir.path()).parent().unwrap()).unwrap();

@@ -1239,6 +1239,7 @@ mod tests {
         let mut cfg = AppConfig::default();
         cfg.gpu_backend = crate::config::GpuBackend::Cuda; // SageAttention is CUDA only
         cfg.sdcpp_dir = dir.path().to_path_buf();
+        cfg.upscaler_model = crate::config::UPSCALER_CHOICES[0].0.into(); // the PC default (Macs: Lanczos)
         let i = plan_inputs(&cfg, vec![], None, Some(16303));
         assert_eq!(i.upscaler, None, "no model file -> Lanczos");
         assert!(i.server_vae_tiling && i.sage_attention && !i.metal);

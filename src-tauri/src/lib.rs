@@ -237,12 +237,12 @@ fn open_folder(app: tauri::AppHandle, path: String) -> Result<(), String> {
     app.opener().open_path(path, None::<&str>).map_err(|e| e.to_string())
 }
 
-/// Opens a download page or the issue tracker in the browser. Only https links to the hosts
-/// the setup wizard uses are allowed.
+/// Opens a download page, the issue tracker or the prompt guide in the browser. Only https
+/// links to our own hosts and the ones the setup wizard uses are allowed.
 #[tauri::command]
 fn open_link(app: tauri::AppHandle, url: String) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
-    let allowed = ["https://github.com/", "https://huggingface.co/"];
+    let allowed = ["https://github.com/", "https://huggingface.co/", "https://kokon.app/"];
     if !allowed.iter().any(|p| url.starts_with(p)) || url.chars().any(|c| c.is_whitespace() || c == '"') {
         return Err("This link cannot be opened from the app.".into());
     }

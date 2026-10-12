@@ -10,7 +10,7 @@ import { api, ApiError, setPrivateInputs, subscribe } from "./api";
 import { buildRequest, emptyComposer, needsPrompt, newKey, persistentAdvanced, refFromGen, refFromInput, timelineLinks, undoTarget, versionLabels, type CompareMode, type Composer, type Ref } from "./logic";
 import type { AppErrorBody, GenerationRecord, GenerationRequest, InputRecord, JobView, ServerState, StatusResponse } from "./types";
 
-export type Overlay = null | "gallery" | "settings" | "inpaint" | "expand" | "welcome" | "whats-new";
+export type Overlay = null | "gallery" | "settings" | "inpaint" | "expand" | "welcome" | "whats-new" | "prompt-tips";
 
 export interface SessionItem {
   key: string;

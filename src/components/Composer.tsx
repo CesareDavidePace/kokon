@@ -1,4 +1,4 @@
-import { ArrowUp, Brush, ChevronDown, Expand, FolderOpen, Gauge, ImagePlus, Maximize, Pencil, SlidersHorizontal, Sparkles, X } from "lucide-react";
+import { ArrowUp, Brush, ChevronDown, Expand, FolderOpen, Gauge, ImagePlus, Lightbulb, Maximize, Pencil, SlidersHorizontal, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, urls } from "../lib/api";
 import { activeOverrides, aspectLabel, buildRequest, expansionPixels, formatDuration, hasOutpaint, imageName, moveRef, needsPrompt, parseRatio, type Ref } from "../lib/logic";
@@ -426,6 +426,10 @@ export function Composer() {
           >
             {() => <AdvancedPanel plan={plan} />}
           </Popover>
+
+          <button className="icon-btn" onClick={() => setState({ overlay: "prompt-tips" })} title="Prompt tips" aria-label="Prompt tips">
+            <Lightbulb size={17} />
+          </button>
 
           <span className="spacer" />
           <span className="plan-hint" title={hintTitle}>

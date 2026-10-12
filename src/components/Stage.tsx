@@ -42,7 +42,12 @@ function Empty() {
     <div className="empty">
       <h1>What should we make?</h1>
       <p>Describe a new image below, or bring one in to edit it.</p>
-      <p className="tip">Tip: say what the subject is doing and where, like “a monkey dribbling a basketball on an outdoor court”. Short prompts get literal results.</p>
+      <p className="tip">
+        Tip: say what the subject is doing and where, like “a monkey dribbling a basketball on an outdoor court”. Short prompts get literal results.{" "}
+        <button className="link" onClick={() => setState({ overlay: "prompt-tips" })}>
+          More prompt tips
+        </button>
+      </p>
       <div className="hint">
         <span>
           <MousePointerClick size={14} /> Drop images here

@@ -17,6 +17,7 @@ import { Stage } from "./components/Stage";
 import { Tour } from "./components/Tour";
 import { IconButton } from "./components/ui";
 import { shortcut } from "./lib/platform";
+import { PromptTips } from "./components/PromptTips";
 import { WhatsNew, whatsNewDue } from "./components/WhatsNew";
 import { UpscalerCompare } from "./components/Upscalers";
 import { KokonMark, Welcome } from "./components/Welcome";
@@ -363,6 +364,7 @@ export default function App() {
       {overlay === "settings" && <SettingsDialog />}
       {overlay === "welcome" && <Welcome />}
       {overlay === "whats-new" && <WhatsNew />}
+      {overlay === "prompt-tips" && <PromptTips />}
       {compareUpscalers && <UpscalerCompare />}
       <Tour />
       <Toasts />

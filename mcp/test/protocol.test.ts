@@ -8,6 +8,8 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const root = path.resolve(__dirname, "..", "..");
+// The app version (kept equal in package.json, Cargo.toml and tauri.conf.json at every release).
+const appVersion: string = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
 const serviceExe = process.platform === "win32" ? "kokon-service.exe" : "kokon-service";
 // The most recently built service (debug or release), so a stale build is not tested.
 const serviceBuild = ["debug", "release"]
@@ -66,7 +68,7 @@ describe("MCP protocol", () => {
     const s = r.structuredContent as Record<string, unknown>;
     expect(s).toHaveProperty("server_running");
     expect(s).toHaveProperty("model_loaded");
-    expect(s.service_version).toBe("0.9.0");
+    expect(s.service_version).toBe(appVersion);
   }, 60_000);
 
   it("get_image_info reads a project image and blocks paths outside", async () => {

@@ -26,6 +26,7 @@
   <a href="#use-it-from-your-ai-agent"><img src="assets/readme/badges/mcp.svg" alt="MCP server included"></a>
   <a href="LICENSE"><img src="assets/readme/badges/license.svg" alt="License: AGPL-3.0"></a>
   <a href="https://github.com/GabrieleLozupone/kokon/stargazers"><img src="https://img.shields.io/github/stars/GabrieleLozupone/kokon?style=flat-square&labelColor=333&color=6b6b6b&cacheSeconds=3600&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjRjVDNTE4IiBzdHJva2Utd2lkdGg9IjIuNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBmaWxsPSIjRjVDNTE4IiBkPSJNMTIgMi41bDIuOSA2IDYuNi45LTQuOCA0LjYgMS4yIDYuNUwxMiAxNy40bC01LjkgMy4xIDEuMi02LjVMMi41IDkuNGw2LjYtLjl6Ii8%2BPC9zdmc%2B" alt="Stars"></a>
+  <a href="https://mcpservers.org/servers/gabrielelozupone/kokon"><img src="https://mcpservers.org/badge.svg" alt="Listed on mcpservers.org"></a>
 </p>
 
 <p align="center">

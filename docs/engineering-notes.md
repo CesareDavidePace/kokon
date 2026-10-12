@@ -121,6 +121,8 @@ resized down to the exact size; Lanczos is only used for shrinking or factors be
 Default: Superscale-SP (ESRGAN, WTFPL, setup download), 128 px tiles with direct convolutions
 (13.2 s / +455 MB for 1472² on an RTX 5070 Ti, vs 24.7 s / +747 MB without). Also offered:
 MoSR (experimental, bundled), UltraSharp (optional download, non-commercial), Lanczos.
+Macs default to Lanczos and skip the Superscale download: on an M2 Pro (Metal) Superscale-SP
+took 5 min 45 s for 1024² → 2048² (~345 s/MP) against ~1 s for Lanczos; MoSR ~25 s/MP.
 `upscaleBlend` mixes the result with Lanczos; `upscalePrescale` shrinks the input so x4 lands
 ~1.41x the target. Why MoSR is not the default: on clean full-size renders enlarged < ~2.8x it
 invents a fine crosshatch that the final downscale turns into a visible grid (the port matches

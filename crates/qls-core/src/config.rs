@@ -30,8 +30,10 @@ pub const UPSCALER_CHOICES: &[(&str, &str)] = &[
     ("4x-UltraSharp", "UltraSharp"),
     (LANCZOS, "Lanczos (plain resize)"),
 ];
-/// Default model (user choice, 2026-10-12, after MoSR drew a grid on clean renders).
-pub const DEFAULT_UPSCALER: &str = UPSCALER_CHOICES[0].0;
+/// Default model (user choice, 2026-10-12, after MoSR drew a grid on clean renders): Superscale-SP
+/// on PCs, Lanczos on Macs, where ESRGAN takes minutes (1024² to 2048² on an M2 Pro: Superscale-SP
+/// 5 min 45 s, Lanczos 1 s).
+pub const DEFAULT_UPSCALER: &str = if cfg!(target_os = "macos") { LANCZOS } else { UPSCALER_CHOICES[0].0 };
 /// Extensions sd-server accepts for model-backed upscalers (common.cpp, commit 3f8527a).
 pub const UPSCALER_EXTENSIONS: &[&str] = &["pth", "safetensors", "gguf", "pt"];
 /// Profile id of the official Qwen-Image 2.1 weights (the default since schema 5).
@@ -619,7 +621,8 @@ mod tests {
         assert!(c.validate().is_ok());
         assert_eq!(p.files().len(), 4);
         assert_eq!(c.upscale_tile_size, 0, "automatic");
-        assert_eq!((c.upscaler_model.as_str(), c.upscale_blend, c.upscale_prescale), ("4x_NMKD-Superscale-SP_178000_G", 1.0, false));
+        let default_model = if cfg!(target_os = "macos") { "lanczos" } else { "4x_NMKD-Superscale-SP_178000_G" };
+        assert_eq!((c.upscaler_model.as_str(), c.upscale_blend, c.upscale_prescale), (default_model, 1.0, false));
         assert_eq!(c.upscalers_dir(), default_sdcpp_dir().join("models").join("upscalers"));
     }
 

@@ -2,6 +2,7 @@ import { Download, Images, Loader2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { formatBytes, installProgress } from "../lib/logic";
+import { isMac } from "../lib/platform";
 import { refreshStatus, setState, toastError, useStore } from "../lib/store";
 import type { InstallStatus, UpscalerItem } from "../lib/types";
 import { Seg } from "./ui";
@@ -9,27 +10,34 @@ import { Seg } from "./ui";
 const img = import.meta.glob("../assets/upscalers/*.png", { eager: true, import: "default" }) as Record<string, string>;
 const crop = (scenario: string, method: string) => img[`../assets/upscalers/${scenario}-${method}.png`];
 
-/** What each upscaler is good and bad at, from an A/B on 8 images at x1.4, x2 and x4 (2026-10-12). */
+/** What each upscaler is good and bad at, from an A/B on 8 images at x1.4, x2 and x4, and the
+ * time on an M2 Pro (2026-10-12): Macs default to Lanczos, ESRGAN models take minutes there. */
 export const UPSCALER_NOTES: Record<string, { key: string; label: string; text: string }> = {
   "4x_NMKD-Superscale-SP_178000_G": {
     key: "superscale",
     label: "Superscale-SP",
-    text: "The default. Sharp and natural on most photos and renders. On JPEG photos and dark areas it can draw a faint grid: lower the strength if you see one.",
+    text: isMac
+      ? "Sharp and natural, but very slow on a Mac: about 6 minutes to enlarge a 1 MP image to 2K on an M2 Pro. On JPEG photos and dark areas it can draw a faint grid."
+      : "The default. Sharp and natural on most photos and renders. On JPEG photos and dark areas it can draw a faint grid: lower the strength if you see one.",
   },
   "4xNomos2_hq_mosr": {
     key: "mosr",
     label: "MoSR (experimental)",
-    text: "Included with Kokon and the fastest. Good for big enlargements (4×), but on clean images enlarged less than about 3× it draws a fine grid pattern.",
+    text: isMac
+      ? "Included with Kokon and the fastest AI upscaler on a Mac (about half a minute per megapixel on an M2 Pro), but on clean images enlarged less than about 3× it draws a fine grid pattern."
+      : "Included with Kokon and the fastest. Good for big enlargements (4×), but on clean images enlarged less than about 3× it draws a fine grid pattern.",
   },
   "4x-UltraSharp": {
     key: "ultrasharp",
     label: "UltraSharp",
-    text: "Very clean, never a grid. But it smooths skin and textures into an artificial look and can invent lines and shapes, especially at night. Non-commercial license.",
+    text: `Very clean, never a grid. But it smooths skin and textures into an artificial look and can invent lines and shapes, especially at night. Non-commercial license.${isMac ? " Very slow on a Mac (minutes per image)." : ""}`,
   },
   lanczos: {
     key: "lanczos",
     label: "Lanczos",
-    text: "A plain resize: never invents anything, but enlargements look soft.",
+    text: isMac
+      ? "The default on a Mac: a plain resize in about a second. It never invents anything, but enlargements look soft."
+      : "A plain resize: never invents anything, but enlargements look soft.",
   },
 };
 

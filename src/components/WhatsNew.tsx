@@ -2,6 +2,7 @@ import { CircleAlert, Images, LayoutGrid, Maximize, SlidersHorizontal, Sparkles 
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { formatBytes, installProgress, installStep, installTimeLeft } from "../lib/logic";
+import { isMac } from "../lib/platform";
 import { refreshStatus, setState, toastError, useStore } from "../lib/store";
 import type { GpuBackend, InstallItem, InstallStatus } from "../lib/types";
 import { KokonMark } from "./Welcome";
@@ -10,11 +11,17 @@ import { KokonMark } from "./Welcome";
 export const WHATS_NEW_VERSION = "0.9.1";
 
 const NEWS = [
-  {
-    icon: Sparkles,
-    title: "Superscale-SP by default",
-    text: "Results are enlarged with a sharper, more natural upscaler. The previous one, UltraSharp, was great on some images but smoothed skin and textures into an artificial look on others. You can still download it.",
-  },
+  isMac
+    ? {
+        icon: Sparkles,
+        title: "Plain resize by default on a Mac",
+        text: "AI upscalers take minutes on a Mac (Superscale-SP: about 6 minutes for a 1 MP image to 2K on an M2 Pro), so results are enlarged with Lanczos in about a second. You can still pick one.",
+      }
+    : {
+        icon: Sparkles,
+        title: "Superscale-SP by default",
+        text: "Results are enlarged with a sharper, more natural upscaler. The previous one, UltraSharp, was great on some images but smoothed skin and textures into an artificial look on others. You can still download it.",
+      },
   {
     icon: SlidersHorizontal,
     title: "Choose your upscaler",
@@ -84,6 +91,8 @@ export function WhatsNew() {
   const size = (missing ?? []).reduce((a, i) => a + Math.max(0, i.size - i.received), 0);
   const prog = installProgress(items);
   const showEngine = needsEngine || !!inst;
+  // Macs default to Lanczos: their update has no Superscale-SP download.
+  const getsSuperscale = (missing ?? []).some((i) => i.id === "upscaler_superscale");
 
   const update = async () => {
     if (!target) return;
@@ -121,8 +130,8 @@ export function WhatsNew() {
 
         {showEngine && !done && (
           <p className="welcome-lead">
-            This version needs a newer stable-diffusion.cpp, the engine that runs the models on your graphics chip, and the Superscale-SP model. Your images, models and settings stay
-            as they are.
+            This version needs a newer stable-diffusion.cpp, the engine that runs the models on your graphics chip{getsSuperscale ? ", and the Superscale-SP model" : ""}. Your images,
+            models and settings stay as they are.
           </p>
         )}
         {(running || (inst && !done && !failed.length)) && (
@@ -161,7 +170,9 @@ export function WhatsNew() {
                 Later
               </button>
             </div>
-            <span className="muted welcome-foot">Until you update, enlargements use a plain resize. You can update later from Settings → Models → Set up models…</span>
+            <span className="muted welcome-foot">
+              {isMac ? "" : "Until you update, enlargements use a plain resize. "}You can update later from Settings → Models → Set up models…
+            </span>
           </>
         )}
       </div>

@@ -187,7 +187,7 @@ preset later from Settings → Models → **Set up models…**
 | 32 GB+ | Qwen-Image 2.1 Turbo Q4_K | Qwen3-VL 8B Q8_0 (8.7 GB) | ~16 GB | not yet |
 
 Every preset also gets stable-diffusion.cpp (the CUDA 12 build on NVIDIA, the Vulkan build on AMD and Intel, the Metal build on a Mac), the Qwen-Image 2.1 VAE and the
-Qwen3-VL vision projector and the Superscale-SP upscaler (67 MB). The image model is Qwen's
+Qwen3-VL vision projector and, on a PC, the Superscale-SP upscaler (67 MB). The image model is Qwen's
 official 8-step [Qwen-Image 2.1 Turbo](https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo) through
 [DogukanUrker/Qwen-Image-2.1-Turbo-GGUF](https://huggingface.co/DogukanUrker/Qwen-Image-2.1-Turbo-GGUF);
 the other sources are
@@ -492,7 +492,9 @@ recent Apple systems show them in HDR, and every other viewer shows a normal JPE
 <summary><b>Which upscaler is used, and can I change it?</b></summary>
 <br>
 
-By default **Superscale-SP** by Nmkd (ESRGAN), downloaded by the setup screen. Pick another one
+By default **Superscale-SP** by Nmkd (ESRGAN), downloaded by the setup screen; on a Mac,
+**Lanczos**, because AI upscalers take minutes there (Superscale-SP: 5 min 45 s to enlarge a
+1024×1024 image to 2048×2048 on an M2 Pro, against about a second). Pick another one
 in the Advanced menu next to the prompt, or in Settings → Models; **Compare upscalers** there
 shows each one on the same crops (a face, a JPEG photo, a night street, text, a landscape, a 4×
 upscale):

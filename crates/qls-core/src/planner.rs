@@ -593,7 +593,8 @@ pub fn upscale_tile(override_px: u32, vram_mib: Option<u64>, model: &str) -> u32
 /// One x4 pass over `input` pixels, model load included. Measured on a 1472² edit
 /// (2026-10-12), RTX 5070 Ti, CUDA with direct convolutions: MoSR 3.1 s at 768 px tiles and
 /// ~5 s at 128–256 px (Vulkan within 10%), Superscale-SP (ESRGAN) 13.2 s at 128 px. M2 Pro,
-/// Metal: MoSR 54.6 s at 768 px and 78 s at 128 px; ESRGAN not measured (estimated ~3x MoSR).
+/// Metal: MoSR 54.6 s at 768 px and 78 s at 128 px; Superscale-SP 5 min 45 s for 1024² (M2 Pro,
+/// 2026-10-12: ~345 s/MP, which is why Macs default to Lanczos).
 pub fn esrgan_seconds(input: u64, tile: u32, metal: bool, mosr: bool) -> f32 {
     let large = tile == 0 || tile >= 512;
     let per_mp = match (mosr, metal, large) {
@@ -602,7 +603,7 @@ pub fn esrgan_seconds(input: u64, tile: u32, metal: bool, mosr: bool) -> f32 {
         (true, true, true) => 25.0,
         (true, true, false) => 32.0,
         (false, false, _) => 6.1,
-        (false, true, _) => 90.0,
+        (false, true, _) => 345.0,
     };
     0.5 + per_mp * input as f32 / 1_048_576.0
 }

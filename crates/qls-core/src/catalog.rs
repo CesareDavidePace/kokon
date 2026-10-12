@@ -418,9 +418,14 @@ pub fn recommended_preset(vram_mib: Option<u64>) -> &'static Preset {
 }
 
 /// Everything a preset needs on `backend`, in download order (small, essential files first).
+/// Superscale-SP is the default upscaler on PCs only (on Metal it takes minutes per image).
 pub fn downloads_for(p: &Preset, backend: GpuBackend) -> Vec<Download> {
     let mut v = engine_downloads(backend);
-    v.extend([UPSCALER, SUPERSCALE, VAE, VISION_PROJECTOR, p.text_encoder, p.diffusion]);
+    v.push(UPSCALER);
+    if backend != GpuBackend::Metal {
+        v.push(SUPERSCALE);
+    }
+    v.extend([VAE, VISION_PROJECTOR, p.text_encoder, p.diffusion]);
     v
 }
 
@@ -479,7 +484,9 @@ mod tests {
         for (name, _) in crate::config::UPSCALER_CHOICES {
             assert_eq!(upscaler_download(name).is_some(), *name != crate::config::LANCZOS, "{name}");
         }
-        assert_eq!(upscaler_download(crate::config::DEFAULT_UPSCALER).unwrap().id, "upscaler_superscale");
+        assert_eq!(upscaler_download(crate::config::UPSCALER_CHOICES[0].0).unwrap().id, "upscaler_superscale");
+        let metal = downloads_for(&PRESETS[0], GpuBackend::Metal);
+        assert!(metal.iter().all(|d| d.id != "upscaler_superscale"), "Macs default to Lanczos: no Superscale download");
         for p in PRESETS {
             let cuda = downloads_for(p, GpuBackend::Cuda);
             assert_eq!(cuda.len(), 8);

@@ -1,0 +1,8 @@
+# kokon.app: search engines and AI assistants are welcome to read and cite this site.
+# Content signals (https://contentsignals.org): search results, AI answers and training all allowed.
+
+User-agent: *
+Content-Signal: search=yes, ai-input=yes, ai-train=yes
+Allow: /
+
+Sitemap: https://kokon.app/sitemap.xml

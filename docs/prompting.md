@@ -1,5 +1,8 @@
 # How to write prompts in Kokon
 
+> **The visual version is at [kokon.app/prompt-guide](https://kokon.app/prompt-guide/)**: every rule
+> with the vague prompt and the clear one side by side. This page is the text reference.
+
 Kokon runs Qwen-Image 2.1 Turbo. It follows what you write closely, so a clear description gets
 a better picture than a clever one. This page shows what works, with examples tested in Kokon
 itself (RTX 5070 Ti, Fast quality, fixed seeds, first try).

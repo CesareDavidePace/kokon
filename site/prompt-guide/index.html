@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prompt Guide for Qwen-Image 2.1: What Works, What Doesn't (With Examples) · Kokon</title>
+<meta name="description" content="Six rules for writing prompts for Qwen-Image 2.1, shown with real before/after images: describe the action, never write &quot;no&quot;, quote your text, name what to edit. Tested in Kokon.">
+<meta name="author" content="Gabriele Lozupone">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<meta name="theme-color" content="#0a0a0a">
+<link rel="canonical" href="https://kokon.app/prompt-guide/">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="../assets/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="../assets/apple-touch-icon.png">
+<meta property="og:site_name" content="Kokon">
+<meta property="og:type" content="article">
+<meta property="og:title" content="How to write prompts for Qwen-Image 2.1 (with good and bad examples)">
+<meta property="og:description" content="Six rules, shown with real images: what the model gets wrong with a vague prompt, and the prompt that fixes it.">
+<meta property="og:url" content="https://kokon.app/prompt-guide/">
+<meta property="og:image" content="https://kokon.app/assets/prompt-guide/monkey-good.webp">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css?v=4">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "How to write prompts for Qwen-Image 2.1, with good and bad examples",
+      "description": "Six prompt rules for creating and editing images with Qwen-Image 2.1, each shown with a real result from a vague prompt and from a clear one.",
+      "image": "https://kokon.app/assets/prompt-guide/monkey-good.webp",
+      "datePublished": "2026-10-12",
+      "dateModified": "2026-10-12",
+      "author": { "@type": "Person", "name": "Gabriele Lozupone", "url": "https://gabrielelozupone.github.io/" },
+      "about": [{ "@type": "Thing", "name": "Qwen-Image 2.1" }, { "@type": "SoftwareApplication", "name": "Kokon", "url": "https://kokon.app/" }],
+      "mainEntityOfPage": "https://kokon.app/prompt-guide/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "Kokon", "item": "https://kokon.app/" },
+        { "@type": "ListItem", "position": 2, "name": "Prompt guide", "item": "https://kokon.app/prompt-guide/" }
+      ]
+    }
+  ]
+}
+</script>
+<style>
+  .wrap.narrow.pg { width: min(1040px, calc(100% - 32px)); }
+  .wrap.narrow.pg > p, .wrap.narrow.pg > .lede-left { max-width: 760px; }
+  .pg-intro { margin-top: 28px; display: flex; flex-wrap: wrap; gap: 10px; }
+  .pg-intro a { font-size: 14px; padding: 7px 12px; border-radius: 999px; background: var(--card-hi); box-shadow: inset 0 0 0 1px var(--line); color: var(--text-2) !important; text-decoration: none !important; }
+  .pg-intro a:hover { color: var(--text) !important; box-shadow: inset 0 0 0 1px var(--line-hi); }
+
+  .pg-rule { margin-top: 56px; padding: 22px; border-radius: var(--radius); background: var(--card); box-shadow: inset 0 0 0 1px var(--line); }
+  @media (min-width: 720px) { .pg-rule { padding: 30px; } }
+  .pg-rule h2 { margin: 0 !important; display: flex; gap: 14px; align-items: baseline; }
+  .pg-num { font-family: var(--mono); font-size: 15px; color: var(--text-3); font-weight: 500; flex: none; }
+  .pg-rule > p { margin-top: 10px !important; }
+
+  .pg-pair { display: grid; gap: 16px; margin-top: 22px; }
+  @media (min-width: 640px) { .pg-pair { grid-template-columns: 1fr 1fr; } .pg-pair.three { grid-template-columns: 1fr 1fr 1fr; } }
+  .pg-side { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .pg-tag { align-self: flex-start; font-size: 13px; font-weight: 600; letter-spacing: 0.02em; padding: 4px 10px; border-radius: 999px; }
+  .pg-tag.bad { color: #ff8f8f; background: rgba(255, 99, 99, 0.12); }
+  .pg-tag.good { color: #7ee2a0; background: rgba(74, 222, 128, 0.12); }
+  .pg-tag.ok { color: #f5d77a; background: rgba(245, 197, 24, 0.12); }
+  .pg-tag.src { color: var(--text-2); background: var(--card-hi); }
+  .pg-prompt { font-family: var(--mono); font-size: 13.5px; line-height: 1.5; color: var(--text); background: #0f0f0f; box-shadow: inset 0 0 0 1px var(--line); border-radius: 12px; padding: 10px 12px; overflow-wrap: anywhere; }
+  .pg-prompt.muted { color: var(--text-3); font-family: var(--font); font-size: 14px; }
+  .pg-side .pg-tag { order: 1; } .pg-side img { order: 2; } .pg-side .pg-prompt { order: 3; } .pg-side .pg-why { order: 4; }
+  .pg-side img { width: 100%; height: auto; border-radius: 12px; box-shadow: 0 0 0 1px var(--line-hi); }
+  .pg-why { font-size: 15px !important; margin: 0 !important; color: var(--text-2); }
+  .pg-why b { color: var(--text); font-weight: 600; }
+  .pg-lesson { margin-top: 20px !important; padding: 12px 16px; border-radius: 12px; background: rgba(74, 222, 128, 0.07); box-shadow: inset 0 0 0 1px rgba(74, 222, 128, 0.18); color: var(--text) !important; font-size: 16px !important; }
+
+  .pg-grid { display: grid; gap: 18px; margin-top: 24px; }
+  @media (min-width: 720px) { .pg-grid { grid-template-columns: 1fr 1fr; } }
+  .pg-tile { padding: 16px; border-radius: 18px; background: var(--card); box-shadow: inset 0 0 0 1px var(--line); display: flex; flex-direction: column; gap: 10px; }
+  .pg-tile h3 { margin: 0 !important; }
+  .pg-tile .duo { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .pg-tile img { width: 100%; height: auto; border-radius: 10px; box-shadow: 0 0 0 1px var(--line-hi); }
+
+  .pg-formula { margin-top: 20px; padding: 18px; border-radius: 16px; background: #0f0f0f; box-shadow: inset 0 0 0 1px var(--line); font-family: var(--mono); font-size: 14.5px; line-height: 1.9; color: var(--text-2); }
+  .pg-formula span { color: var(--text); background: var(--card-hi); padding: 2px 7px; border-radius: 6px; white-space: nowrap; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="mark" viewBox="0 0 1024 1024"><path d="M0.00 242.81 C0.00 112.17 70.23 25.08 175.59 25.08 C280.94 25.08 351.17 112.17 351.17 242.81 L351.17 781.19 C351.17 911.83 280.94 998.92 175.59 998.92 C70.23 998.92 0.00 911.83 0.00 781.19 Z M389.53 548.95 C389.53 250.35 662.35 25.08 1024.00 25.08 C1024.00 323.68 751.18 548.95 389.53 548.95 Z M389.53 587.31 C389.53 821.93 618.71 998.92 922.49 998.92 C922.49 764.30 693.31 587.31 389.53 587.31 Z" fill="currentColor"/></symbol>
+  </defs>
+</svg>
+
+<header class="nav scrolled" id="nav">
+  <div class="wrap">
+    <a class="logo" href="../" aria-label="Kokon home"><svg><use href="#mark"/></svg>Kokon</a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="../#examples">Examples</a>
+      <a href="../#features">Features</a>
+      <a href="../mcp-image-generation/">AI agents</a>
+      <a href="../#faq">FAQ</a>
+    </nav>
+    <span class="spacer"></span>
+    <a class="btn primary small" href="https://github.com/GabrieleLozupone/kokon/releases/latest" rel="noopener" data-dl-auto>Download</a>
+  </div>
+</header>
+
+<main class="article">
+  <div class="wrap narrow pg">
+    <nav class="crumbs" aria-label="Breadcrumb"><a href="../">Kokon</a> <span>/</span> Prompt guide</nav>
+    <h1>How to talk to the model</h1>
+    <p class="lede-left">Qwen-Image 2.1 does what you write, quite literally. Six rules, each with a real result from a vague prompt and from a clear one. Every image on this page was made by Kokon, first try, same seed on both sides.</p>
+    <div class="pg-intro">
+      <a href="#new">Creating images</a>
+      <a href="#edit">Editing photos</a>
+      <a href="#powers">Things that just work</a>
+      <a href="#cheat">Cheat sheet</a>
+    </div>
+
+    <h2 id="new">Creating a new image</h2>
+
+    <section class="pg-rule">
+      <h2><span class="pg-num">01</span>Say what's happening, and where</h2>
+      <p>With a short prompt, the model draws the subject and fills the rest with the most ordinary choice. The action gets lost.</p>
+      <div class="pg-pair">
+        <div class="pg-side">
+          <span class="pg-tag bad">✕ Vague</span>
+          <div class="pg-prompt">a monkey playing basketball</div>
+          <img src="../assets/prompt-guide/monkey-bad.webp" width="900" height="900" alt="A monkey sitting on a post holding a yellow ball, no basketball game" loading="lazy">
+          <p class="pg-why">A monkey, sitting on a post, with a <b>football</b>. Nobody is playing.</p>
+        </div>
+        <div class="pg-side">
+          <span class="pg-tag good">✓ Clear</span>
+          <div class="pg-prompt">Photograph of a monkey dribbling a basketball on an outdoor court, full body, sunny afternoon</div>
+          <img src="../assets/prompt-guide/monkey-good.webp" width="900" height="900" alt="A monkey dribbling a basketball on an outdoor court" loading="lazy">
+          <p class="pg-why">The action (<b>dribbling</b>), the place (<b>a court</b>) and the framing (<b>full body</b>). Now it plays.</p>
+        </div>
+      </div>
+      <p class="pg-lesson">Describe it like a photo you've already seen: who, doing what, where, in what light.</p>
+    </section>
+
+    <section class="pg-rule">
+      <h2><span class="pg-num">02</span>Never write "no"</h2>
+      <p>The model reads the words, not the grammar. Writing "no laptop" puts "laptop" in its head.</p>
+      <div class="pg-pair">
+        <div class="pg-side">
+          <span class="pg-tag bad">✕ Negative</span>
+          <div class="pg-prompt">Photograph of a minimalist wooden desk by a window, no laptop, no computer</div>
+          <img src="../assets/prompt-guide/desk-bad.webp" width="900" height="681" alt="A wooden desk with a closed laptop on it" loading="lazy">
+          <p class="pg-why">There's the laptop.</p>
+        </div>
+        <div class="pg-side">
+          <span class="pg-tag good">✓ Positive</span>
+          <div class="pg-prompt">Photograph of a minimalist wooden desk by a window, the desk is clean and empty except for a small potted plant and a ceramic cup</div>
+          <img src="../assets/prompt-guide/desk-good.webp" width="900" height="681" alt="An empty wooden desk with only a small plant and a cup" loading="lazy">
+          <p class="pg-why">Say what <b>is</b> there, and the rest stays empty.</p>
+        </div>
+      </div>
+      <p class="pg-lesson">Instead of "no people", write "an empty beach". Instead of "no text", just don't mention text.</p>
+    </section>
+
+    <section class="pg-rule">
+      <h2><span class="pg-num">03</span>Text goes in quotes, and short</h2>
+      <p>Qwen-Image is great at lettering. Big titles come out right almost every time. Long small lines are where it slips.</p>
+      <div class="pg-pair">
+        <div class="pg-side">
+          <span class="pg-tag bad">✕ Too much small text</span>
+          <div class="pg-prompt">…title "NIGHT JAZZ". Below the moon, smaller text "Friday 24 October · Teatro Verdi · 21:00"…</div>
+          <img src="../assets/prompt-guide/poster-bad.webp" width="681" height="900" alt="A poster where the small date line is repeated at the top with a typo" loading="lazy">
+          <p class="pg-why">The small line shows up <b>twice</b>, once with a typo ("24 ocber").</p>
+        </div>
+        <div class="pg-side">
+          <span class="pg-tag good">✓ Short and placed</span>
+          <div class="pg-prompt">…Only two lines of text: the title "NIGHT JAZZ" in big bold letters at the top, and "24 OCTOBER" in small letters at the bottom.</div>
+          <img src="../assets/prompt-guide/poster-good.webp" width="681" height="900" alt="A clean poster with NIGHT JAZZ at the top and 24 OCTOBER at the bottom" loading="lazy">
+          <p class="pg-why">Exact words in quotes, and <b>where</b> each line goes.</p>
+        </div>
+      </div>
+      <p class="pg-lesson">Need a lot of small text? Switch to <strong>Quality</strong>: at native 2K the long line above came out perfect.</p>
+    </section>
+
+    <section class="pg-rule">
+      <h2><span class="pg-num">04</span>Details turn "a picture" into your picture</h2>
+      <p>A short prompt isn't wrong, it's just generic. Every detail you add is a decision you make instead of the model.</p>
+      <div class="pg-pair">
+        <div class="pg-side">
+          <span class="pg-tag ok">◐ Fine</span>
+          <div class="pg-prompt">a girl riding a bicycle</div>
+          <img src="../assets/prompt-guide/bike-plain.webp" width="900" height="681" alt="A girl riding a green bicycle past some trees" loading="lazy">
+        </div>
+        <div class="pg-side">
+          <span class="pg-tag good">✓ Yours</span>
+          <div class="pg-prompt">Photograph of a young woman riding a vintage blue bicycle along a seaside promenade, her hair blowing in the wind, a basket of flowers on the handlebar, late afternoon golden light, shot from the side, full body</div>
+          <img src="../assets/prompt-guide/bike-rich.webp" width="900" height="681" alt="A young woman on a blue bicycle with a flower basket by the sea at golden hour" loading="lazy">
+        </div>
+      </div>
+      <div class="pg-pair">
+        <div class="pg-side">
+          <span class="pg-tag ok">◐ Fine</span>
+          <div class="pg-prompt">A dog holding a sign that says I ate your homework</div>
+          <img src="../assets/prompt-guide/dog-plain.webp" width="900" height="900" alt="A smiling dog holding a sign that reads I ate your homework" loading="lazy">
+        </div>
+        <div class="pg-side">
+          <span class="pg-tag good">✓ A story</span>
+          <div class="pg-prompt">Photograph of a guilty-looking golden retriever sitting on a kitchen floor, holding in its mouth a cardboard sign with handwritten black marker text: "I ATE YOUR HOMEWORK". Torn paper scattered around, soft daylight</div>
+          <img src="../assets/prompt-guide/dog-rich.webp" width="900" height="900" alt="A guilty golden retriever with a cardboard sign and torn paper on the kitchen floor" loading="lazy">
+        </div>
+      </div>
+      <p class="pg-lesson">The model doesn't get tired of reading. Long prompts in plain sentences work, most important things first.</p>
+    </section>
+
+    <h2 id="edit">Editing a photo</h2>
+    <p>Drop in a photo and type the change. Kokon keeps everything you don't mention.</p>
+
+    <section class="pg-rule">
+      <h2><span class="pg-num">05</span>"Better" means nothing. Say what better is.</h2>
+      <p>The model can't read your mind. Ask it to "improve" a photo and it gives the photo back, almost unchanged.</p>
+      <div class="pg-pair three">
+        <div class="pg-side">
+          <span class="pg-tag src">Original</span>
+          <img src="../assets/prompt-guide/room.webp" width="900" height="669" alt="A bright living room with a yellow armchair, a floor lamp and plants" loading="lazy">
+        </div>
+        <div class="pg-side">
+          <span class="pg-tag bad">✕ Vague</span>
+          <div class="pg-prompt">make it better</div>
+          <img src="../assets/prompt-guide/room-better.webp" width="900" height="669" alt="The same living room, unchanged" loading="lazy">
+          <p class="pg-why">Same room.</p>
+        </div>
+        <div class="pg-side">
+          <span class="pg-tag good">✓ Clear</span>
+          <div class="pg-prompt">Make the room cozy for a winter evening: dusk outside the window, the floor lamp turned on with warm light, a knitted cream blanket on the armchair, a stack of books and a mug of tea on the rug</div>
+          <img src="../assets/prompt-guide/room-cozy.webp" width="900" height="669" alt="The living room at dusk with the lamp on, a blanket on the armchair and books with a mug on the rug" loading="lazy">
+        </div>
+      </div>
+      <p class="pg-lesson">Turn "better" into things you can see: warmer light, a blanket, tidier, more contrast, a sunset.</p>
+    </section>
+
+    <section class="pg-rule">
+      <h2><span class="pg-num">06</span>Name the thing you want changed</h2>
+      <p>When the prompt doesn't say <em>what</em>, the model picks the most eye-catching thing in the photo.</p>
+      <div class="pg-pair three">
+        <div class="pg-side">
+          <span class="pg-tag src">Original</span>
+          <img src="../assets/prompt-guide/room.webp" width="900" height="669" alt="A bright living room with a yellow armchair" loading="lazy">
+        </div>
+        <div class="pg-side">
+          <span class="pg-tag bad">✕ Ambiguous</span>
+          <div class="pg-prompt">make it blue</div>
+          <img src="../assets/prompt-guide/room-blue-chair.webp" width="900" height="669" alt="The living room with the armchair turned blue" loading="lazy">
+          <p class="pg-why">You meant the walls. It painted the <b>armchair</b>.</p>
+        </div>
+        <div class="pg-side">
+          <span class="pg-tag good">✓ Named</span>
+          <div class="pg-prompt">Paint the wall behind the armchair a dusty blue. Keep the yellow armchair and everything else unchanged.</div>
+          <img src="../assets/prompt-guide/room-blue-wall.webp" width="900" height="669" alt="The living room with a dusty blue wall and the yellow armchair unchanged" loading="lazy">
+        </div>
+      </div>
+      <p class="pg-lesson">Too many similar things to name? Use <strong>Paint area</strong>: brush over it and write only the change.</p>
+    </section>
+
+    <h2 id="powers">Things that just work</h2>
+    <p>Once the prompt is clear, the model is happy to do a lot at once.</p>
+
+    <div class="pg-grid">
+      <div class="pg-tile">
+        <h3>Five changes in one sentence</h3>
+        <div class="duo">
+          <img src="../assets/prompt-guide/street.webp" width="900" height="503" alt="A sunny café street with a red scooter" loading="lazy">
+          <img src="../assets/prompt-guide/street-multi.webp" width="900" height="503" alt="The same street on a rainy evening, scooter gone, a cat on a chair and a man with an umbrella" loading="lazy">
+        </div>
+        <div class="pg-prompt">Remove the red scooter, make it a rainy evening with wet reflective cobblestones, turn on the café lights, add a ginger cat sitting on a chair, and add an old man with an umbrella walking on the right</div>
+      </div>
+      <div class="pg-tile">
+        <h3>"Bottom left corner" means bottom left</h3>
+        <div class="duo">
+          <img src="../assets/prompt-guide/lighthouse.webp" width="900" height="900" alt="A lighthouse on a cliff above the sea" loading="lazy">
+          <img src="../assets/prompt-guide/lighthouse-boat.webp" width="900" height="900" alt="The same lighthouse with a small sailboat in the bottom left" loading="lazy">
+        </div>
+        <div class="pg-prompt">Add a small white sailboat on the sea in the bottom left corner. Keep everything else unchanged.</div>
+      </div>
+      <div class="pg-tile">
+        <h3>Combine two photos</h3>
+        <div class="duo">
+          <img src="../assets/prompt-guide/sneaker.webp" width="900" height="900" alt="A white sneaker on a grey background" loading="lazy">
+          <img src="../assets/prompt-guide/room-sneaker.webp" width="900" height="669" alt="The sneaker placed on the rug of the living room" loading="lazy">
+        </div>
+        <div class="pg-prompt">Place the white sneaker from image 2 on the rug in image 1, in front of the yellow armchair, with natural shadows matching the room light. Keep the room from image 1 unchanged.</div>
+      </div>
+      <div class="pg-tile">
+        <h3>Change the whole style</h3>
+        <div class="duo">
+          <img src="../assets/prompt-guide/street.webp" width="900" height="503" alt="A sunny café street photo" loading="lazy">
+          <img src="../assets/prompt-guide/street-ghibli.webp" width="900" height="503" alt="The same street as an anime-style painting" loading="lazy">
+        </div>
+        <div class="pg-prompt">Turn it into a Studio Ghibli style anime illustration, soft painted backgrounds, keep the same scene and composition</div>
+      </div>
+      <div class="pg-tile">
+        <h3>Counts and positions</h3>
+        <img src="../assets/prompt-guide/apples.webp" width="900" height="681" alt="Three red apples on the left, a green pear on the right, a white jug in the middle" loading="lazy">
+        <div class="pg-prompt">Still life photograph on a wooden kitchen table: three red apples on the left, a single green pear on the right, a white ceramic jug in the middle behind them</div>
+      </div>
+      <div class="pg-tile">
+        <h3>A whole scene, every detail</h3>
+        <img src="../assets/prompt-guide/ramen.webp" width="900" height="502" alt="A ramen shop at night with a chef, two customers, lanterns and a cat on a shelf" loading="lazy">
+        <div class="pg-prompt">…On the left an old chef with a white headband pours broth into a bowl. On the right two customers in winter jackets, one laughing. Paper lanterns, handwritten menu boards, a cat sleeps on a shelf in the background…</div>
+      </div>
+      <div class="pg-tile">
+        <h3>Camera angles</h3>
+        <img src="../assets/prompt-guide/breakfast.webp" width="900" height="900" alt="A breakfast table seen from directly above" loading="lazy">
+        <div class="pg-prompt">Bird's-eye view photograph, straight down, of a breakfast table: a cappuccino with latte art, two croissants, a glass of orange juice, a folded newspaper</div>
+      </div>
+      <div class="pg-tile">
+        <h3>Any style you can name</h3>
+        <img src="../assets/prompt-guide/fox.webp" width="900" height="681" alt="A watercolor fox reading a book under an autumn tree" loading="lazy">
+        <div class="pg-prompt">Watercolor illustration of a fox reading a book under a tree in autumn, soft washes of orange and brown, visible paper texture, children's book style</div>
+      </div>
+    </div>
+
+    <h2 id="cheat">Cheat sheet</h2>
+    <h3>New image</h3>
+    <div class="pg-formula">
+      <span>type of image</span> of <span>subject</span> <span>doing what</span>, <span>where</span>, <span>light / time</span>, <span>framing</span>, <span>style</span>
+    </div>
+    <p>Not every part is needed. Add the ones you care about, most important first. Any language works.</p>
+
+    <h3>Edit</h3>
+    <div class="pg-formula">
+      <span>verb</span> <span>the exact thing</span> <span>into / with what</span>. Keep <span>what matters</span> unchanged.
+    </div>
+
+    <h3>Words that work</h3>
+    <div class="table-wrap">
+      <table class="cmp-table">
+        <thead><tr><th>You want</th><th class="us">Write</th></tr></thead>
+        <tbody>
+          <tr><td>The whole person</td><td class="us">full body, wide shot</td></tr>
+          <tr><td>A face</td><td class="us">close-up portrait, 85mm</td></tr>
+          <tr><td>From above</td><td class="us">bird's-eye view, straight down, flat lay</td></tr>
+          <tr><td>From below</td><td class="us">low-angle photograph looking up at…</td></tr>
+          <tr><td>Blurry background</td><td class="us">shallow depth of field</td></tr>
+          <tr><td>Product shot</td><td class="us">plain light grey background, studio lighting, soft shadow</td></tr>
+          <tr><td>Film look</td><td class="us">35mm film, slightly grainy, warm tones</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>When it goes wrong</h3>
+    <div class="table-wrap">
+      <table class="cmp-table">
+        <thead><tr><th>Problem</th><th class="us">Try</th></tr></thead>
+        <tbody>
+          <tr><td>Part of the prompt ignored</td><td class="us">Describe that part more, and put it earlier</td></tr>
+          <tr><td>Something unwanted appeared</td><td class="us">Remove its name from the prompt, even after "no"</td></tr>
+          <tr><td>Text is wrong</td><td class="us">Fewer words, in quotes, or switch to Quality</td></tr>
+          <tr><td>Close, but not quite</td><td class="us">Regenerate: a new seed is a new try</td></tr>
+          <tr><td>Edit changed too much</td><td class="us">Add "keep everything else unchanged", or paint the area</td></tr>
+          <tr><td>Edit changed nothing</td><td class="us">Name the object and the new look</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Skip tag lists like "masterpiece, 8k, best quality". They don't add quality, they just push everything toward the same dramatic stock-photo look. Describe the look you want in words.</p>
+
+    <div class="cta-box">
+      <h2>Try it on your own photos</h2>
+      <p>Kokon is free and open source for Windows and macOS. Nothing to set up: it picks the right settings for your computer.</p>
+      <div class="ctas" style="justify-content:flex-start">
+        <a class="btn primary" href="https://github.com/GabrieleLozupone/kokon/releases/latest" rel="noopener" data-dl-auto>Download Kokon</a>
+        <a class="btn ghost" href="../qwen-image-2-1-local/">Setup guide</a>
+      </div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <a class="logo" href="../"><svg><use href="#mark"/></svg>Kokon</a>
+    <span>Designed and built by <a class="me" href="https://gabrielelozupone.github.io/" rel="author">Gabriele Lozupone</a>, with the help of Claude Code.</span>
+    <nav aria-label="Links">
+      <a href="../">Home</a>
+      <a href="../qwen-image-2-1-local/">Setup guide</a>
+      <a href="../mcp-image-generation/">MCP guide</a>
+      <a href="https://github.com/GabrieleLozupone/kokon" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</footer>
+<script src="/download.js" defer></script>
+</body>
+</html>

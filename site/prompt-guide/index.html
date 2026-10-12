@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Prompt Guide for Qwen-Image 2.1: What Works, What Doesn't (With Examples) · Kokon</title>
-<meta name="description" content="Six rules for writing prompts for Qwen-Image 2.1, shown with real before/after images: describe the action, never write &quot;no&quot;, quote your text, name what to edit. Tested in Kokon.">
+<title>Qwen-Image 2.1 Prompt Guide: How to Write Prompts That Work (With Examples)</title>
+<meta name="description" content="How to write prompts for Qwen-Image 2.1: six rules with real good vs bad examples, negative prompts, text in images, edit prompts and a cheat sheet.">
 <meta name="author" content="Gabriele Lozupone">
 <meta name="robots" content="index, follow, max-image-preview:large">
 <meta name="theme-color" content="#0a0a0a">
@@ -14,10 +14,14 @@
 <link rel="apple-touch-icon" href="../assets/apple-touch-icon.png">
 <meta property="og:site_name" content="Kokon">
 <meta property="og:type" content="article">
-<meta property="og:title" content="How to write prompts for Qwen-Image 2.1 (with good and bad examples)">
+<meta property="og:title" content="Qwen-Image 2.1 prompt guide: good vs bad prompts, same seed">
 <meta property="og:description" content="Six rules, shown with real images: what the model gets wrong with a vague prompt, and the prompt that fixes it.">
 <meta property="og:url" content="https://kokon.app/prompt-guide/">
-<meta property="og:image" content="https://kokon.app/assets/prompt-guide/monkey-good.webp">
+<meta property="og:image" content="https://kokon.app/assets/prompt-guide/og-prompt-guide.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="A vague prompt gives a monkey sitting with a football; a clear prompt gives a monkey dribbling a basketball on a court">
+<meta name="keywords" content="Qwen-Image 2.1 prompt guide, Qwen Image prompts, Qwen Image Edit prompts, how to write prompts, prompt examples, negative prompt, text in AI images">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -29,9 +33,9 @@
   "@graph": [
     {
       "@type": "TechArticle",
-      "headline": "How to write prompts for Qwen-Image 2.1, with good and bad examples",
+      "headline": "Qwen-Image 2.1 prompt guide: how to write prompts that work",
       "description": "Six prompt rules for creating and editing images with Qwen-Image 2.1, each shown with a real result from a vague prompt and from a clear one.",
-      "image": "https://kokon.app/assets/prompt-guide/monkey-good.webp",
+      "image": ["https://kokon.app/assets/prompt-guide/og-prompt-guide.jpg", "https://kokon.app/assets/prompt-guide/monkey-good.webp", "https://kokon.app/assets/prompt-guide/room-cozy.webp"],
       "datePublished": "2026-10-12",
       "dateModified": "2026-10-12",
       "author": { "@type": "Person", "name": "Gabriele Lozupone", "url": "https://gabrielelozupone.github.io/" },
@@ -44,7 +48,8 @@
         { "@type": "ListItem", "position": 1, "name": "Kokon", "item": "https://kokon.app/" },
         { "@type": "ListItem", "position": 2, "name": "Prompt guide", "item": "https://kokon.app/prompt-guide/" }
       ]
-    }
+    },
+    {"@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "How do I write a good prompt for Qwen-Image 2.1?", "acceptedAnswer": {"@type": "Answer", "text": "Describe the scene, not just the subject: who or what, doing what, where, in what light, and the framing. \"A monkey playing basketball\" gave a monkey sitting with a football; \"a monkey dribbling a basketball on an outdoor court, full body\" gave the game. Plain sentences work, most important things first, and long prompts are fine."}}, {"@type": "Question", "name": "Does Qwen-Image 2.1 support negative prompts?", "acceptedAnswer": {"@type": "Answer", "text": "Not in a useful way. The Turbo model runs at CFG 1, where a separate negative prompt has no effect, and writing \"no laptop\" in the prompt tends to add a laptop. Describe what should be there instead: \"a clean, empty desk with only a plant and a cup\"."}}, {"@type": "Question", "name": "How do I get correct text in Qwen-Image 2.1 images?", "acceptedAnswer": {"@type": "Answer", "text": "Put the exact words in quotes and say where they go, for example the title \"NIGHT JAZZ\" in big letters at the top. Big titles come out right almost every time; long lines of small text can be garbled at about 1 megapixel, so use fewer words or render at native 2K."}}, {"@type": "Question", "name": "How should I write edit prompts for Qwen-Image 2.1?", "acceptedAnswer": {"@type": "Answer", "text": "Name the exact thing and the change: \"Replace the yellow armchair with a green velvet sofa\", \"Paint the wall behind the armchair dusty blue\". Vague requests like \"make it better\" return almost the same photo, and \"make it blue\" changes whatever stands out most. Add \"keep everything else unchanged\" when an edit changes too much."}}, {"@type": "Question", "name": "Can I ask for several edits in one prompt?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. One sentence removed a scooter, turned the scene into a rainy evening, turned on the lights, added a cat and added a man with an umbrella in a single edit. If one change does not happen, edit the result again."}}, {"@type": "Question", "name": "Can I write Qwen-Image prompts in other languages?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. A descriptive prompt in Italian gave the same picture as the English one with the same seed. Short prompts lose detail in any language."}}, {"@type": "Question", "name": "How do I combine several images in one prompt?", "acceptedAnswer": {"@type": "Answer", "text": "Refer to them as image 1, image 2 and so on, in order, and say what each one gives: \"Place the sneaker from image 2 on the rug in image 1, keep the room from image 1 unchanged\"."}}]}
   ]
 }
 </script>
@@ -112,13 +117,15 @@
 <main class="article">
   <div class="wrap narrow pg">
     <nav class="crumbs" aria-label="Breadcrumb"><a href="../">Kokon</a> <span>/</span> Prompt guide</nav>
-    <h1>How to talk to the model</h1>
-    <p class="lede-left">Qwen-Image 2.1 does what you write, quite literally. Six rules, each with a real result from a vague prompt and from a clear one. Every image on this page was made by Kokon, first try, same seed on both sides.</p>
+    <h1>How to write prompts for Qwen-Image 2.1</h1>
+    <p class="lede-left">The model does what you write, quite literally. Six rules, each with a real result from a vague prompt and from a clear one. Every image on this page was made by Kokon, first try, same seed on both sides.</p>
+    <p>The rules apply to Qwen-Image 2.1 wherever you run it, for new images and for edits (2.1 does both in one model, the job Qwen-Image-Edit did for earlier versions): in <a href="../">Kokon</a>, ComfyUI or a hosted API.</p>
     <div class="pg-intro">
       <a href="#new">Creating images</a>
       <a href="#edit">Editing photos</a>
       <a href="#powers">Things that just work</a>
       <a href="#cheat">Cheat sheet</a>
+      <a href="#faq">FAQ</a>
     </div>
 
     <h2 id="new">Creating a new image</h2>
@@ -363,6 +370,17 @@
       </table>
     </div>
     <p>Skip tag lists like "masterpiece, 8k, best quality". They don't add quality, they just push everything toward the same dramatic stock-photo look. Describe the look you want in words.</p>
+
+    <h2 id="faq">Questions</h2>
+    <div class="faq">
+        <details><summary>How do I write a good prompt for Qwen-Image 2.1?</summary><p>Describe the scene, not just the subject: who or what, doing what, where, in what light, and the framing. "A monkey playing basketball" gave a monkey sitting with a football; "a monkey dribbling a basketball on an outdoor court, full body" gave the game. Plain sentences work, most important things first, and long prompts are fine.</p></details>
+        <details><summary>Does Qwen-Image 2.1 support negative prompts?</summary><p>Not in a useful way. The Turbo model runs at CFG 1, where a separate negative prompt has no effect, and writing "no laptop" in the prompt tends to add a laptop. Describe what should be there instead: "a clean, empty desk with only a plant and a cup".</p></details>
+        <details><summary>How do I get correct text in Qwen-Image 2.1 images?</summary><p>Put the exact words in quotes and say where they go, for example the title "NIGHT JAZZ" in big letters at the top. Big titles come out right almost every time; long lines of small text can be garbled at about 1 megapixel, so use fewer words or render at native 2K.</p></details>
+        <details><summary>How should I write edit prompts for Qwen-Image 2.1?</summary><p>Name the exact thing and the change: "Replace the yellow armchair with a green velvet sofa", "Paint the wall behind the armchair dusty blue". Vague requests like "make it better" return almost the same photo, and "make it blue" changes whatever stands out most. Add "keep everything else unchanged" when an edit changes too much.</p></details>
+        <details><summary>Can I ask for several edits in one prompt?</summary><p>Yes. One sentence removed a scooter, turned the scene into a rainy evening, turned on the lights, added a cat and added a man with an umbrella in a single edit. If one change does not happen, edit the result again.</p></details>
+        <details><summary>Can I write Qwen-Image prompts in other languages?</summary><p>Yes. A descriptive prompt in Italian gave the same picture as the English one with the same seed. Short prompts lose detail in any language.</p></details>
+        <details><summary>How do I combine several images in one prompt?</summary><p>Refer to them as image 1, image 2 and so on, in order, and say what each one gives: "Place the sneaker from image 2 on the rug in image 1, keep the room from image 1 unchanged".</p></details>
+    </div>
 
     <div class="cta-box">
       <h2>Try it on your own photos</h2>

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.GabrieleLozupone/kokon",
+  "title": "Kokon",
+  "description": "Generate and edit images offline with Qwen-Image 2.1 on your GPU. Needs the Kokon desktop app.",
+  "version": "0.9.1",
+  "websiteUrl": "https://kokon.app",
+  "repository": {
+    "url": "https://github.com/GabrieleLozupone/kokon",
+    "source": "github",
+    "subfolder": "mcp"
+  },
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/GabrieleLozupone/kokon/master/assets/brand/icon/kokon-icon-256.png",
+      "mimeType": "image/png",
+      "sizes": ["256x256"]
+    }
+  ],
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "kokon-mcp",
+      "version": "0.9.1",
+      "runtimeHint": "npx",
+      "transport": { "type": "stdio" },
+      "environmentVariables": [
+        {
+          "name": "QLS_MCP_ALLOWED_DIRS",
+          "description": "Extra folders the server may read and write, separated by semicolons. The project folder and Kokon's output folder are always allowed.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}

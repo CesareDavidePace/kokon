@@ -394,7 +394,13 @@ export const handlers = {
 
 export function toErrorResult(e: unknown): ToolResult {
   if (e instanceof PathError) return errorResult(e.message, "invalid_path");
-  if (e instanceof ServiceError) return errorResult(e.message, e.code, e.suggestion, e.detail);
+  if (e instanceof ServiceError) {
+    const suggestion =
+      e.code === "missing_model"
+        ? "Open the Kokon app and finish the setup (it downloads the model), or use Settings → Models → Set up models…, then try again."
+        : e.suggestion;
+    return errorResult(e.message, e.code, suggestion, e.detail);
+  }
   if (e instanceof z.ZodError) return errorResult(e.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "), "invalid_input");
   return errorResult(e instanceof Error ? e.message : String(e), "internal");
 }

@@ -262,6 +262,13 @@ claude mcp add --scope user kokon -- "$env:LOCALAPPDATA\Kokon\kokon-mcp.exe"
 claude mcp add --scope user kokon -- /Applications/Kokon.app/Contents/MacOS/kokon-mcp
 ```
 
+Or, on either system with Node.js 22+, through [npm](https://www.npmjs.com/package/kokon-mcp)
+(still needs the app installed):
+
+```bash
+claude mcp add --scope user kokon -- npx -y kokon-mcp
+```
+
 Then ask: *“Generate a hero image for this README and save it in docs/”* or *“Remove the
 background clutter from screenshot.png”*. The app doesn't need to be open, because the MCP server
 starts the engine on demand. The first call takes about a minute while the model loads.

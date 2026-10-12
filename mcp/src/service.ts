@@ -100,9 +100,9 @@ export class ServiceClient {
     const exe = findServiceExe();
     if (!exe) {
       throw new ServiceError(
-        `Kokon is not installed (${SERVICE_EXE} not found).`,
+        `Kokon is not installed (${SERVICE_EXE} not found). This MCP server needs the Kokon desktop app (Windows or macOS).`,
         "not_installed",
-        `Install Kokon, or set QLS_SERVICE_EXE to the path of ${SERVICE_EXE}.`,
+        `Download Kokon from https://kokon.app, open it once and finish the setup, then try again. If it is installed in an unusual place, set QLS_SERVICE_EXE to the path of ${SERVICE_EXE}.`,
       );
     }
     // Detached: the service outlives this MCP process and exits on its own when idle.

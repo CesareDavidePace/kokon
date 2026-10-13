@@ -13,4 +13,21 @@
       }),
     )
     .catch(() => {});
+
+  // Once the installer starts downloading, ask (once per browser) for a GitHub star.
+  // Not when the button fell back to the release page: that visitor is on GitHub already.
+  const ask = document.getElementById("star-ask");
+  if (!ask?.showModal) return;
+  const KEY = "kokon-star-asked";
+  const asked = () => { try { return localStorage.getItem(KEY); } catch { return null; } };
+  links.forEach((a) =>
+    a.addEventListener("click", () => {
+      if (asked() || !a.href.includes("/releases/download/")) return;
+      try { localStorage.setItem(KEY, "1"); } catch {}
+      // Let the browser show its download first.
+      setTimeout(() => ask.showModal(), 700);
+    }),
+  );
+  document.getElementById("star-ask-go").addEventListener("click", () => ask.close());
+  ask.addEventListener("click", (e) => { if (e.target === ask) ask.close(); });
 })();

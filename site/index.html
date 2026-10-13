@@ -90,7 +90,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/style.css?v=4">
+<link rel="stylesheet" href="assets/style.css?v=5">
 <script type="application/ld+json">
 {
  "@context": "https://schema.org",
@@ -587,6 +587,17 @@
   });
 })();
 </script>
+<dialog class="star-ask" id="star-ask" aria-labelledby="star-ask-title">
+  <div>
+    <svg class="mark"><use href="#mark"/></svg>
+    <h2 id="star-ask-title">Your download has started</h2>
+    <p>Kokon is free and open source, made by one person. If you like it, a star on GitHub helps other people find it and keeps the project going.</p>
+    <form method="dialog" class="ctas">
+      <a class="btn primary" id="star-ask-go" href="https://github.com/GabrieleLozupone/kokon" target="_blank" rel="noopener"><svg fill="currentColor"><use href="#github"/></svg>Star on GitHub</a>
+      <button class="btn ghost">Maybe later</button>
+    </form>
+  </div>
+</dialog>
 <script src="/download.js" defer></script>
 </body>
 </html>

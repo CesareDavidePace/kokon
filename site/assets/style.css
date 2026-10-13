@@ -212,6 +212,18 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
 footer a:hover { color: var(--text); }
 .legal { width: 100%; font-size: 12.5px; color: var(--text-3); opacity: 0.8; }
 
+/* Star request, shown once after a download starts */
+.star-ask { width: min(440px, calc(100% - 32px)); padding: 0; border: 0; border-radius: var(--radius); background: var(--bg-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-hi), 0 30px 90px rgba(0,0,0,0.6); text-align: center; }
+.star-ask[open] { animation: star-ask-in 0.35s cubic-bezier(0.16, 1, 0.3, 1); }
+.star-ask::backdrop { background: rgba(0,0,0,0.55); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+.star-ask > div { padding: 34px 26px 28px; }
+.star-ask .mark { width: 34px; height: 34px; margin: 0 auto 18px; }
+.star-ask h2 { font-size: 23px; line-height: 1.2; letter-spacing: -0.025em; max-width: none; margin-bottom: 10px; }
+.star-ask p { margin: 0; font-size: 15.5px; color: var(--text-2); }
+.star-ask .ctas { margin-top: 26px; gap: 10px; }
+@keyframes star-ask-in { from { opacity: 0; transform: translateY(12px) scale(0.98); } }
+@media (prefers-reduced-motion: reduce) { .star-ask[open] { animation: none; } }
+
 /* Reveal */
 .rv { opacity: 0; transform: translateY(28px); transition: opacity 0.9s cubic-bezier(0.16, 1, 0.3, 1), transform 0.9s cubic-bezier(0.16, 1, 0.3, 1); }
 .rv.in { opacity: 1; transform: none; }

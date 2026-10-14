@@ -200,7 +200,25 @@ pub struct AdvancedOptions {
     pub vae_tiling: Option<bool>,
     /// Keep the HDR gain map of a HEIC source (Ultra HDR JPEG output); None = on.
     pub hdr: Option<bool>,
+    /// How large edit/combine sources are given to the model; None = standard (1 MP).
+    pub reference_detail: Option<ReferenceDetail>,
 }
+
+/// Size of the source images the model sees in edits and combines. They share the token
+/// budget with the image being drawn, so a smaller reference leaves room for a larger output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ReferenceDetail {
+    /// At most 1 MP per reference (diffusers' Qwen edit pipelines use ~1 MP too): the rest
+    /// of the budget goes to the output, which renders larger and in fewer total tokens.
+    #[default]
+    Standard,
+    /// Up to the output's own area: finer source detail, but a single edit gets half the budget.
+    Full,
+}
+
+/// Largest reference area with [`ReferenceDetail::Standard`].
+pub const STANDARD_REFERENCE_AREA: u64 = 1024 * 1024;
 
 fn default_true() -> bool {
     true
@@ -318,6 +336,13 @@ pub struct Plan {
     /// Exact noise schedule (Turbo's); empty when no diffusion runs.
     #[serde(default)]
     pub custom_sigmas: Vec<f32>,
+    /// Reference size policy of edits and combines (None for the other modes and in records
+    /// of older versions, which always encoded references at the output's area).
+    #[serde(default)]
+    pub reference_detail: Option<ReferenceDetail>,
+    /// Decode tile (width, height in pixels) sent with the job; None = the server's own.
+    #[serde(default)]
+    pub vae_tile: Option<(u32, u32)>,
 }
 
 /// Facts about inputs and the environment, measured before planning.
@@ -519,6 +544,77 @@ pub fn token_budget(vram_total_mib: Option<u64>) -> u64 {
         16_384.0 + (gib - 20.0) * 1_024.0
     };
     tokens.clamp(4_096.0, 24_576.0) as u64
+}
+
+/// Extra tokens for discrete GPUs of 15 GiB and up: 16 GB cards run native 2K edits
+/// (2752×1536 = 16 512 tokens) with a standard 1 MP reference (1344×768 = 4 032), like
+/// Unsloth Studio's 2720×1536 + 1 MP on the same RTX 5070 Ti. sd-server's graph cut
+/// (`--max-vram -1`) splits the graph instead of failing if the activations do not fit.
+pub const DISCRETE_LARGE_GPU_BONUS: u64 = 20_736 - 16_384;
+
+/// Token budget the planner uses: [`token_budget`], plus [`DISCRETE_LARGE_GPU_BONUS`] on
+/// discrete GPUs of 15 GiB and up. Macs (unified memory) and smaller cards are not measured
+/// at larger sizes yet and keep the base budget.
+pub fn planning_token_budget(vram_total_mib: Option<u64>, unified_memory: bool) -> u64 {
+    let base = token_budget(vram_total_mib);
+    match vram_total_mib {
+        Some(mib) if !unified_memory && mib as f64 / 1024.0 >= 15.0 => base + DISCRETE_LARGE_GPU_BONUS,
+        _ => base,
+    }
+}
+
+/// Largest VAE decode tile on discrete GPUs of 15 GiB and up: an untiled decode of ~1.5 MP
+/// already fills a 16 GB card with the DiT resident, so 1 MP leaves margin. sd.cpp retries a
+/// decode that runs out of memory with smaller tiles itself, so too large only costs time.
+pub const LARGE_GPU_VAE_TILE_AREA: u64 = 1024 * 1024;
+/// Overlap the server is launched with (`--vae-tile-overlap`), also sent with per-job tiles.
+pub const VAE_TILE_OVERLAP: f32 = 0.125;
+/// Pixels per latent of Qwen-Image 2.1's VAE.
+const VAE_SCALE: u32 = 16;
+/// Shortest side of a shaped decode tile, in latents (512 px).
+const MIN_VAE_TILE_SIDE: u32 = 32;
+
+/// Tiles sd.cpp makes along one axis of `dim` latents with `tile`-latent tiles
+/// (`sd_tiling_plan_axis` in runtime/tiling.cpp, non-circular).
+fn vae_axis_tiles(dim: u32, tile: u32, overlap: f32) -> u32 {
+    if tile >= dim {
+        return 1;
+    }
+    let extent = (dim - tile) as i64;
+    let tile = tile as i64;
+    let target = extent as f32 / ((1.0 - overlap) * tile as f32);
+    let min_i = 1 + (extent - 1) / (tile - 1).max(1);
+    let max_i = (2 * extent / tile).max(1);
+    let lower = (target.floor() as i64).clamp(min_i, max_i.max(min_i));
+    let upper = (target.ceil() as i64).clamp(min_i, max_i.max(min_i));
+    let err = |n: i64| (1.0 / n as f32 - 1.0 / target).abs();
+    (if err(upper) < err(lower) { upper } else { lower }) as u32 + 1
+}
+
+/// Decode tile (width, height in pixels) for a `size` image whose tiles may cover at most
+/// `max_area`: the grid with the least decoded area, overlap included. The server's square
+/// 768 px tiles cut 2752×1536 into 4×3 tiles covering 67 % more than the image; shaped
+/// tiles (at least 512 px a side) cover it in 5 full-height 608 px columns (+10 %).
+pub fn vae_decode_tile(size: Size, max_area: u64) -> (u32, u32) {
+    let (lw, lh) = (size.width / VAE_SCALE, size.height / VAE_SCALE);
+    // Tile length for `n` tiles along an axis (sd.cpp's relative size > 1).
+    let len = |dim: u32, n: u32| if n <= 1 { dim } else { ((dim as f32 / (n as f32 * (1.0 - VAE_TILE_OVERLAP) + VAE_TILE_OVERLAP)).floor() as u32).max(4) };
+    let mut best: Option<(u64, u32, (u32, u32))> = None;
+    for nx in 1..=12 {
+        for ny in 1..=12 {
+            let (tw, th) = (len(lw, nx), len(lh, ny));
+            // Thin strips decode least but leave little context at the seams.
+            if (tw * th * VAE_SCALE * VAE_SCALE) as u64 > max_area || tw.min(th) < MIN_VAE_TILE_SIDE.min(lw).min(lh) {
+                continue;
+            }
+            let count = vae_axis_tiles(lw, tw, VAE_TILE_OVERLAP) * vae_axis_tiles(lh, th, VAE_TILE_OVERLAP);
+            let cost = count as u64 * (tw * th) as u64;
+            if best.map(|(c, n, _)| (cost, count) < (c, n)).unwrap_or(true) {
+                best = Some((cost, count, (tw * VAE_SCALE, th * VAE_SCALE)));
+            }
+        }
+    }
+    best.map(|b| b.2).unwrap_or((768, 768))
 }
 
 /// Apple Silicon: the VRAM-equivalent to plan with on a Mac with `ram_mib` of unified
@@ -739,7 +835,7 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
     let quality = req.quality;
     // Turbo: its fixed 8-step schedule without CFG (model card).
     let cfg = 1.0;
-    let budget_tokens = token_budget(inputs.vram_total_mib);
+    let budget_tokens = planning_token_budget(inputs.vram_total_mib, inputs.unified_memory);
     let budget_area = budget_tokens * PIXELS_PER_TOKEN;
     let tier_area = resolution_area(req.resolution, quality, rec);
     let adv = &req.advanced;
@@ -762,9 +858,14 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
         }
     };
 
-    // Edit/combine: largest area `a <= wanted` with `a + Σ min(ref_i, a)` within the budget.
+    // Reference cap of edits and combines (besides the output's own area, see `ref_canvas`).
+    let ref_cap = match adv.reference_detail.unwrap_or_default() {
+        ReferenceDetail::Standard => STANDARD_REFERENCE_AREA,
+        ReferenceDetail::Full => u64::MAX,
+    };
+    // Edit/combine: largest area `a <= wanted` with `a + Σ min(ref_i, a, ref_cap)` within the budget.
     let cap_for_sources = |wanted: u64, refs: &[Size], notes: &mut Vec<String>| -> u64 {
-        let fits = |a: u64| a + refs.iter().map(|r| r.area().min(a)).sum::<u64>() <= budget_area;
+        let fits = |a: u64| a + refs.iter().map(|r| r.area().min(a).min(ref_cap)).sum::<u64>() <= budget_area;
         if fits(wanted) {
             return wanted;
         }
@@ -856,8 +957,11 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
             sources_reduced = area < wanted;
             let full = plan_working_canvas(target, &limits(area, rec));
             working = full;
+            // Within 10 % of the cap (1 MP outputs, after alignment) the source keeps the
+            // output's own canvas, as with Full.
+            let ref_area = if working.canvas.area() <= ref_cap.saturating_add(ref_cap / 10) { working.canvas.area() } else { ref_cap };
             for (i, s) in inputs.image_sizes.iter().enumerate() {
-                let c = if i == 0 && *s == target { working } else { ref_canvas(*s, working.canvas.area(), rec) };
+                let c = if i == 0 && *s == target && ref_area == working.canvas.area() { working } else { ref_canvas(*s, ref_area, rec) };
                 references.push(RefPlan { index: i, source: *s, canvas: c });
             }
             output = if req.preserve_dimensions || tier || chosen_aspect.is_some() { target } else { full.content };
@@ -942,6 +1046,11 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
         optimized = true;
         notes.push("Memory optimization enabled for this size.".into());
     }
+    // Large discrete GPUs: decode tiles shaped to the image (fewer, larger tiles); others keep
+    // the server's square tiles.
+    let large_gpu = !inputs.unified_memory && inputs.vram_total_mib.map(|m| m as f64 / 1024.0 >= 15.0).unwrap_or(false);
+    let vae_tile = (vae_tiling && large_gpu && !quick_upscale && working.canvas.area() > LARGE_GPU_VAE_TILE_AREA)
+        .then(|| vae_decode_tile(working.canvas, LARGE_GPU_VAE_TILE_AREA));
     if (working.content.area() as f64) < output.area() as f64 * 0.98 && matches!(mode, ResolvedMode::Generate | ResolvedMode::Edit | ResolvedMode::MultiReference) {
         notes.push(format!(
             "Rendered at {}×{}, then enlarged to {}×{} with {}.",
@@ -998,6 +1107,8 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
         upscale_tile: if inputs.upscale_tile > 0 { inputs.upscale_tile } else { LARGE_UPSCALE_TILE },
         upscale,
         custom_sigmas: if quick_upscale { Vec::new() } else { TURBO_SIGMAS.to_vec() },
+        vae_tile,
+        reference_detail: matches!(mode, ResolvedMode::Edit | ResolvedMode::MultiReference).then(|| adv.reference_detail.unwrap_or_default()),
     })
 }
 
@@ -1147,7 +1258,11 @@ mod tests {
         let a = p.content.width as f64 / p.content.height as f64;
         assert!((a / (1920.0 / 1080.0) - 1.0).abs() < 0.01);
         assert_eq!(p.references.len(), 1);
-        assert_eq!(p.references[0].canvas.canvas, p.working, "ref matches canvas so the backend never resizes it");
+        // Standard detail (default): the source is given at ~1 MP, same shape.
+        let rc = p.references[0].canvas;
+        assert!(rc.canvas.area() <= STANDARD_REFERENCE_AREA, "{:?}", rc.canvas);
+        assert!((rc.content.width as f64 / rc.content.height as f64 / (1920.0 / 1080.0) - 1.0).abs() < 0.02);
+        assert_eq!(p.reference_detail, Some(ReferenceDetail::Standard));
         assert!(p.strength.is_none());
         assert_eq!(p.cfg, 1.0, "official: edits run without CFG too");
     }
@@ -1177,12 +1292,21 @@ mod tests {
     fn huge_photo_is_reduced_for_vram_and_restored() {
         let mut r = req("make it autumn");
         r.resolution = ResolutionMode::Source;
+        let budget = (planning_token_budget(Some(16303), false) * 256) as f64 * 1.05;
         let p = plan(&r, &inputs(&[(4032, 3024)]), &rec()).unwrap();
         assert!(p.optimized_for_vram);
-        assert_eq!(p.references[0].canvas.canvas, p.working);
-        assert!((p.working.area() * 2) as f64 <= (token_budget(Some(16303)) * 256) as f64 * 1.05, "target + reference share the budget");
+        // Standard detail: a 1 MP reference leaves ~3 MP for the image being drawn.
+        assert!(p.references[0].canvas.canvas.area() <= STANDARD_REFERENCE_AREA);
+        assert!(p.working.area() > 2_900_000, "{:?}", p.working);
+        assert!((p.working.area() + p.references[0].canvas.canvas.area()) as f64 <= budget, "target + reference share the budget");
         assert_eq!(p.output, Size::new(4032, 3024));
         assert!(p.notes.iter().any(|n| n.contains("enlarged to 4032×3024")));
+        // Full detail: the reference takes the output's canvas, half the budget each.
+        r.advanced.reference_detail = Some(ReferenceDetail::Full);
+        let p = plan(&r, &inputs(&[(4032, 3024)]), &rec()).unwrap();
+        assert_eq!(p.references[0].canvas.canvas, p.working);
+        assert!((p.working.area() * 2) as f64 <= budget);
+        assert_eq!(p.reference_detail, Some(ReferenceDetail::Full));
     }
 
     fn env(upscaler: bool) -> PlanInputs {
@@ -1201,7 +1325,7 @@ mod tests {
                 let p = plan(&r, &env(true), &rec()).unwrap();
                 assert!(!p.notes.iter().any(|n| n.contains("Two passes")), "{res:?} {aspect} {q:?}");
                 assert!(p.working.is_aligned(32));
-                assert!(p.working.area() as f64 <= (token_budget(Some(16303)) * 256) as f64 * 1.02, "{:?}", p.working);
+                assert!(p.working.area() as f64 <= (planning_token_budget(Some(16303), false) * 256) as f64 * 1.02, "{:?}", p.working);
             }
         }
     }
@@ -1223,7 +1347,7 @@ mod tests {
         r.height = Some(2160);
         let p = plan(&r, &env(true), &rec()).unwrap();
         assert_eq!(p.output, Size::new(3840, 2160), "exact requested size is delivered");
-        assert!(p.working.area() as f64 <= (token_budget(Some(16303)) * 256) as f64 * 1.02, "alignment padding only");
+        assert!(p.working.area() as f64 <= (planning_token_budget(Some(16303), false) * 256) as f64 * 1.02, "alignment padding only");
         assert!((p.content.width as f64 / p.content.height as f64 / (3840.0 / 2160.0) - 1.0).abs() < 0.01);
         assert!(p.notes.iter().any(|n| n.contains("enlarged to 3840×2160 with 4xNomos2_hq_mosr")), "{:?}", p.notes);
     }
@@ -1250,21 +1374,27 @@ mod tests {
         let mut r = req("remove the people");
         r.quality = Quality::Quality;
         let i = PlanInputs { image_sizes: vec![Size::new(5712, 4284)], ..env(true) };
+        // Standard detail on 16 GB: 1 MP reference and the full native 2K area (~4.2 MP) drawn.
+        let p = plan(&r, &i, &rec()).unwrap();
+        assert!((4_100_000..=4_300_000).contains(&p.working.area()), "{:?}", p.working);
+        assert!(p.references[0].canvas.canvas.area() <= STANDARD_REFERENCE_AREA);
+        assert_eq!(p.output, Size::new(5712, 4284));
+        r.advanced.reference_detail = Some(ReferenceDetail::Full);
         let p = plan(&r, &i, &rec()).unwrap();
         assert_eq!((p.steps, p.cfg), (8, 1.0));
-        // Native 2K plus a 2K reference exceeds 16 GB: both get half the budget (~2 MP each).
+        // Full: native 2K plus a 2K reference exceeds 16 GB, so both get half the budget (~2.65 MP each).
         // Each side rounds to 32 px, so allow the same 5 % slack as many_references_share_the_budget.
-        assert!((1_850_000..=2_202_010).contains(&p.working.area()), "{:?}", p.working);
-        assert_eq!(p.references[0].canvas.canvas, p.working, "the model sees the source at ~2 MP");
+        assert!((2_450_000..=2_800_000).contains(&p.working.area()), "{:?}", p.working);
+        assert_eq!(p.references[0].canvas.canvas, p.working, "the model sees the source at the canvas size");
         assert!(p.notes.iter().any(|n| n.contains("Resolution reduced")));
-        assert!((p.working.area() + p.references[0].canvas.canvas.area()) as f64 <= (token_budget(Some(16303)) * PIXELS_PER_TOKEN) as f64 * 1.05);
+        assert!((p.working.area() + p.references[0].canvas.canvas.area()) as f64 <= (planning_token_budget(Some(16303), false) * PIXELS_PER_TOKEN) as f64 * 1.05);
         assert_eq!(p.output, Size::new(5712, 4284));
     }
 
     #[test]
     fn tiers_set_the_output_size_of_edits_and_combines() {
         // Regression: 1K/1.5K/2K were capped by the smallest source, so 800x800 refs always gave 800x800.
-        let budget = (token_budget(Some(16303)) * PIXELS_PER_TOKEN) as f64 * 1.05;
+        let budget = (planning_token_budget(Some(16303), false) * PIXELS_PER_TOKEN) as f64 * 1.05;
         let mut r = req("put both people in a kitchen");
         r.resolution = ResolutionMode::K15;
         let p = plan(&r, &inputs(&[(800, 800), (800, 800)]), &rec()).unwrap();
@@ -1313,7 +1443,7 @@ mod tests {
         let p = plan(&r, &i, &rec()).unwrap();
         assert!(p.optimized_for_vram);
         let total: u64 = p.working.area() + p.references.iter().map(|r| r.canvas.canvas.area()).sum::<u64>();
-        assert!(total as f64 <= (token_budget(Some(16303)) * 256) as f64 * 1.05, "{total}");
+        assert!(total as f64 <= (planning_token_budget(Some(16303), false) * 256) as f64 * 1.05, "{total}");
     }
 
     #[test]
@@ -1506,6 +1636,47 @@ mod tests {
         assert!(token_budget(Some(8192)) < token_budget(Some(16303)));
         assert!(token_budget(Some(24576)) > token_budget(Some(16303)));
         assert_eq!(token_budget(None), 12_288);
+        // Discrete 16 GB cards: native 2K plus a 1 MP reference; Macs and 12 GB cards unchanged.
+        assert_eq!(planning_token_budget(Some(16303), false), 20_736);
+        assert!(planning_token_budget(Some(16303), false) * PIXELS_PER_TOKEN >= 2752 * 1536 + 1344 * 768);
+        assert_eq!(planning_token_budget(Some(16303), true), 16_384);
+        assert_eq!(planning_token_budget(Some(12282), false), token_budget(Some(12282)));
+        assert_eq!(planning_token_budget(None, false), 12_288);
+    }
+
+    #[test]
+    fn vae_tiles_follow_sdcpp_and_fit_the_image() {
+        // sd.cpp's own split of 2752×1536 (172×96 latents) with 768 px (48) tiles: 4×3.
+        assert_eq!((vae_axis_tiles(172, 48, 0.125), vae_axis_tiles(96, 48, 0.125)), (4, 3));
+        assert_eq!(vae_axis_tiles(96, 96, 0.125), 1);
+        let (w, h) = vae_decode_tile(Size::new(2752, 1536), LARGE_GPU_VAE_TILE_AREA);
+        assert!((w * h) as u64 <= LARGE_GPU_VAE_TILE_AREA, "{w}x{h}");
+        let decoded = |w: u32, h: u32| vae_axis_tiles(172, w / 16, 0.125) * vae_axis_tiles(96, h / 16, 0.125) * (w / 16) * (h / 16);
+        assert!(decoded(w, h) * 10 < decoded(768, 768) * 8, "at least 20 % less decoding than 768² tiles: {w}x{h}");
+        assert_eq!((w % 16, h % 16), (0, 0));
+        assert_eq!((w, h), (608, 1536), "5 full-height columns");
+        assert!(w.min(h) >= 512, "no thin strips");
+        // Every size gets a tile within the area.
+        for s in [Size::new(2048, 2048), Size::new(2368, 1792), Size::new(1536, 2752), Size::new(1376, 768)] {
+            let (w, h) = vae_decode_tile(s, LARGE_GPU_VAE_TILE_AREA);
+            assert!((w * h) as u64 <= LARGE_GPU_VAE_TILE_AREA && w <= s.width && h <= s.height, "{s:?}: {w}x{h}");
+        }
+    }
+
+    #[test]
+    fn shaped_vae_tiles_only_on_large_discrete_gpus() {
+        let mut r = req("a lighthouse at dusk");
+        r.quality = Quality::Quality;
+        r.aspect_ratio = Some("16:9".into());
+        let big = PlanInputs { vram_total_mib: Some(16303), server_vae_tiling: true, ..inputs(&[]) };
+        let p = plan(&r, &big, &rec()).unwrap();
+        assert!(p.vae_tile.is_some(), "16 GB card");
+        let p = plan(&r, &PlanInputs { unified_memory: true, ..big.clone() }, &rec()).unwrap();
+        assert!(p.vae_tile.is_none(), "Mac: the server's tiles");
+        let p = plan(&r, &PlanInputs { vram_total_mib: Some(12282), ..big.clone() }, &rec()).unwrap();
+        assert!(p.vae_tile.is_none(), "12 GB card: the server's tiles");
+        r.advanced.vae_tiling = Some(false);
+        assert!(plan(&r, &big, &rec()).unwrap().vae_tile.is_none(), "tiling off");
     }
 
     #[test]

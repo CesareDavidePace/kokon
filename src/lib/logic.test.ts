@@ -27,6 +27,10 @@ describe("advanced overrides", () => {
     expect(activeOverrides({ sampler: "heun" })).toEqual(["Sampler heun"]);
     expect(activeOverrides({ output_format: "webp", hdr: true, batch_count: 2 })).toEqual([]);
     expect(activeOverrides({})).toEqual([]);
+    expect(activeOverrides({ reference_detail: "full" })).toEqual(["Reference full"]);
+    expect(persistentAdvanced({ reference_detail: "full", output_format: "webp" })).toEqual({ output_format: "webp" });
+    // Every new chat starts at the standard 1 MP reference, other settings carry over.
+    expect(emptyComposer({ advanced: { reference_detail: "full", batch_count: 2 } }).advanced).toEqual({ batch_count: 2 });
   });
 
   it("keeps preferences but never persists sampling overrides", () => {

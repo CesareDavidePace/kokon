@@ -1,6 +1,6 @@
 import { Dices, RotateCcw } from "lucide-react";
 import { updateComposer, useStore } from "../lib/store";
-import type { Advanced, OutputFormat, Plan } from "../lib/types";
+import type { Advanced, OutputFormat, Plan, ReferenceDetail } from "../lib/types";
 import { Seg, Switch } from "./ui";
 import { UpscalerSettings } from "./Upscalers";
 
@@ -75,6 +75,22 @@ export function AdvancedPanel({ plan }: { plan: Plan | null }) {
           </span>
           <input type="range" min={0.05} max={1} step={0.05} value={a.strength ?? plan?.strength ?? 1} onChange={(e) => setA({ strength: Number(e.target.value) })} />
         </label>
+      )}
+
+      {plan?.reference_detail && (
+        <div className="field">
+          <span title="The source images share the GPU budget with the image being drawn. 1 MP leaves more of it for the result, which renders larger and faster; Full gives the model finer source detail but halves the result's size. New chats start at 1 MP.">
+            Reference detail
+          </span>
+          <Seg<ReferenceDetail>
+            value={a.reference_detail ?? "standard"}
+            options={[
+              { value: "standard", label: "1 MP" },
+              { value: "full", label: "Full" },
+            ]}
+            onChange={(v) => setA({ reference_detail: v === "standard" ? null : v })}
+          />
+        </div>
       )}
 
       <NumField label="Images per run" value={a.batch_count} placeholder="1" min={1} max={4} onChange={(v) => setA({ batch_count: v })} />

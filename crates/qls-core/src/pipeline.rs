@@ -9,7 +9,7 @@ use image::{GrayImage, Luma, Rgba, RgbaImage};
 use crate::error::{AppError, AppResult, ErrorCode};
 use crate::geometry::{Rect, Size};
 use crate::imaging::{self, LoadedImage};
-use crate::planner::{InpaintAction, Plan, ResolvedMode};
+use crate::planner::{InpaintAction, Plan, ReferenceDetail, ResolvedMode};
 use crate::sdcpp::{Guidance, ImgGenRequest, SampleParams, VaeTilingParams, b64};
 
 /// Server-side facts that shape the request but are not part of the plan.
@@ -32,7 +32,11 @@ pub const DEFAULT_VAE_TILE: u32 = 768;
 /// when the server already tiles (`--vae-tiling --vae-tile-size N`) nothing is sent —
 /// sending `tile_size 0` would silently select 256 px tiles. Only an explicit "off"
 /// overrides it.
-pub fn vae_tiling_params(tiling: bool, server_tile: u32) -> Option<VaeTilingParams> {
+/// A per-job tile (`Plan::vae_tile`, large discrete GPUs) replaces the server's size.
+pub fn vae_tiling_params(tiling: bool, server_tile: u32, job_tile: Option<(u32, u32)>) -> Option<VaeTilingParams> {
+    if let (true, Some((w, h))) = (tiling, job_tile) {
+        return Some(VaeTilingParams { enabled: true, tile_size_w: Some(w), tile_size_h: Some(h), target_overlap: Some(crate::planner::VAE_TILE_OVERLAP) });
+    }
     match (tiling, server_tile > 0) {
         (true, true) | (false, false) => None,
         (false, true) => Some(VaeTilingParams { enabled: false, ..Default::default() }),
@@ -167,6 +171,7 @@ pub fn prepare(plan: &Plan, prompt: &str, seed: i64, images: &[LoadedImage], mas
         mask_image: None,
         ref_images: Vec::new(),
         image_preprocess: Vec::new(),
+        ref_image_args: None,
         sample_params: SampleParams {
             sample_method: Some(plan.sampler.clone()),
             scheduler: None,
@@ -175,7 +180,7 @@ pub fn prepare(plan: &Plan, prompt: &str, seed: i64, images: &[LoadedImage], mas
             custom_sigmas: plan.custom_sigmas.clone(),
             guidance: Guidance { txt_cfg: plan.cfg, img_cfg: None },
         },
-        vae_tiling_params: vae_tiling_params(plan.vae_tiling, opts.server_vae_tile_size),
+        vae_tiling_params: vae_tiling_params(plan.vae_tiling, opts.server_vae_tile_size, plan.vae_tile),
         hires: None,
         cache_mode: None,
         cache_option: None,
@@ -201,6 +206,11 @@ pub fn prepare(plan: &Plan, prompt: &str, seed: i64, images: &[LoadedImage], mas
                 req.ref_images.push(png_b64(&to_canvas(img, &r.canvas))?);
             }
             req.image_preprocess.push("target=ref,mode=none".into());
+            // Standard detail: encode the references at their planned (≤ 1 MP) size; Full keeps
+            // the server's resize to the output's area, as before.
+            if plan.reference_detail == Some(ReferenceDetail::Standard) {
+                req.ref_image_args = Some("resize_before_vae=false".into());
+            }
             if let Some(s) = plan.strength {
                 req.strength = Some(s);
             }
@@ -519,7 +529,7 @@ mod tests {
     }
     use crate::config::RecommendedSettings;
     use crate::geometry::ExpansionUnits;
-    use crate::planner::{GenerationRequest, Mode, OutpaintSpec, PlanInputs, Quality, ResolutionMode, UpscaleSpec, plan};
+    use crate::planner::{GenerationRequest, Mode, OutpaintSpec, PlanInputs, Quality, ResolutionMode, STANDARD_REFERENCE_AREA, UpscaleSpec, plan};
     use crate::sdcpp::b64_decode;
 
     fn env(sizes: Vec<Size>) -> PlanInputs {
@@ -531,10 +541,13 @@ mod tests {
 
     #[test]
     fn vae_tiling_never_overrides_the_server_tile_size() {
-        assert_eq!(vae_tiling_params(true, 768), None, "server already tiles with its own size");
-        assert_eq!(vae_tiling_params(false, 0), None);
-        assert_eq!(vae_tiling_params(false, 768), Some(VaeTilingParams { enabled: false, ..Default::default() }));
-        let p = vae_tiling_params(true, 0).unwrap();
+        assert_eq!(vae_tiling_params(true, 768, None), None, "server already tiles with its own size");
+        assert_eq!(vae_tiling_params(false, 0, None), None);
+        assert_eq!(vae_tiling_params(false, 768, None), Some(VaeTilingParams { enabled: false, ..Default::default() }));
+        let t = vae_tiling_params(true, 768, Some((1024, 1536))).unwrap();
+        assert_eq!((t.enabled, t.tile_size_w, t.tile_size_h), (true, Some(1024), Some(1536)), "a per-job tile wins");
+        assert_eq!(vae_tiling_params(false, 768, Some((1024, 1536))), Some(VaeTilingParams { enabled: false, ..Default::default() }), "off stays off");
+        let p = vae_tiling_params(true, 0, None).unwrap();
         assert_eq!((p.enabled, p.tile_size_w, p.tile_size_h, p.target_overlap), (true, Some(768), Some(768), Some(0.125)));
         // Regression: a planned-tiled 2K job sent tile_size 0, i.e. 256 px tiles.
         let mut r = req("a cabin");
@@ -543,6 +556,12 @@ mod tests {
         let i = PlanInputs { server_vae_tiling: true, ..env(vec![]) };
         let p = plan(&r, &i, &RecommendedSettings::default()).unwrap();
         assert!(p.vae_tiling);
+        let j = prepare(&p, &r.prompt, 1, &[], None, &esrgan_opts()).unwrap();
+        // 16 GB: a tile shaped to the image, never size 0.
+        let v = serde_json::to_value(&j.request).unwrap();
+        assert!(v["vae_tiling_params"]["tile_size_w"].as_u64().unwrap() >= 256 && v["vae_tiling_params"]["tile_size_h"].as_u64().unwrap() >= 256, "{v}");
+        // 12 GB: the server's own tiles, nothing sent.
+        let p = plan(&r, &PlanInputs { vram_total_mib: Some(12282), ..i }, &RecommendedSettings::default()).unwrap();
         let j = prepare(&p, &r.prompt, 1, &[], None, &esrgan_opts()).unwrap();
         assert!(serde_json::to_value(&j.request).unwrap().get("vae_tiling_params").is_none());
     }
@@ -566,22 +585,25 @@ mod tests {
 
     #[test]
     fn large_edit_is_one_pass_then_enlarged() {
-        let img = photo(2560, 1440);
+        let img = photo(3840, 2160);
         let mut r = req("make it a dark version");
         r.resolution = ResolutionMode::Source;
         let p = plan(&r, &env(vec![img.size()]), &RecommendedSettings::default()).unwrap();
         let j = prepare(&p, &r.prompt, 3, std::slice::from_ref(&img), None, &esrgan_opts()).unwrap();
         assert!(j.request.hires.is_none());
         assert_eq!((j.request.width, j.request.height), (p.working.width, p.working.height));
-        assert_eq!(decode(&j.request.ref_images[0]).dimensions(), (p.working.width, p.working.height), "reference matches the canvas");
-        // The single-pass result is enlarged to the 2560x1440 source size with ESRGAN.
+        let rc = p.references[0].canvas.canvas;
+        assert_eq!(decode(&j.request.ref_images[0]).dimensions(), (rc.width, rc.height), "reference as planned");
+        assert!(rc.area() <= STANDARD_REFERENCE_AREA && p.working.area() > rc.area() * 2, "1 MP reference, larger canvas");
+        assert_eq!(j.request.ref_image_args.as_deref(), Some("resize_before_vae=false"), "encoded at its planned size");
+        // The single-pass result is enlarged to the 3840x2160 source size with ESRGAN.
         let content = crop_content(fake_backend(p.working.width, p.working.height), &j.post);
         let target = enlarge_target(&j.post).unwrap();
-        assert_eq!(target, Size::new(2560, 1440));
+        assert_eq!(target, Size::new(3840, 2160));
         let ep = esrgan_plan(Size::new(content.width(), content.height()), target, 4).unwrap();
-        assert_eq!(ep.tiles.len(), 1, "fits one upscale call");
+        assert!(!ep.tiles.is_empty(), "the larger canvas may take more than one upscale call");
         let out = finish(content, &j.post).unwrap();
-        assert_eq!(out.dimensions(), (2560, 1440));
+        assert_eq!(out.dimensions(), (3840, 2160));
     }
 
     #[test]
@@ -704,9 +726,11 @@ mod tests {
         let img = photo(1920, 1080);
         let mut r = req("make it night");
         r.resolution = ResolutionMode::Source;
+        r.advanced.reference_detail = Some(ReferenceDetail::Full);
         let p = plan(&r, &PlanInputs { image_sizes: vec![img.size()], vram_total_mib: Some(16303), ..Default::default() }, &RecommendedSettings::default()).unwrap();
         let j = prepare(&p, &r.prompt, 7, std::slice::from_ref(&img), None, &BackendOptions::default()).unwrap();
         assert_eq!((j.request.width, j.request.height), (1920, 1088));
+        assert!(j.request.ref_image_args.is_none(), "Full keeps the server's resize");
         assert_eq!(j.request.ref_images.len(), 1);
         assert!(j.request.init_image.is_none() && j.request.mask_image.is_none());
         let sent = decode(&j.request.ref_images[0]);

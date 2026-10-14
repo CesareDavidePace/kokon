@@ -13,5 +13,5 @@ Updating from 0.9.1: the app asks to download the new engine (~340 MB on NVIDIA,
 
 | File | SHA-256 |
 |---|---|
-| `Kokon_0.9.2_x64-setup.exe` (Windows) | `TBD` |
-| `Kokon_0.9.2_aarch64.dmg` (Mac) | `TBD` |
+| `Kokon_0.9.2_x64-setup.exe` (Windows) | `8766b5aedc8fce50fc8805853ec54d60a72cf0ed5aa609941b4c6d6098e1a03c` |
+| `Kokon_0.9.2_aarch64.dmg` (Mac) | `cc91171a74d6275a3d0216dcb9529c1065a2617ee75d393be35b91e7f9464d2e` |

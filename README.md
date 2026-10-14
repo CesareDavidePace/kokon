@@ -513,9 +513,9 @@ upscale):
 - **Superscale-SP** (default): sharp and natural on most images; on JPEG photos and dark areas it
   can draw a faint grid.
 - **MoSR** (experimental, 17 MB, comes with the app): the fastest, good for 4× upscales, but on
-  clean images enlarged less than about 3× it draws a fine grid. It needs Kokon's build of
-  [stable-diffusion.cpp](https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/tag/kokon-mosr-1)
-  ([pull request](https://github.com/leejet/stable-diffusion.cpp/pull/2128) to the original project).
+  clean images enlarged less than about 3× it draws a fine grid. Kokon contributed it to
+  [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp)
+  ([pull request #2128](https://github.com/leejet/stable-diffusion.cpp/pull/2128), merged 2026-10-12).
 - **UltraSharp** (optional download): very clean, but smooths skin into an artificial look and can
   invent lines. Non-commercial license.
 - **Lanczos**: a plain resize, never invents anything.

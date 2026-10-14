@@ -206,13 +206,17 @@ impl Engine {
         }
     }
 
-    /// The installed engine is from an older release than the catalog's and the running
-    /// server (if any) cannot run the upscaler: Setup offers the update.
+    /// The installed engine is from another release than the catalog's (or the engine
+    /// manifest's): Setup offers the update. An engine without a release marker (built by hand,
+    /// an external server) only needs it when it cannot run the upscaler.
     pub fn engine_update_needed(&self) -> bool {
         let cfg = self.config();
-        let current = crate::catalog::engine_downloads(cfg.gpu_backend).iter().all(|d| d.is_present(&cfg.sdcpp_dir));
-        // An engine built by hand or an external server may lack the marker yet run MoSR.
-        !current && !self.server.capabilities().is_some_and(|c| c.has_upscaler(crate::catalog::UPSCALER_NAME, true))
+        let engines = crate::catalog::engine_downloads(cfg.gpu_backend);
+        if engines.iter().all(|d| d.is_present(&cfg.sdcpp_dir)) {
+            return false;
+        }
+        let managed = engines.iter().any(|d| d.engine_tag.is_some() && d.installed_tag(&cfg.sdcpp_dir).is_some());
+        managed || !self.server.capabilities().is_some_and(|c| c.has_upscaler(crate::catalog::UPSCALER_NAME, true))
     }
 
     /// The store holding generation `id`: the gallery, or the private-mode store.

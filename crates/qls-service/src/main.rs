@@ -154,6 +154,7 @@ async fn main() {
     tokio::spawn(engine.clone().run_worker());
     tokio::spawn(lifecycle(state.clone()));
     tokio::spawn(server_watch(state.clone()));
+    tokio::spawn(qls_core::engine_manifest::run(APP_VERSION));
 
     let app = api::router(state.clone());
     let st = state.clone();

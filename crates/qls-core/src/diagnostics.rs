@@ -252,15 +252,16 @@ pub fn upscaler_check(cfg: &AppConfig) -> Check {
 pub fn engine_release_check(cfg: &AppConfig) -> Check {
     let engines: Vec<_> = crate::catalog::engine_downloads(cfg.gpu_backend).into_iter().filter(|d| d.engine_tag.is_some()).collect();
     let tags: Vec<Option<String>> = engines.iter().map(|d| d.installed_tag(&cfg.sdcpp_dir)).collect();
-    let ok = tags.iter().all(|t| t.as_deref() == Some(crate::catalog::ENGINE_TAG));
+    let want = crate::catalog::engine_tag();
+    let ok = tags.iter().all(|t| t.as_deref() == Some(want));
     Check {
         id: "engine_release",
         label: "Engine release".into(),
         ok,
         detail: if ok {
-            crate::catalog::ENGINE_TAG.into()
+            want.into()
         } else {
-            format!("An older engine is installed; Setup updates it to {} (needed for the upscaler).", crate::catalog::ENGINE_TAG)
+            format!("An older engine is installed; Setup updates it to {want}.")
         },
     }
 }
@@ -321,6 +322,7 @@ mod tests {
         std::fs::File::create(up.path(dir.path())).unwrap().set_len(up.size).unwrap();
         let c = upscaler_check(&cfg);
         assert!(c.ok && c.detail.contains("4xNomos2_hq_mosr.pth"));
+        let _guard = crate::catalog::ENGINE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let e = engine_release_check(&cfg);
         assert!(!e.ok && e.detail.contains(crate::catalog::ENGINE_TAG));
         crate::catalog::ENGINE_CUDA.write_tag(dir.path()).unwrap();

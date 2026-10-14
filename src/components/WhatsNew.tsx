@@ -1,4 +1,4 @@
-import { CircleAlert, Images, LayoutGrid, Maximize, SlidersHorizontal, Sparkles } from "lucide-react";
+import { CircleAlert, Cpu, Lightbulb, SlidersHorizontal, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { formatBytes, installProgress, installStep, installTimeLeft } from "../lib/logic";
@@ -8,34 +8,34 @@ import type { GpuBackend, InstallItem, InstallStatus } from "../lib/types";
 import { KokonMark } from "./Welcome";
 
 /** The release these notes describe. Shown once to people updating from an earlier version. */
-export const WHATS_NEW_VERSION = "0.9.1";
+export const WHATS_NEW_VERSION = "0.9.2";
 
 const NEWS = [
   isMac
     ? {
-        icon: Sparkles,
-        title: "Plain resize by default on a Mac",
-        text: "AI upscalers take minutes on a Mac (Superscale-SP: about 6 minutes for a 1 MP image to 2K on an M2 Pro), so results are enlarged with Lanczos in about a second. You can still pick one.",
+        icon: Zap,
+        title: "Larger edits",
+        text: "Your photo is given to the model at 1 MP, which leaves more room for the result: edits render larger in about the same time.",
       }
     : {
-        icon: Sparkles,
-        title: "Superscale-SP by default",
-        text: "Results are enlarged with a sharper, more natural upscaler. The previous one, UltraSharp, was great on some images but smoothed skin and textures into an artificial look on others. You can still download it.",
+        icon: Zap,
+        title: "Native 2K edits, faster",
+        text: "On graphics cards with 16 GB or more, 2K edits are drawn at full size instead of enlarged afterwards: sharper, and about a third faster (41 s instead of 66 s on an RTX 5070 Ti).",
       },
   {
     icon: SlidersHorizontal,
-    title: "Choose your upscaler",
-    text: "In the Advanced menu next to the prompt: Superscale-SP, the experimental MoSR (very fast, included), UltraSharp or a plain resize, a strength slider, and a side-by-side comparison.",
+    title: "Reference detail",
+    text: "In the Advanced menu: how large your source images are given to the model. 1 MP (the default in every new chat) leaves more room for the result; Full keeps finer source detail.",
   },
   {
-    icon: LayoutGrid,
-    title: "Gallery preview",
-    text: "Click an image in the gallery for a large preview and browse with the arrow keys; F or a double-click for full screen. Enter opens it in its project.",
+    icon: Cpu,
+    title: "Official engine, kept up to date",
+    text: "Kokon now runs the official stable-diffusion.cpp release, which includes our MoSR upscaler, and checks every few days for a newer engine tested with Kokon.",
   },
   {
-    icon: Maximize,
-    title: "Full screen and renaming",
-    text: "Full screen follows the project's timeline: the arrow keys step through versions without leaving it. Renaming now starts from the current name.",
+    icon: Lightbulb,
+    title: "Prompt tips",
+    text: "A hint under the prompt and a Prompt tips panel: describing the scene, not just the subject, keeps the action you asked for.",
   },
 ];
 
@@ -124,13 +124,9 @@ export function WhatsNew() {
             </div>
           ))}
         </div>
-        <button className="btn" onClick={() => setState({ compareUpscalers: true })}>
-          <Images size={14} /> Compare the upscalers
-        </button>
-
         {showEngine && !done && (
           <p className="welcome-lead">
-            This version needs a newer stable-diffusion.cpp, the engine that runs the models on your graphics chip{getsSuperscale ? ", and the Superscale-SP model" : ""}. Your images,
+            A newer stable-diffusion.cpp is ready, the engine that runs the models on your graphics chip{getsSuperscale ? ", plus the Superscale-SP model" : ""}. Your images,
             models and settings stay as they are.
           </p>
         )}
@@ -171,7 +167,7 @@ export function WhatsNew() {
               </button>
             </div>
             <span className="muted welcome-foot">
-              {isMac ? "" : "Until you update, enlargements use a plain resize. "}You can update later from Settings → Models → Set up models…
+              You can update later from Settings → Models → Set up models…
             </span>
           </>
         )}

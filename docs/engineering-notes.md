@@ -132,9 +132,24 @@ workspace); the in-app comparison uses crops from it (`src/assets/upscalers`).
 
 #### MoSR in sd.cpp
 
-MoSR by Philip Hofmann (CC BY 4.0), 17 MB. Upstream sd.cpp has no MoSR, so the
-engine is the fork release `kokon-mosr-1` (3f8527a + `src/model/upscaler/mosr.hpp`, upstream
-PR #2128; Qwen output bit-identical to 3f8527a). Port vs PyTorch: mean error 0.04–0.16/255.
+MoSR by Philip Hofmann (CC BY 4.0), 17 MB. Ported by Kokon (`src/model/upscaler/mosr.hpp`),
+merged upstream as PR #2128 on 2026-10-12; since 0.9.2 the engine is the official release
+`master-964-1d0a58a` (0.9.1 used the fork release `kokon-mosr-1`). Port vs PyTorch: mean error
+0.04–0.16/255.
+
+#### Engine updates (`engine.json`)
+
+`engine.json` at the repository root names the newest official release tested with Kokon
+(tag, `min_app`, URL + size + SHA-256 of the CUDA, Vulkan and Metal zips). The service reads its
+cached copy at start and fetches it again when older than 2.5 days (`engine_manifest.rs`). A
+valid release newer than the built-in pin (`catalog::ENGINE_TAG`) replaces the engine
+downloads, so the status reports `engine.update_needed` and What's new offers the download.
+Only `https://github.com/leejet/stable-diffusion.cpp/releases/download/<tag>/` URLs are
+accepted. To ship an engine: test the release on Windows (CUDA + Vulkan) and a Mac, then edit
+`engine.json` on master (digests: `gh api repos/leejet/stable-diffusion.cpp/releases/tags/<tag>`).
+Since master-964 `--fa` and `--diffusion-conv-direct` are deprecated aliases (still accepted, so
+older engines keep working); convolutions default to `auto`, which turns implicit-GEMM direct
+convolutions on for CUDA (RTX 20xx+) and Vulkan, VAE included.
 
 - Launch: `--diffusion-conv-direct` on CUDA and Vulkan only (in sd.cpp it affects UNet/ControlNet
   and this upscaler, never Qwen). On Metal it is ~4× slower. `--vae-conv-direct` makes Qwen's

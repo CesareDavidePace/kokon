@@ -94,6 +94,10 @@ pub struct ImgGenRequest {
     /// disabled (`mode=none`) to guarantee no crop/stretch happens server-side.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub image_preprocess: Vec<String>,
+    /// e.g. "resize_before_vae=false": for Qwen-Image 2.1 the server otherwise resizes every
+    /// reference to the output's area before encoding (pipeline/image.cpp), smaller ones too.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ref_image_args: Option<String>,
     pub sample_params: SampleParams,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vae_tiling_params: Option<VaeTilingParams>,
@@ -455,6 +459,7 @@ mod tests {
             mask_image: None,
             ref_images: vec!["AAA".into(), "BBB".into()],
             image_preprocess: vec!["target=ref,mode=none".into()],
+            ref_image_args: None,
             sample_params: SampleParams {
                 sample_method: Some("euler".into()),
                 scheduler: None,

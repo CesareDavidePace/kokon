@@ -29,7 +29,12 @@ export interface Advanced {
   vae_tiling?: boolean | null;
   /** Keep a HEIC source's HDR gain map (Ultra HDR JPEG); null = on. */
   hdr?: boolean | null;
+  /** Size of edit/combine sources given to the model; null = standard (1 MP). */
+  reference_detail?: ReferenceDetail | null;
 }
+
+/** "standard": sources at most 1 MP, so the output renders larger; "full": up to the output's size. */
+export type ReferenceDetail = "standard" | "full";
 
 export interface GenerationRequest {
   prompt: string;
@@ -82,6 +87,8 @@ export interface Plan {
   /** Upscaler tile size in px (0 in plans of older versions). */
   upscale_tile?: number;
   upscale: { method: UpscaleMethod; source: Size } | null;
+  /** Edits and combines only (absent in older records). */
+  reference_detail?: ReferenceDetail | null;
 }
 
 export interface AppErrorBody { code: string; message: string; suggestion?: string; detail?: string }

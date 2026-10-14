@@ -1,0 +1,19 @@
+{
+  "tag": "master-964-1d0a58a",
+  "min_app": "0.9.2",
+  "cuda": {
+    "url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-964-1d0a58a/sd-master-1d0a58a-bin-win-cuda12-x64.zip",
+    "size": 338016915,
+    "sha256": "2f08572e143f0b15a764197ea937d219dd70f0cc7eefb30eb84c9dae6a7cba6d"
+  },
+  "vulkan": {
+    "url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-964-1d0a58a/sd-master-1d0a58a-bin-win-vulkan-x64.zip",
+    "size": 30155040,
+    "sha256": "74211cb5c382aec2aeb086b64f2fdf525efec5faec4200a2d3257bc2328954ab"
+  },
+  "metal": {
+    "url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-964-1d0a58a/sd-master-1d0a58a-bin-Darwin-macOS-26.6.2-arm64.zip",
+    "size": 35213648,
+    "sha256": "45001839e925f98ecd18ef5251725f74cff874eeac4599f1136acba65b26911e"
+  }
+}

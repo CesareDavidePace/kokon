@@ -197,7 +197,7 @@ async fn status(State(s): St) -> Json<Value> {
             "upscale": srv.capabilities.as_ref().map(|c| c.upscale),
         },
         "upscaler": { "model": cfg.upscaler().map(|u| u.0).unwrap_or_else(|| cfg.upscaler_model.clone()), "available": cfg.upscaler_file().is_some() },
-        "engine": { "release": catalog::ENGINE_TAG, "update_needed": engine_update },
+        "engine": { "release": catalog::engine_tag(), "update_needed": engine_update },
         "profile": { "id": cfg.profile().id, "display_name": cfg.profile().display_name },
         "gpu": gpu,
         "active_job": s.engine.active_job(),
@@ -449,7 +449,7 @@ async fn diagnostics_json(State(s): St) -> ApiResult<Json<Value>> {
             .filter(|d| d.engine_tag.is_some())
             .map(|d| d.installed_tag(&cfg.sdcpp_dir).unwrap_or_else(|| "none".into()))
             .collect();
-        let _ = writeln!(text, "Engine release: {} (expected {})", tags.join(", "), catalog::ENGINE_TAG);
+        let _ = writeln!(text, "Engine release: {} (expected {})", tags.join(", "), catalog::engine_tag());
         let _ = writeln!(text, "State: {:?}, owned: {}, pid: {:?}, port: {}", srv.state, srv.owned, srv.pid, cfg.server_port);
         if let Some(e) = &srv.error {
             let _ = writeln!(text, "Last error: {} {}", e.message, e.detail.clone().unwrap_or_default());

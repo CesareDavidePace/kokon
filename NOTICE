@@ -39,9 +39,10 @@ Downloaded by the setup screen (not part of this product)
 Every file is pinned by URL, size and SHA-256 in crates/qls-core/src/catalog.rs.
 
 - stable-diffusion.cpp by leejet (https://github.com/leejet/stable-diffusion.cpp), MIT:
-  CUDA 12, Vulkan or Metal build of commit 3f8527a with MoSR upscaler support added, from the
-  fork release https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/tag/kokon-mosr-1
-  (proposed upstream as https://github.com/leejet/stable-diffusion.cpp/pull/2128).
+  official CUDA 12, Vulkan or Metal build of release master-964-1d0a58a
+  (https://github.com/leejet/stable-diffusion.cpp/releases/tag/master-964-1d0a58a), which
+  includes the MoSR upscaler support contributed by Kokon (pull request #2128). A newer
+  official release listed in engine.json of this repository may replace it.
 - ggml by the ggml authors (https://github.com/ggml-org/ggml), MIT, included in the
   stable-diffusion.cpp builds.
 - NVIDIA CUDA 12 runtime and cuBLAS DLLs (NVIDIA cards only), redistributed in the

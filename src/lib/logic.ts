@@ -52,8 +52,15 @@ export const emptyComposer = (prefs?: Partial<Composer>): Composer => ({
   customWidth: prefs?.customWidth ?? 1024,
   customHeight: prefs?.customHeight ?? 1024,
   seed: null,
-  advanced: prefs?.advanced ?? {},
+  advanced: newChatAdvanced(prefs?.advanced),
 });
+
+/** Advanced settings a new chat starts with: everything kept except Reference detail, which
+ * every chat starts at the standard 1 MP. */
+function newChatAdvanced(a: Advanced | undefined): Advanced {
+  const { reference_detail: _, ...rest } = a ?? {};
+  return rest;
+}
 
 let counter = 0;
 export const newKey = () => `k${Date.now().toString(36)}${(counter++).toString(36)}`;
@@ -116,14 +123,14 @@ export function needsPrompt(c: Composer): boolean {
 
 /** Advanced fields that change how the model samples. They last for the session only: a value
  * typed once must not silently override the presets after a restart. */
-const SAMPLING_OVERRIDES = ["sampler", "strength"];
+const SAMPLING_OVERRIDES = ["sampler", "strength", "reference_detail"];
 /** Fields of older versions that Turbo's fixed schedule no longer uses (may sit in saved
  * preferences, projects and gallery records): dropped everywhere. */
 const REMOVED_ADVANCED = ["steps", "cfg", "scheduler", "flow_shift", "refine"];
 
 /** Labels of the sampling overrides currently set, e.g. ["Sampler heun", "Strength 0.8"]. */
 export function activeOverrides(a: Advanced): string[] {
-  const label: Record<string, string> = { sampler: "Sampler", strength: "Strength" };
+  const label: Record<string, string> = { sampler: "Sampler", strength: "Strength", reference_detail: "Reference" };
   return Object.entries(cleanAdvanced(a))
     .filter(([k]) => SAMPLING_OVERRIDES.includes(k))
     .map(([k, v]) => `${label[k]} ${v}`);

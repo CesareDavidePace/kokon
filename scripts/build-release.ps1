@@ -13,6 +13,10 @@ $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 Write-Host "1/5 Tests (Rust core + frontend + MCP)" -ForegroundColor Cyan
 cargo test -p qls-core --release --quiet
 if ($LASTEXITCODE) { throw "Rust tests failed" }
+# The MCP protocol test runs the newest target\*\kokon-service.exe, which Tauri overwrites with
+# the bundled sidecar of the previous release: build this version's service first.
+cargo build -p qls-service --release
+if ($LASTEXITCODE) { throw "service build failed" }
 npx vitest run
 if ($LASTEXITCODE) { throw "Frontend tests failed" }
 Push-Location mcp; npx vitest run; $rc = $LASTEXITCODE; Pop-Location

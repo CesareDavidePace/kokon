@@ -26,7 +26,7 @@ const DIFF_SIDE = 1024;
 const isTyping = (t: EventTarget | null) => t instanceof HTMLElement && (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName));
 
 /** The result with the selected comparison view, sized to fit the stage (or the screen). */
-export function CompareFrame({ g, base, fullscreen = false, onFullscreen }: { g: GenerationRecord; base: CompareBase; fullscreen?: boolean; onFullscreen?: () => void }) {
+export function CompareFrame({ g, base, fullscreen = false, maskSrc, onFullscreen }: { g: GenerationRecord; base: CompareBase; fullscreen?: boolean; maskSrc?: string; onFullscreen?: () => void }) {
   const mode = useStore((s) => s.compare);
   const flickerMs = useStore((s) => s.flickerMs);
   const { ref, box } = useFit(g.width / g.height);
@@ -111,6 +111,8 @@ export function CompareFrame({ g, base, fullscreen = false, onFullscreen }: { g:
       >
         <img className="compare-img" src={after} alt={g.prompt} draggable={false} />
         {mode === "diff" && !holding && <DiffCanvas after={after} before={before} rect={base.rect} tagStyle={tag("left")} />}
+        {/* The area painted for the next edit, on the result (the original covers it when shown). */}
+        {maskSrc && <img className="stage-mask" src={maskSrc} alt="" draggable={false} />}
         {/* The original stays mounted (hidden) so switching is instant. */}
         <div
           className="compare-before"

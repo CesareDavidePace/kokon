@@ -390,6 +390,8 @@ pre.diag { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font
 .compare-overlay .seg button.on { background: rgba(255, 255, 255, 0.92); color: #111; box-shadow: none; }
 .compare-box { position: relative; border-radius: 6px; overflow: hidden; touch-action: none; user-select: none; background-image: conic-gradient(var(--checker) 25%, transparent 0 50%, var(--checker) 0 75%, transparent 0); background-size: 16px 16px; }
 .compare-box.slider { cursor: ew-resize; }
+/* the area painted for the next edit, drawn like in the inpaint editor */
+.stage-mask { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 6px; mix-blend-mode: difference; opacity: 0.75; pointer-events: none; }
 .compare-box.slider.zoomed { cursor: inherit; }
 .compare-img, .compare-diff { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 /* Areas the original did not cover (expanded edges) show the checkerboard. */

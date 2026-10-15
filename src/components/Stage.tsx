@@ -377,13 +377,14 @@ function InputActions({ item }: { item: SessionItem }) {
 
 /** A result or input fitted to the stage (never enlarged past its own size), with the
  * full-screen button in its top-right corner. */
-function PlainFrame({ src, alt, w, h, onFullscreen }: { src: string; alt: string; w: number; h: number; onFullscreen: () => void }) {
+function PlainFrame({ src, alt, w, h, maskSrc, onFullscreen }: { src: string; alt: string; w: number; h: number; maskSrc?: string; onFullscreen: () => void }) {
   const { ref, box } = useFit(w / h);
   const bw = Math.min(box.w, w);
   return (
     <div className="stage-frame" ref={ref}>
       <div className="image-box" style={{ width: bw, height: bw * (h / w) }}>
         <img className="stage-img fill" src={src} alt={alt} draggable={false} />
+        {maskSrc && <img className="stage-mask" src={maskSrc} alt="" draggable={false} />}
         <FullscreenButton onOpen={onFullscreen} />
       </div>
     </div>
@@ -693,6 +694,11 @@ export function Stage() {
   const [originalOf, setOriginalOf] = useState<string | null>(null);
   const [full, setFull] = useState(false);
   const canFull = !!item && viewable(item);
+  // The area painted for the next edit, shown on the image it belongs to (the prompt's first image).
+  const mask = useStore((s) => s.composer.mask);
+  const ref0 = useStore((s) => s.composer.refs[0]);
+  const itemSource = item?.gen ? `gen:${item.gen.id}` : item?.input ? `input:${item.input.id}` : null;
+  const maskSrc = mask && ref0 && mask.refKey === ref0.key && ref0.source === itemSource ? urls.input(mask.inputId) : undefined;
 
   // F opens full screen on the selected version (Esc or F again closes it).
   useEffect(() => {
@@ -748,9 +754,9 @@ export function Stage() {
         {g && from && showOriginal ? (
           <PlainFrame key={`original-${g.id}`} src={urls.genOriginal(g.id)} alt={`${g.prompt} (before upscaling)`} w={from.width} h={from.height} onFullscreen={openFull} />
         ) : item.gen && base ? (
-          <CompareFrame key={`compare-${item.gen.id}`} g={item.gen} base={base} onFullscreen={openFull} />
+          <CompareFrame key={`compare-${item.gen.id}`} g={item.gen} base={base} maskSrc={maskSrc} onFullscreen={openFull} />
         ) : (
-          <PlainFrame key={src} src={src} alt={item.gen?.prompt ?? item.input?.original_name ?? ""} w={w} h={h} onFullscreen={openFull} />
+          <PlainFrame key={src} src={src} alt={item.gen?.prompt ?? item.input?.original_name ?? ""} w={w} h={h} maskSrc={maskSrc} onFullscreen={openFull} />
         )}
         <StageBar item={item} label={labels[item.key]} showOriginal={showOriginal} setShowOriginal={(on) => setOriginalOf(on && g ? g.id : null)} />
       </>

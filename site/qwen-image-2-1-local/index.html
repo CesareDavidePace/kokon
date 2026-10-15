@@ -48,7 +48,7 @@
     {
       "@type": "FAQPage",
       "mainEntity": [
-        { "@type": "Question", "name": "How much VRAM does Qwen-Image 2.1 need?", "acceptedAnswer": { "@type": "Answer", "text": "With Kokon, 12 GB of VRAM is enough (tested on an RTX 5070 12 GB). 16 GB or more is more comfortable. Apple Silicon Macs work with 16 GB of unified memory, slowly; 32 GB is recommended." } },
+        { "@type": "Question", "name": "How much VRAM does Qwen-Image 2.1 need?", "acceptedAnswer": { "@type": "Answer", "text": "With Kokon, 12 GB of VRAM is enough (tested on an RTX 5070 12 GB), and NVIDIA cards with 8 GB work in beta at about 1 megapixel. 16 GB or more is more comfortable. Apple Silicon Macs work with 16 GB of unified memory, slowly; 32 GB is recommended." } },
         { "@type": "Question", "name": "Can I run Qwen-Image 2.1 without ComfyUI or Python?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Kokon runs it through stable-diffusion.cpp, a native C++ engine, and ships as one installer. It downloads and checks the model on first run." } },
         { "@type": "Question", "name": "Does Qwen-Image 2.1 run on AMD or Intel GPUs?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, through Vulkan on Windows (beta in Kokon), with 12 GB of VRAM or more." } },
         { "@type": "Question", "name": "How fast is Qwen-Image 2.1 locally?", "acceptedAnswer": { "@type": "Answer", "text": "With the official 8-step Turbo model on an RTX 5070 Ti: about 24 s for an edit at 1.5K and about 36 s for a new image at native 2K. An M2 Pro Mac takes about 4 minutes for a 1-megapixel image." } }
@@ -107,7 +107,7 @@
         </tbody>
       </table>
     </div>
-    <p class="note">8 GB cards are not supported well: the model is large, and 12 GB is the smallest size that gives good results.</p>
+    <p class="note">NVIDIA cards with 8 GB work in beta (since Kokon 0.9.3): images are made at about 1 megapixel, and users report 1 to 2 minutes per edit on an RTX 3060 Ti and an RTX 5050 Laptop. 16 GB of system RAM is recommended. 12 GB or more gives larger images and faster edits.</p>
 
     <h2>Step 1: Install Kokon</h2>
     <p>Download the latest release from <a href="https://github.com/GabrieleLozupone/kokon/releases/latest" rel="noopener">GitHub</a>:</p>

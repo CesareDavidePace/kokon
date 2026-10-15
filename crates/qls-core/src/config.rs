@@ -211,7 +211,7 @@ impl ModelProfile {
     /// The official weights a hardware preset downloads (GGUF of Qwen/Qwen-Image-2.1-Turbo,
     /// Qwen's own Qwen3-VL GGUF, the 2.1 VAE).
     pub fn official(sdcpp_dir: &Path, preset: &crate::catalog::Preset) -> Self {
-        use crate::catalog::{VAE, VISION_PROJECTOR};
+        use crate::catalog::{official_vae, VISION_PROJECTOR};
         let quant = preset.diffusion.dest.rsplit('-').next().unwrap_or("").trim_end_matches(".gguf");
         Self {
             id: OFFICIAL_PROFILE_ID.into(),
@@ -220,7 +220,7 @@ impl ModelProfile {
             source: ProfileSource::Official,
             scan_dir: None,
             diffusion_model: preset.diffusion.path(sdcpp_dir),
-            vae: VAE.path(sdcpp_dir),
+            vae: official_vae(sdcpp_dir).path(sdcpp_dir),
             text_encoder: preset.text_encoder.path(sdcpp_dir),
             vision_projector: Some(VISION_PROJECTOR.path(sdcpp_dir)),
             backend_args: vec![],
@@ -590,6 +590,23 @@ impl AppConfig {
         self.profiles.retain(|p| p.id != USER_PROFILE_ID);
         self.profiles.push(profile);
         self.active_profile = USER_PROFILE_ID.into();
+    }
+
+    /// The active model uses the texture-fix VAE (#21).
+    pub fn uses_improved_vae(&self) -> bool {
+        self.profile().vae.file_name().is_some_and(|n| n.eq_ignore_ascii_case(crate::catalog::VAE.file_name()))
+    }
+
+    /// Makes the active model use the texture-fix VAE in the app's folder, once downloaded. The
+    /// official files switch by themselves (`catalog::official_vae`); the user's own profile
+    /// points to it instead of their VAE, which stays where it is.
+    pub fn use_improved_vae(&mut self) {
+        let vae = crate::catalog::VAE.path(&self.sdcpp_dir);
+        let active = self.active_profile.clone();
+        if let Some(p) = self.profiles.iter_mut().find(|p| p.id == active && !p.is_official()) {
+            p.vae = vae;
+        }
+        self.normalize();
     }
 
     /// Makes the official files the active model (they may still need downloading).

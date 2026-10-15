@@ -217,6 +217,16 @@ impl Engine {
         }
     }
 
+    /// Deletes the original VAE from the app's folder once the texture fix replaced it and no
+    /// profile uses it (after the update, and at start in case a busy server held it open).
+    pub fn remove_unused_original_vae(&self) {
+        let Some(old) = crate::catalog::unused_original_vae(&self.config()) else { return };
+        match std::fs::remove_file(&old) {
+            Ok(()) => tracing::info!("deleted the original VAE {} (replaced by the texture fix)", old.display()),
+            Err(e) => tracing::warn!("could not delete the original VAE {} yet: {e}", old.display()),
+        }
+    }
+
     /// The installed engine is from another release than the catalog's (or the engine
     /// manifest's): Setup offers the update. An engine without a release marker (built by hand,
     /// an external server) only needs it when it cannot run the upscaler.

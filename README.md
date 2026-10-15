@@ -188,13 +188,16 @@ preset later from Settings → Models → **Set up models…**
 | 24 GB | Qwen-Image 2.1 Turbo Q4_K | Qwen3-VL 8B Q4_K_M | ~12 GB | not yet |
 | 32 GB+ | Qwen-Image 2.1 Turbo Q4_K | Qwen3-VL 8B Q8_0 (8.7 GB) | ~16 GB | not yet |
 
-Every preset also gets stable-diffusion.cpp (the CUDA 12 build on NVIDIA, the Vulkan build on AMD and Intel, the Metal build on a Mac), the Qwen-Image 2.1 VAE and the
+Every preset also gets stable-diffusion.cpp (the CUDA 12 build on NVIDIA, the Vulkan build on AMD and Intel, the Metal build on a Mac), the Qwen-Image 2.1 VAE with
+[madebyollin's texture fix](https://huggingface.co/madebyollin/texture-fix-vae-for-qwen-image-2.1) (it removes the faint
+2-pixel checkerboard of the original decoder; installs from 0.9.2 or earlier switch to it when you accept the update), the
 Qwen3-VL vision projector and, on a PC, the Superscale-SP upscaler (67 MB). The image model is Qwen's
 official 8-step [Qwen-Image 2.1 Turbo](https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo) through
 [DogukanUrker/Qwen-Image-2.1-Turbo-GGUF](https://huggingface.co/DogukanUrker/Qwen-Image-2.1-Turbo-GGUF);
 the other sources are
-[Qwen/Qwen3-VL-8B-Instruct-GGUF](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF) and
-[Comfy-Org/Qwen-Image-2.1](https://huggingface.co/Comfy-Org/Qwen-Image-2.1).
+[Qwen/Qwen3-VL-8B-Instruct-GGUF](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF),
+[madebyollin/texture-fix-vae-for-qwen-image-2.1](https://huggingface.co/madebyollin/texture-fix-vae-for-qwen-image-2.1) and
+[Comfy-Org/Qwen-Image-2.1](https://huggingface.co/Comfy-Org/Qwen-Image-2.1) (the original VAE).
 
 Files go to `%LOCALAPPDATA%\KokonData\sdcpp` (Mac: `~/Library/Application Support/KokonData/sdcpp`) by default. You can point the setup screen at an
 existing stable-diffusion.cpp folder instead; files that are already there are kept.

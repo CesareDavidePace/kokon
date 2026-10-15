@@ -125,6 +125,30 @@ export function Settings() {
     }
   };
 
+  // Switching to the new VAE (#21): download, then the service swaps it and deletes the old one.
+  const [vaeProgress, setVaeProgress] = useState<number | null>(null);
+  const improveVae = async () => {
+    try {
+      let st = await api.improveVae();
+      setVaeProgress(0);
+      while (st.running) {
+        await new Promise((r) => window.setTimeout(r, 700));
+        st = await api.installStatus();
+        const total = st.items.reduce((a, i) => a + i.size, 0);
+        setVaeProgress(total ? st.items.reduce((a, i) => a + i.received, 0) / total : 0);
+      }
+      const failed = st.items.find((i) => i.state === "failed");
+      if (failed) toastError(new Error(`${failed.label}: ${failed.error}`));
+      else if (st.complete) toastInfo("The new decoder is in use");
+      api.models().then(setMs, () => {});
+      api.config().then(setCfg, () => {});
+    } catch (e) {
+      toastError(e);
+    } finally {
+      setVaeProgress(null);
+    }
+  };
+
   const close = () => setState({ overlay: null });
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
@@ -341,6 +365,29 @@ export function Settings() {
                   <PathField label="Text encoder (Qwen3-VL)" value={profile.textEncoder} onChange={(v) => setProfile({ textEncoder: v })} />
                   <PathField label="Vision projector (mmproj)" value={profile.visionProjector ?? ""} onChange={(v) => setProfile({ visionProjector: v || null })} />
                 </>
+              )}
+              {ms && (
+                <div className="setting-card">
+                  <div className="setting-card-text">
+                    <strong>Image decoder (VAE)</strong>
+                    <span className="muted">
+                      {ms.vae.improved
+                        ? "The new decoder: no fine grid pattern on skin, hair and smooth areas."
+                        : "A new decoder removes the fine grid pattern on skin, hair and smooth areas, with the same speed and colours. Switching downloads it and deletes the old one from Kokon's folder" +
+                          (profile.source === "official" ? "." : "; your own VAE file stays where it is.")}
+                    </span>
+                    {vaeProgress !== null && (
+                      <div className="progress" style={{ marginTop: 6 }}>
+                        <i style={{ width: `${vaeProgress * 100}%` }} />
+                      </div>
+                    )}
+                  </div>
+                  {!ms.vae.improved && (
+                    <button className="btn primary" disabled={vaeProgress !== null || dirty} title={dirty ? "Save or discard your changes first" : undefined} onClick={improveVae}>
+                      <Download size={15} /> {vaeProgress !== null ? `${Math.floor(vaeProgress * 100)}%` : `Switch${ms.vae.download_bytes ? ` · ${formatBytes(ms.vae.download_bytes)}` : ""}`}
+                    </button>
+                  )}
+                </div>
               )}
               <UpscalerControls
                 model={cfg.upscalerModel}

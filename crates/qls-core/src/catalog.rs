@@ -299,8 +299,29 @@ pub const TURBO_Q4_K: Download = Download {
     engine_tag: None,
 };
 
+/// The VAE of new installs (0.9.3): Qwen's VAE with the decoder fine-tuned by madebyollin
+/// (author of TAESD) to remove the 2-px checkerboard of the original (#21). Same tensors and
+/// shapes, Qwen Research License like the model. Same-seed A/B on 5 cases at 1536² (2026-10-16):
+/// checkerboard 10–48% → 1–4% (coherent 2-px amplitude, noise ≈ 2–3%), slightly more fine
+/// detail, colours within 1/255, same speed.
 pub const VAE: Download = Download {
     id: "vae",
+    label: "Qwen-Image 2.1 VAE (texture fix)",
+    kind: FileKind::Model,
+    url: "https://huggingface.co/madebyollin/texture-fix-vae-for-qwen-image-2.1/resolve/main/texture_fix_vae_for_qwen_image_2.1_bf16.safetensors",
+    fallback_urls: &[],
+    page: "https://huggingface.co/madebyollin/texture-fix-vae-for-qwen-image-2.1",
+    size: 675_509_688,
+    sha256: "36f56608b02077a50a08ea3dbcdb88351298ceba49948f41f9f87186378e6908",
+    dest: "models/qwen21/texture_fix_vae_for_qwen_image_2.1_bf16.safetensors",
+    provides: &[],
+    engine_tag: None,
+};
+
+/// Qwen's original VAE, installed up to 0.9.2. Kept while its owner has not chosen the texture
+/// fix ([`official_vae`]); deleted once they have ([`unused_original_vae`]).
+pub const VAE_ORIGINAL: Download = Download {
+    id: "vae_original",
     label: "Qwen-Image 2.1 VAE",
     kind: FileKind::Model,
     url: "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/vae/qwen_image_2.1_vae_bf16.safetensors",
@@ -312,6 +333,21 @@ pub const VAE: Download = Download {
     provides: &[],
     engine_tag: None,
 };
+
+/// The VAE the official files use in `sdcpp_dir`: the texture fix once it is there, else the
+/// original of an earlier install (its owner has not accepted the new one), else the texture
+/// fix to download. Updating is the user's choice, so nothing here downloads it uninvited.
+pub fn official_vae(sdcpp_dir: &Path) -> Download {
+    if !VAE.is_present(sdcpp_dir) && VAE_ORIGINAL.is_present(sdcpp_dir) { VAE_ORIGINAL } else { VAE }
+}
+
+/// The original VAE in the app's own folder once the texture fix replaced it: no profile
+/// uses it any more, so it can be deleted.
+pub fn unused_original_vae(cfg: &crate::config::AppConfig) -> Option<PathBuf> {
+    let old = VAE_ORIGINAL.path(&cfg.sdcpp_dir);
+    let used = cfg.profiles.iter().any(|p| p.vae == old);
+    (VAE.is_present(&cfg.sdcpp_dir) && !used && old.is_file()).then_some(old)
+}
 
 /// Text encoder from Qwen's own GGUF repository (the one sd.cpp's docs point to).
 pub const TEXT_ENCODER_Q4_K_M: Download = Download {
@@ -517,15 +553,16 @@ pub fn recommended_preset(vram_mib: Option<u64>) -> &'static Preset {
     }
 }
 
-/// Everything a preset needs on `backend`, in download order (small, essential files first).
-/// Superscale-SP is the default upscaler on PCs only (on Metal it takes minutes per image).
-pub fn downloads_for(p: &Preset, backend: GpuBackend) -> Vec<Download> {
+/// Everything a preset needs on `backend` in `sdcpp_dir`, in download order (small, essential
+/// files first). Superscale-SP is the default upscaler on PCs only (on Metal it takes minutes
+/// per image).
+pub fn downloads_for(p: &Preset, backend: GpuBackend, sdcpp_dir: &Path) -> Vec<Download> {
     let mut v = engine_downloads(backend);
     v.push(UPSCALER);
     if backend != GpuBackend::Metal {
         v.push(SUPERSCALE);
     }
-    v.extend([VAE, VISION_PROJECTOR, p.text_encoder, p.diffusion]);
+    v.extend([official_vae(sdcpp_dir), VISION_PROJECTOR, p.text_encoder, p.diffusion]);
     v
 }
 
@@ -533,7 +570,7 @@ pub fn downloads_for(p: &Preset, backend: GpuBackend) -> Vec<Download> {
 /// (a piece the user chose to download, or an official file deleted from their folder), each
 /// saved where the profile expects it. Existing files are never replaced, whatever their name.
 pub fn profile_model_downloads(profile: &crate::config::ModelProfile) -> Vec<Download> {
-    let official = [TURBO_Q4_K, VAE, TEXT_ENCODER_Q4_K_M, TEXT_ENCODER_Q8_0, VISION_PROJECTOR];
+    let official = [TURBO_Q4_K, VAE, VAE_ORIGINAL, TEXT_ENCODER_Q4_K_M, TEXT_ENCODER_Q8_0, VISION_PROJECTOR];
     profile
         .files()
         .into_iter()
@@ -589,7 +626,7 @@ mod tests {
 
     #[test]
     fn catalog_is_well_formed() {
-        let all = [ENGINE_CUDA, CUDA_RUNTIME, ENGINE_VULKAN, ENGINE_METAL, TURBO_Q4_K, VAE, TEXT_ENCODER_Q4_K_M, TEXT_ENCODER_Q8_0, VISION_PROJECTOR, UPSCALER, SUPERSCALE, ULTRASHARP];
+        let all = [ENGINE_CUDA, CUDA_RUNTIME, ENGINE_VULKAN, ENGINE_METAL, TURBO_Q4_K, VAE, VAE_ORIGINAL, TEXT_ENCODER_Q4_K_M, TEXT_ENCODER_Q8_0, VISION_PROJECTOR, UPSCALER, SUPERSCALE, ULTRASHARP];
         for d in all {
             assert!(d.urls().all(|u| u.starts_with("https://")), "{}", d.id);
             assert_eq!(d.sha256.len(), 64, "{}", d.id);
@@ -613,13 +650,13 @@ mod tests {
             assert_eq!(upscaler_download(name).is_some(), *name != crate::config::LANCZOS, "{name}");
         }
         assert_eq!(upscaler_download(crate::config::UPSCALER_CHOICES[0].0).unwrap().id, "upscaler_superscale");
-        let metal = downloads_for(&PRESETS[0], GpuBackend::Metal);
+        let metal = downloads_for(&PRESETS[0], GpuBackend::Metal, Path::new("new"));
         assert!(metal.iter().all(|d| d.id != "upscaler_superscale"), "Macs default to Lanczos: no Superscale download");
         for p in PRESETS {
-            let cuda = downloads_for(p, GpuBackend::Cuda);
+            let cuda = downloads_for(p, GpuBackend::Cuda, Path::new("new"));
             assert_eq!(cuda.len(), 8);
             assert!(cuda.iter().any(|d| d.id == "upscaler") && cuda.iter().any(|d| d.id == "upscaler_superscale"), "MoSR (bundled) and the default model");
-            let vk = downloads_for(p, GpuBackend::Vulkan);
+            let vk = downloads_for(p, GpuBackend::Vulkan, Path::new("new"));
             assert_eq!(vk.len(), 7);
             assert!(vk.iter().all(|d| d.id != "engine_cuda" && d.id != "cuda_runtime"));
         }
@@ -708,6 +745,41 @@ mod tests {
         assert_eq!(profile_model_downloads(&p).len(), 1);
         let all = downloads_for_profile(&p, GpuBackend::Vulkan);
         assert_eq!(all.iter().map(|d| d.id).collect::<Vec<_>>(), ["engine_vulkan", "upscaler", "upscaler_superscale", "vision_projector"]);
+    }
+
+    #[test]
+    fn texture_fix_vae_replaces_the_original_only_once_downloaded() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        std::fs::create_dir_all(join_rel(d, MODEL_SUBDIR)).unwrap();
+        let fill = |f: Download| std::fs::File::create(f.path(d)).unwrap().set_len(f.size).unwrap();
+        let mut cfg = crate::config::AppConfig { sdcpp_dir: d.to_path_buf(), ..Default::default() };
+        cfg.normalize();
+        // A new install gets the texture fix.
+        assert_eq!(official_vae(d).id, "vae");
+        assert_eq!(cfg.profile().vae, VAE.path(d));
+        // An earlier install keeps its original VAE until the user accepts the new one.
+        fill(VAE_ORIGINAL);
+        cfg.normalize();
+        assert_eq!(official_vae(d).id, "vae_original");
+        assert_eq!(cfg.profile().vae, VAE_ORIGINAL.path(d));
+        assert!(downloads_for(&PRESETS[1], GpuBackend::Cuda, d).iter().all(|x| x.id != "vae"), "never downloaded uninvited");
+        assert_eq!(unused_original_vae(&cfg), None, "in use");
+        // Once downloaded, the official files switch and the original can go.
+        fill(VAE);
+        cfg.normalize();
+        assert_eq!(cfg.profile().vae, VAE.path(d));
+        assert_eq!(unused_original_vae(&cfg), Some(VAE_ORIGINAL.path(d)));
+        // ...unless the user's own profile points to it.
+        cfg.set_user_files(crate::config::ModelProfile::user(d.join("m.gguf"), VAE_ORIGINAL.path(d), d.join("te.gguf"), None));
+        assert_eq!(unused_original_vae(&cfg), None);
+        assert!(!cfg.uses_improved_vae());
+        // Accepting it moves that profile to the app's copy; the user's file is never deleted
+        // (only the app's folder is cleaned, and only files no profile uses).
+        cfg.use_improved_vae();
+        assert!(cfg.uses_improved_vae());
+        assert_eq!(cfg.profile().vae, VAE.path(d));
+        assert_eq!(unused_original_vae(&cfg), Some(VAE_ORIGINAL.path(d)));
     }
 
     #[test]

@@ -945,7 +945,7 @@ mod tests {
         std::fs::write(&f, b"abc").unwrap();
         assert_eq!(sha256_file(&f).unwrap(), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
         let p = crate::catalog::preset("16gb").unwrap();
-        let all = crate::catalog::downloads_for(p, crate::config::GpuBackend::Cuda);
+        let all = crate::catalog::downloads_for(p, crate::config::GpuBackend::Cuda, dir.path());
         let (dl, disk) = space_needed(dir.path(), &all);
         assert_eq!(dl, all.iter().map(|d| d.size).sum::<u64>());
         assert!(disk > dl, "zips need room to extract");

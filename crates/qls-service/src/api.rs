@@ -70,6 +70,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/models/inspect", post(models_inspect))
         .route("/models/user", post(models_set_user))
         .route("/models/use", post(models_use))
+        .route("/models/vae", post(models_improve_vae))
         .route("/upscalers", get(list_upscalers))
         .route("/upscalers/{name}/download", post(download_upscaler))
         .route("/config", get(get_config).put(put_config))
@@ -254,7 +255,7 @@ async fn setup_hardware(State(s): St, Query(q): Query<HardwareQ>) -> ApiResult<J
         let presets: Vec<Value> = catalog::PRESETS
             .iter()
             .map(|p| {
-                let files = catalog::downloads_for(p, backend);
+                let files = catalog::downloads_for(p, backend, &dir);
                 let (download, disk) = installer::space_needed(&dir, &files);
                 json!({
                     "id": p.id, "label": if unified { p.unified_label } else { p.label }, "summary": if unified { p.unified_summary } else { p.summary }, "verified": p.verified, "min_vram_mib": p.min_vram_mib,
@@ -334,7 +335,7 @@ async fn install_start(State(s): St, Json(b): Json<InstallBody>) -> ApiResult<Js
         let u = cfg.user_profile().ok_or_else(|| AppError::invalid("Choose your model files first."))?;
         catalog::downloads_for_profile(u, backend)
     } else {
-        catalog::downloads_for(preset, backend)
+        catalog::downloads_for(preset, backend, &cfg.sdcpp_dir)
     };
     // A running server keeps its DLLs open; the engine zip may need to replace them.
     let st = s.engine.server.status();
@@ -1086,6 +1087,43 @@ async fn save_and_restart(s: &AppState, cfg: AppConfig) -> ApiResult<()> {
     Ok(())
 }
 
+/// Downloads the texture-fix VAE (#21) into the app's folder and makes the active model use
+/// it (progress in `/setup/install`). The server holds the old file open, so it restarts once
+/// idle; then the original VAE in the app's folder is deleted if no profile uses it. The user's
+/// own VAE is never deleted.
+async fn models_improve_vae(State(s): St) -> ApiResult<Json<Value>> {
+    let dir = s.engine.config().sdcpp_dir;
+    let engine = s.engine.clone();
+    let on_finish = Box::new(move |complete: bool| {
+        if !complete {
+            return;
+        }
+        let mut c = engine.config();
+        c.use_improved_vae();
+        let restart = match engine.set_config(c) {
+            Ok(r) => r,
+            Err(e) => return tracing::error!("could not switch to the new VAE: {}", e.message),
+        };
+        tracing::info!("switched to the texture-fix VAE");
+        tokio::spawn(async move {
+            if restart {
+                while engine.has_pending_work() {
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                }
+                let st = engine.server.status();
+                if st.owned && st.state != qls_core::process::ServerState::Stopped {
+                    engine.server.stop().await;
+                    engine.emit_server();
+                }
+            }
+            let e = engine.clone();
+            let _ = tokio::task::spawn_blocking(move || e.remove_unused_original_vae()).await;
+        });
+    });
+    s.engine.installer.start(dir, "vae", vec![catalog::VAE], on_finish)?;
+    Ok(Json(serde_json::to_value(s.engine.installer.status()).unwrap()))
+}
+
 fn role_of(label: &str) -> Option<Role> {
     Role::ALL.into_iter().find(|r| r.label() == label)
 }
@@ -1122,6 +1160,12 @@ async fn models_status(State(s): St) -> ApiResult<Json<Value>> {
             "user_installed": cfg.user_profile().is_some_and(|u| u.files().iter().all(|(_, f, _)| f.is_file())),
             "official_installed": official_installed,
             "default_download_dir": catalog::join_rel(&cfg.sdcpp_dir, catalog::MODEL_SUBDIR),
+            // The texture-fix VAE (#21): in use, or what switching to it downloads.
+            "vae": {
+                "improved": cfg.uses_improved_vae(),
+                "download_bytes": if catalog::VAE.is_present(&cfg.sdcpp_dir) { 0 } else { catalog::VAE.size },
+                "page": catalog::VAE.page,
+            },
         })
     })
     .await

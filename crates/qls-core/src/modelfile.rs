@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::catalog::{Download, Preset, TEXT_ENCODER_Q4_K_M, TEXT_ENCODER_Q8_0, TURBO_Q4_K, VAE, VISION_PROJECTOR};
+use crate::catalog::{Download, Preset, TEXT_ENCODER_Q4_K_M, TEXT_ENCODER_Q8_0, TURBO_Q4_K, VAE, VAE_ORIGINAL, VISION_PROJECTOR};
 use crate::config::ModelProfile;
 use crate::error::AppError;
 
@@ -84,7 +84,7 @@ struct Tensor {
 /// The catalog download a file with this name and size is (any folder).
 pub fn official_download(path: &Path, size: u64) -> Option<Download> {
     let name = path.file_name()?.to_string_lossy().to_ascii_lowercase();
-    [TURBO_Q4_K, VAE, TEXT_ENCODER_Q4_K_M, TEXT_ENCODER_Q8_0, VISION_PROJECTOR]
+    [TURBO_Q4_K, VAE, VAE_ORIGINAL, TEXT_ENCODER_Q4_K_M, TEXT_ENCODER_Q8_0, VISION_PROJECTOR]
         .into_iter()
         .find(|d| d.size == size && d.dest.rsplit('/').next().is_some_and(|f| f.eq_ignore_ascii_case(&name)))
 }

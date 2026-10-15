@@ -75,6 +75,8 @@ export const api = {
   setUserModels: (b: { diffusion_model: ModelSlot; vae: ModelSlot; text_encoder: ModelSlot; vision_projector: ModelSlot | null; scan_dir: string | null }) =>
     call<ModelsStatus>("/models/user", { method: "POST", body: json(b) }),
   useModels: (profile: "official" | "user") => call<ModelsStatus>("/models/use", { method: "POST", body: json({ profile }) }),
+  /** Downloads the texture-fix VAE and switches the active model to it (progress in installStatus). */
+  improveVae: () => call<InstallStatus>("/models/vae", { method: "POST" }),
   /** Runs the engine on another card (index in `hardware().gpus`); needs the engine installed. */
   setGpu: (gpu: number) => call<{ saved: boolean }>("/setup/gpu", { method: "POST", body: json({ gpu }) }),
   upscalers: () => call<{ selected: string; active: string | null; items: UpscalerItem[] }>("/upscalers"),

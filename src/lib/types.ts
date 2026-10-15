@@ -340,6 +340,8 @@ export interface ModelsStatus {
   user_installed: boolean;
   official_installed: boolean;
   default_download_dir: string;
+  /** The texture-fix VAE (#21): in use, or what switching to it downloads. */
+  vae: { improved: boolean; download_bytes: number; page: string };
 }
 
 export interface HardwareReport {

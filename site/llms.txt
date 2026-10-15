@@ -5,7 +5,7 @@
 Key facts (version 0.9.2, October 2026):
 
 - Model: Qwen-Image 2.1 Turbo (official 8-step version, 4-bit GGUF) with Qwen3-VL 8B as the text encoder, run through stable-diffusion.cpp. About 12 GB of models, downloaded once and checked with SHA-256.
-- Platforms: Windows 10/11 with an NVIDIA GPU (12 GB VRAM or more, CUDA). AMD and Intel Arc (12 GB+) through Vulkan, beta. Apple Silicon Macs on macOS 26 (Metal), beta: 16 GB works slowly, 32 GB recommended. No Linux build yet.
+- Platforms: Windows 10/11 with an NVIDIA GPU (12 GB VRAM or more, CUDA; 8 GB in beta, about 1-megapixel images). AMD and Intel Arc (12 GB+) through Vulkan, beta. Apple Silicon Macs on macOS 26 (Metal), beta: 16 GB works slowly, 32 GB recommended. No Linux build yet.
 - Speed: RTX 5070 Ti about 24 s per edit at 1.5K and 36 s for a new image at native 2K; RTX 5070 12 GB about 12 s per 1-megapixel image; M2 Pro about 4 minutes per image.
 - Features: create from text, edit with a sentence, paint an area and Change/Remove/Replace/Add only there, combine several images ("image 1", "image 2"), expand beyond the borders (outpainting), AI upscaling, versions with undo and before/after compare, private mode, works offline after setup.
 - For AI agents: built-in MCP server (generate_image, edit_image, inpaint_image, outpaint_image, upscale_image, ...) and a local HTTP API. `npx -y kokon-mcp`; listed in the official MCP Registry as io.github.GabrieleLozupone/kokon.

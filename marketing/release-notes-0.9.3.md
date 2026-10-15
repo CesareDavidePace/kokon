@@ -1,14 +1,23 @@
 ## Kokon 0.9.3
 
-**Cleaner images.** The fine grid pattern that showed on skin, hair and smooth areas came from Qwen-Image 2.1's image decoder (VAE): a faint 2-pixel checkerboard. Kokon now uses [madebyollin's texture-fix VAE](https://huggingface.co/madebyollin/texture-fix-vae-for-qwen-image-2.1), which removes it. The image, its colours and the speed stay the same. Thanks to @badraymen for reporting it in [#21](https://github.com/GabrieleLozupone/kokon/issues/21).
+**Cleaner images.** The fine grid pattern that showed on skin, hair and smooth areas came from Qwen-Image 2.1's image decoder (VAE): a faint 2-pixel checkerboard. Kokon now uses [madebyollin's texture-fix VAE](https://huggingface.co/madebyollin/texture-fix-vae-for-qwen-image-2.1), which removes it. The image, its colours and the speed stay the same. Reported in [#21](https://github.com/GabrieleLozupone/kokon/issues/21).
 
 - **Use the model files you already have** ([#14](https://github.com/GabrieleLozupone/kokon/issues/14)): already downloaded Qwen-Image 2.1 for ComfyUI or another app? Point Kokon at those files instead of downloading them again. Kokon checks what each file is, and finds them again if they move or a drive was disconnected.
+- **8 GB graphics cards (beta)**: setup now has an 8 GB preset. Images are made at about 1 megapixel; users report 1–2 minutes per edit on an RTX 5050 Laptop. Tell us how it runs on yours.
 - **Pick your graphics card** ([#16](https://github.com/GabrieleLozupone/kokon/issues/16)): on computers with more than one GPU, setup lets you choose which one runs the model and sizes the preset for it.
 - **Zoom and pan** in full screen and in the inpaint editor ([#19](https://github.com/GabrieleLozupone/kokon/issues/19)). The painted area now shows on the image while it is being edited.
 - **Light and dark**: Settings → General → Appearance. Press `?` for the keyboard shortcuts.
 - Fixes: the port-in-use hint points to the right setting ([#12](https://github.com/GabrieleLozupone/kokon/issues/12)), and durations round correctly ([#13](https://github.com/GabrieleLozupone/kokon/issues/13)).
 
+
 Updating from 0.9.2: the app offers the new decoder (675 MB). If you accept, it replaces the old one in Kokon's folder. If you keep the old one, you can switch any time in Settings → Models. If you use your own model files, your VAE file is never deleted. Your images, models and settings stay as they are.
+
+### Thanks
+
+- @badraymen, for spotting the grid pattern and the ideas in #21 (samplers, LoRA), and for showing how they ran Kokon on their ComfyUI files (#14).
+- @oh-codes, for zoom and pan (#19) and the idea of the theme setting (#18).
+- @peda-cos, for #12 and #13.
+- Everyone on Reddit who asked for these features and tested Kokon on their hardware, especially u/Oli_Luck (choosing the GPU), u/skk80, u/Electronic-Metal2391 and u/chillahc (using your own model files), and u/SpiritualShame5265 and u/jucabala457, whose 8 GB reports made the 8 GB preset possible.
 
 ### Coming in 0.9.4: LoRA
 

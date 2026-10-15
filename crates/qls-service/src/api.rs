@@ -254,6 +254,7 @@ async fn setup_hardware(State(s): St, Query(q): Query<HardwareQ>) -> ApiResult<J
         let unified = gpu.as_ref().is_some_and(|g| g.unified);
         let presets: Vec<Value> = catalog::PRESETS
             .iter()
+            .filter(|p| p.offered(unified))
             .map(|p| {
                 let files = catalog::downloads_for(p, backend, &dir);
                 let (download, disk) = installer::space_needed(&dir, &files);
@@ -284,7 +285,7 @@ async fn setup_hardware(State(s): St, Query(q): Query<HardwareQ>) -> ApiResult<J
             "vram_mib": vram,
             "vram_simulated": cfg.vram_override_mib > 0,
             "ram_total_mib": sys.total_memory() / (1024 * 1024),
-            "recommended": catalog::recommended_preset(vram).id,
+            "recommended": catalog::recommended_preset(vram, unified).id,
             "current": cfg.hardware_preset,
             "current_backend": cfg.gpu_backend,
             "presets": presets,

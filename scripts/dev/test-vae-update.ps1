@@ -15,6 +15,9 @@
 #                                 point the profile at Kokon's copy and keep their file
 #             -Reset              start again as a fresh 0.9.2 install (deletes the test folder)
 #             Without -Reset a second run is a restart: the config the app saved is kept.
+#             -VramMib 8188       plan as if the card had this much VRAM (Setup's 8 GB beta preset
+#                                 and note: Settings -> Models -> Set up models...). Only on a new
+#                                 test config (with -Reset).
 #   status    What the test Kokon sees (GET /models) and which VAE files are on disk.
 #   stop      Stop the test service and its sd-server (they outlive the window).
 #
@@ -23,6 +26,7 @@ param(
     [ValidateSet('setup', 'status', 'stop')] [string]$Action = 'setup',
     [ValidateSet('official', 'own')] [string]$Scenario = 'official',
     [string]$From = (Join-Path $env:LOCALAPPDATA 'KokonData\sdcpp'),
+    [int]$VramMib = 0,
     [switch]$Reset
 )
 
@@ -116,6 +120,7 @@ $cfg = @{
     # Updating from 0.9.2: the welcome was seen, the 0.9.2 notes too.
     ui = @{ welcomeSeen = $true; tourSeen = $true; whatsNewSeen = '0.9.2' }
 }
+if ($VramMib -gt 0) { $cfg.vramOverrideMib = $VramMib }
 if ($Scenario -eq 'own') {
     $cfg.activeProfile = 'qwen-image-2.1-user'
     $cfg.profiles = @(@{

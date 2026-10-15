@@ -321,7 +321,7 @@ mod tests {
         assert_eq!(g.planning_mib(), 16303);
         let mac = GpuInfo { name: "Apple M2 Pro".into(), vendor: "apple".into(), unified: true, memory_total_mib: 16384, ..Default::default() };
         assert!(mac.planning_mib() < 6 * 1024, "16 GB Mac plans like a small card");
-        assert_eq!(crate::catalog::recommended_preset(Some(mac.planning_mib())).id, "12gb");
+        assert_eq!(crate::catalog::recommended_preset(Some(mac.planning_mib()), true).id, "12gb");
     }
 
     #[test]

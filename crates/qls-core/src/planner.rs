@@ -1137,14 +1137,14 @@ mod tests {
         let mac = |gb: u64| unified_memory_planning_mib(gb * 1024, te);
         assert!(mac(16) < 6 * 1024, "16 GB: only the smallest working sizes");
         assert_eq!(token_budget(Some(mac(16))), 4_096);
-        assert_eq!(recommended_preset(Some(mac(24))).id, "12gb");
-        assert_eq!(recommended_preset(Some(mac(32))).id, "16gb");
-        assert_eq!(recommended_preset(Some(mac(48))).id, "24gb");
-        assert_eq!(recommended_preset(Some(mac(64))).id, "32gb");
+        assert_eq!(recommended_preset(Some(mac(24)), true).id, "12gb");
+        assert_eq!(recommended_preset(Some(mac(32)), true).id, "16gb");
+        assert_eq!(recommended_preset(Some(mac(48)), true).id, "24gb");
+        assert_eq!(recommended_preset(Some(mac(64)), true).id, "32gb");
         assert_eq!(unified_memory_planning_mib(4096, te), 0, "never underflows");
         // The Mac names of the presets match what each memory size gets.
         for (gb, id) in [(16, "12gb"), (24, "12gb"), (32, "16gb"), (36, "16gb"), (48, "24gb"), (64, "32gb"), (128, "32gb")] {
-            let p = recommended_preset(Some(mac(gb)));
+            let p = recommended_preset(Some(mac(gb)), true);
             assert_eq!(p.id, id, "{gb} GB Mac");
             assert!(p.unified_label.contains(&gb.to_string()) || (gb > 64 && p.unified_label.contains('+')), "{gb} GB Mac labelled {}", p.unified_label);
         }

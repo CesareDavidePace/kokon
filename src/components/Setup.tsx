@@ -427,7 +427,12 @@ export function Setup() {
               )
             ) : (
               <>
-                {vram !== null && vram < 11 * 1024 && <div className="setup-note">Your GPU has {gb(vram)} of VRAM. 12 GB is the smallest size this app is made for; it may fail or run slowly.</div>}
+                {vram !== null && vram < 7 * 1024 && <div className="setup-note">Your GPU has {gb(vram)} of VRAM. 8 GB is the smallest size Kokon runs on (in beta); it may fail or run slowly.</div>}
+                {vram !== null && vram >= 7 * 1024 && vram < 10 * 1024 && (
+                  <div className="setup-note">
+                    8 GB graphics cards are in beta: images are made at about 1 megapixel, and an edit takes 1–2 minutes on an RTX 5050 Laptop. Tell us how it runs on yours.
+                  </div>
+                )}
                 {hw.ram_total_mib < 15 * 1024 && <div className="setup-note">The text encoder runs from system RAM; with {gb(hw.ram_total_mib)} of RAM, 16 GB or more is recommended.</div>}
               </>
             )}
@@ -519,7 +524,7 @@ export function Setup() {
                   {chosen && !own && (
                     <span className="muted">
                       {chosen.summary}.{chosen.id === hw.recommended ? " Recommended for your GPU." : ""}
-                      {hw.gpu?.unified ? " Not yet tested on a Mac." : chosen.verified ? "" : " Not yet tested on a real card of this size."}
+                      {hw.gpu?.unified ? " Not yet tested on a Mac." : chosen.verified ? "" : chosen.id === "8gb" ? " Beta: tested by users, not yet by us." : " Not yet tested on a real card of this size."}
                     </span>
                   )}
                   {hw.gpu?.unified && (

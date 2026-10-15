@@ -489,12 +489,28 @@ pub struct Preset {
 /// Ordered by VRAM. Cards report a bit less than their nominal size (16 GB → 16303 MiB),
 /// so thresholds sit between classes.
 pub const PRESETS: &[Preset] = &[
+    // Beta (0.9.3): the 12 GB files, with the planner's smaller working sizes. Emulated 8 GB on a
+    // 5070 Ti ran every mode without running out of memory (2026-10-14); users report it works
+    // on an RTX 3060 Ti and an RTX 5050 Laptop (1–2 min per edit). Not offered on Macs, whose
+    // 16 GB models plan below this and stay on the 12 GB preset's Mac name.
+    Preset {
+        id: "8gb",
+        label: "8 GB (beta)",
+        unified_label: "",
+        unified_summary: "",
+        min_vram_mib: 0,
+        diffusion: TURBO_Q4_K,
+        text_encoder: TEXT_ENCODER_Q4_K_M,
+        text_encoder_placement: TextEncoderPlacement::Ram,
+        verified: false,
+        summary: "4-bit model; text encoder in system RAM; images of about 1 megapixel",
+    },
     Preset {
         id: "12gb",
         label: "12 GB",
         unified_label: "16–24 GB Mac",
         unified_summary: "4-bit image model and text encoder; images of about 1–1.5 megapixels",
-        min_vram_mib: 0,
+        min_vram_mib: 10 * 1024,
         diffusion: TURBO_Q4_K,
         text_encoder: TEXT_ENCODER_Q4_K_M,
         text_encoder_placement: TextEncoderPlacement::Ram,
@@ -545,10 +561,19 @@ pub fn preset(id: &str) -> Option<&'static Preset> {
     PRESETS.iter().find(|p| p.id == id)
 }
 
-/// The preset for a card with `vram_mib` (None: unknown GPU → the 16 GB default).
-pub fn recommended_preset(vram_mib: Option<u64>) -> &'static Preset {
+impl Preset {
+    /// Offered on this kind of memory: presets without a Mac name are for graphics cards only.
+    pub fn offered(&self, unified: bool) -> bool {
+        !unified || !self.unified_label.is_empty()
+    }
+}
+
+/// The preset for a card with `vram_mib` (None: unknown GPU → the 16 GB default); `unified`
+/// for a Mac's planning memory. Below every threshold, the smallest preset offered.
+pub fn recommended_preset(vram_mib: Option<u64>, unified: bool) -> &'static Preset {
+    let offered = || PRESETS.iter().filter(move |p| p.offered(unified));
     match vram_mib {
-        Some(v) => PRESETS.iter().rev().find(|p| v >= p.min_vram_mib).unwrap_or(&PRESETS[0]),
+        Some(v) => offered().rev().find(|p| v >= p.min_vram_mib).or_else(|| offered().next()).unwrap(),
         None => preset(DEFAULT_PRESET).unwrap(),
     }
 }
@@ -614,14 +639,19 @@ mod tests {
 
     #[test]
     fn presets_follow_vram() {
-        assert_eq!(recommended_preset(Some(12_288)).id, "12gb");
-        assert_eq!(recommended_preset(Some(11_264)).id, "12gb");
-        assert_eq!(recommended_preset(Some(8_192)).id, "12gb", "smaller cards get the lightest preset");
-        assert_eq!(recommended_preset(Some(16_303)).id, "16gb");
-        assert_eq!(recommended_preset(Some(24_564)).id, "24gb");
-        assert_eq!(recommended_preset(Some(32_607)).id, "32gb");
-        assert_eq!(recommended_preset(Some(49_140)).id, "32gb");
-        assert_eq!(recommended_preset(None).id, "16gb");
+        assert_eq!(recommended_preset(Some(12_288), false).id, "12gb");
+        assert_eq!(recommended_preset(Some(11_264), false).id, "12gb", "RTX 2080 Ti");
+        assert_eq!(recommended_preset(Some(10_240), false).id, "12gb", "RTX 3080 10 GB");
+        assert_eq!(recommended_preset(Some(8_188), false).id, "8gb");
+        assert_eq!(recommended_preset(Some(6_144), false).id, "8gb", "smaller cards get the lightest preset");
+        assert_eq!(recommended_preset(Some(16_303), false).id, "16gb");
+        assert_eq!(recommended_preset(Some(24_564), false).id, "24gb");
+        assert_eq!(recommended_preset(Some(32_607), false).id, "32gb");
+        assert_eq!(recommended_preset(Some(49_140), false).id, "32gb");
+        assert_eq!(recommended_preset(None, false).id, "16gb");
+        // Macs never get the graphics-card-only 8 GB preset.
+        assert_eq!(recommended_preset(Some(5_000), true).id, "12gb");
+        assert!(!preset("8gb").unwrap().offered(true) && preset("12gb").unwrap().offered(true));
     }
 
     #[test]
@@ -763,7 +793,7 @@ mod tests {
         cfg.normalize();
         assert_eq!(official_vae(d).id, "vae_original");
         assert_eq!(cfg.profile().vae, VAE_ORIGINAL.path(d));
-        assert!(downloads_for(&PRESETS[1], GpuBackend::Cuda, d).iter().all(|x| x.id != "vae"), "never downloaded uninvited");
+        assert!(downloads_for(preset("16gb").unwrap(), GpuBackend::Cuda, d).iter().all(|x| x.id != "vae"), "never downloaded uninvited");
         assert_eq!(unused_original_vae(&cfg), None, "in use");
         // Once downloaded, the official files switch and the original can go.
         fill(VAE);

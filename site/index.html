@@ -49,7 +49,7 @@
       "applicationCategory": "MultimediaApplication",
       "applicationSubCategory": "AI image editor",
       "operatingSystem": "Windows 10, Windows 11, macOS 26",
-      "processorRequirements": "NVIDIA, AMD or Intel GPU with 12 GB of VRAM, or Apple Silicon",
+      "processorRequirements": "NVIDIA, AMD or Intel GPU with 12 GB of VRAM (NVIDIA 8 GB in beta), or Apple Silicon",
       "storageRequirements": "15 GB",
       "fileSize": "35 MB",
       "isAccessibleForFree": true,
@@ -135,7 +135,7 @@
    "name": "My GPU has 8 GB. Will it work?",
    "acceptedAnswer": {
     "@type": "Answer",
-    "text": "Not well today. 12 GB is the smallest size that gives good results with this model. On a Mac, 16 GB of unified memory works but slowly; 32 GB is recommended."
+    "text": "Yes, in beta. Kokon makes images at about 1 megapixel on 8 GB cards; users report it works on an RTX 3060 Ti and an RTX 5050 Laptop (1 to 2 minutes per edit). 16 GB of system RAM is recommended. On a Mac, 16 GB of unified memory works but slowly; 32 GB is recommended."
    }
   },
   {
@@ -416,7 +416,7 @@
           <h3><svg><use href="#win"/></svg>Windows</h3>
           <div class="rows">
             <div class="row"><span>System</span><span>Windows 10 or 11, 64-bit</span></div>
-            <div class="row"><span>NVIDIA</span><span>12 GB VRAM or more (RTX 3060 12 GB, 4070, 5070…)</span></div>
+            <div class="row"><span>NVIDIA</span><span>12 GB VRAM or more (RTX 3060 12 GB, 4070, 5070…); 8 GB<span class="beta">BETA</span></span></div>
             <div class="row"><span>AMD, Intel Arc</span><span>12 GB or more, through Vulkan<span class="beta">BETA</span></span></div>
             <div class="row"><span>Disk</span><span>About 15 GB for the models</span></div>
           </div>
@@ -456,7 +456,7 @@
         <details><summary>How do I run Qwen-Image 2.1 locally without ComfyUI?</summary><p>Install Kokon and let its setup download the model. Kokon runs Qwen-Image 2.1 through stable-diffusion.cpp, a native engine, so there is no Python, no ComfyUI and no workflow to build. The step-by-step guide is at kokon.app/qwen-image-2-1-local.</p></details>
         <details><summary>Which model does it use?</summary><p>Qwen-Image 2.1 Turbo, the official 8-step version of Qwen&#x27;s image model, which both creates and edits images and leads the open-weights image-editing rankings.</p></details>
         <details><summary>Does it work on AMD or Intel GPUs?</summary><p>Yes, in beta, through the Vulkan engine on Windows with 12 GB of VRAM or more. On NVIDIA it uses CUDA; on Apple Silicon Macs it uses Metal.</p></details>
-        <details><summary>My GPU has 8 GB. Will it work?</summary><p>Not well today. 12 GB is the smallest size that gives good results with this model. On a Mac, 16 GB of unified memory works but slowly; 32 GB is recommended.</p></details>
+        <details><summary>My GPU has 8 GB. Will it work?</summary><p>Yes, in beta. Kokon makes images at about 1 megapixel on 8 GB cards; users report it works on an RTX 3060 Ti and an RTX 5050 Laptop (1 to 2 minutes per edit). 16 GB of system RAM is recommended. On a Mac, 16 GB of unified memory works but slowly; 32 GB is recommended.</p></details>
         <details><summary>Can Claude Code or Cursor generate images with it?</summary><p>Yes. Kokon ships an MCP server: register it once and any MCP client can create, edit, inpaint, expand and upscale images on your GPU, for free and without an API key.</p></details>
         <details><summary>Is it an alternative to Photoshop Generative Fill?</summary><p>For many edits, yes: paint an area and describe what should be there, or remove, replace and add objects. It runs offline and costs nothing, but it is an AI editor, not a full layer-based image editor.</p></details>
         <details><summary>Can I use the images commercially?</summary><p>Not with the default model. The app is open source (AGPL-3.0), but Qwen-Image 2.1 is released under the Qwen Research License: research and evaluation only, no commercial use without a license from the Qwen team. The default upscaler (Superscale-SP) allows commercial use; the optional UltraSharp upscaler is non-commercial (CC BY-NC-SA 4.0).</p></details>

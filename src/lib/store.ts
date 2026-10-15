@@ -73,6 +73,8 @@ export interface State {
   toasts: Toast[];
   galleryVersion: number;
   needsSetup: boolean;
+  /** Setup opens on "Use models I already have" or on the official download (Settings → Models). */
+  setupMode: "own" | "official" | null;
   /** Before/after view for results made from another image; kept while switching results. */
   compare: CompareMode;
   /** Flicker period in ms. */
@@ -281,6 +283,7 @@ let state: State = {
   toasts: [],
   galleryVersion: 0,
   needsSetup: false,
+  setupMode: null,
   compare: "off",
   flickerMs: 500,
   privateMode: false,
@@ -333,6 +336,14 @@ export function toastError(e: unknown) {
   pushToast({ id: newKey(), message: body.message, suggestion: body.suggestion, detail: body.detail, kind: "error" });
 }
 
+/** Opens Setup (also over a finished setup): to fix missing model files, or to choose own files. */
+export function openModelSetup(mode: "own" | "official" | null = null) {
+  setState({ overlay: null, needsSetup: true, setupMode: mode });
+}
+
+/** The engine or a model file is missing (drive not connected, moved, deleted). */
+export const isMissingModel = (e: unknown) => (e instanceof ApiError ? e.body.code : (e as AppErrorBody | null)?.code) === "missing_model";
+
 export function toastInfo(message: string) {
   pushToast({ id: newKey(), message, kind: "info" });
 }
@@ -382,6 +393,12 @@ export function startEvents() {
 }
 
 function onJob(job: JobView) {
+  // A model file went missing between submitting and starting: Setup shows what and how to fix
+  // it (only for a job that just failed, not old ones listed again after reconnecting).
+  const prev = getState().jobs[job.id];
+  if (job.status === "failed" && prev?.status !== "failed" && isMissingModel(job.error) && job.finished_at && Date.now() - Date.parse(job.finished_at) < 60_000) {
+    openModelSetup();
+  }
   setState((s) => {
     const jobs = { ...s.jobs, [job.id]: job };
     if (job.status !== "done") return { jobs };
@@ -753,6 +770,8 @@ export async function submitRequest(req: GenerationRequest) {
     setState((s) => ({ jobs: { ...s.jobs, [job.id]: job }, session: [...s.session, item], selected: item.key, redo: [] }));
     return true;
   } catch (e) {
+    // The prompt and images stay in the composer: once the files are back, Generate again.
+    if (isMissingModel(e)) openModelSetup();
     toastError(e);
     return false;
   }

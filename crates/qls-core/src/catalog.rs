@@ -54,8 +54,12 @@ pub struct Download {
     pub engine_tag: Option<&'static str>,
 }
 
-/// `base` + a catalog path written with `/`, as native components.
+/// `base` + a catalog path written with `/`, as native components. An absolute path (a model
+/// downloaded into a folder of the user's, [`Download::at`]) is used as is.
 pub fn join_rel(base: &Path, rel: &str) -> PathBuf {
+    if Path::new(rel).is_absolute() {
+        return PathBuf::from(rel);
+    }
     rel.split('/').filter(|c| !c.is_empty()).fold(base.to_path_buf(), |p, c| p.join(c))
 }
 
@@ -66,6 +70,16 @@ impl Download {
 
     pub fn path(&self, sdcpp_dir: &Path) -> PathBuf {
         join_rel(sdcpp_dir, self.dest)
+    }
+
+    /// The file name it is saved under.
+    pub fn file_name(&self) -> &'static str {
+        self.dest.rsplit('/').next().unwrap_or(self.dest)
+    }
+
+    /// The same file, saved at `path` (anywhere) instead of the stable-diffusion.cpp folder.
+    pub fn at(self, path: &Path) -> Download {
+        Download { dest: Box::leak(path.to_string_lossy().into_owned().into_boxed_str()), ..self }
     }
 
     /// Every URL to try, in order.
@@ -515,6 +529,34 @@ pub fn downloads_for(p: &Preset, backend: GpuBackend) -> Vec<Download> {
     v
 }
 
+/// The model files a profile can download: official files it points to that are not there
+/// (a piece the user chose to download, or an official file deleted from their folder), each
+/// saved where the profile expects it. Existing files are never replaced, whatever their name.
+pub fn profile_model_downloads(profile: &crate::config::ModelProfile) -> Vec<Download> {
+    let official = [TURBO_Q4_K, VAE, TEXT_ENCODER_Q4_K_M, TEXT_ENCODER_Q8_0, VISION_PROJECTOR];
+    profile
+        .files()
+        .into_iter()
+        .filter(|(_, p, _)| !p.exists())
+        .filter_map(|(_, p, _)| {
+            let name = p.file_name()?.to_string_lossy().to_string();
+            official.iter().find(|d| d.file_name().eq_ignore_ascii_case(&name)).map(|d| d.at(p))
+        })
+        .collect()
+}
+
+/// Everything a user profile needs on `backend`: the engine, the upscalers, then the model
+/// files of [`profile_model_downloads`]. The official profile uses [`downloads_for`].
+pub fn downloads_for_profile(profile: &crate::config::ModelProfile, backend: GpuBackend) -> Vec<Download> {
+    let mut v = engine_downloads(backend);
+    v.push(UPSCALER);
+    if backend != GpuBackend::Metal {
+        v.push(SUPERSCALE);
+    }
+    v.extend(profile_model_downloads(profile));
+    v
+}
+
 /// Folder a zip is extracted into: the folder of its `dest`.
 pub fn zip_dir(d: &Download, sdcpp_dir: &Path) -> PathBuf {
     d.path(sdcpp_dir).parent().map(Path::to_path_buf).unwrap_or_else(|| sdcpp_dir.to_path_buf())
@@ -644,6 +686,28 @@ mod tests {
         ENGINE_VULKAN.write_tag(dir.path()).unwrap();
         assert!(dir.path().join("engine-vulkan").join(ENGINE_MARKER).is_file());
         assert!(ENGINE_VULKAN.is_present(dir.path()));
+    }
+
+    #[test]
+    fn user_profiles_download_only_missing_official_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let own = dir.path().join("own");
+        std::fs::create_dir_all(&own).unwrap();
+        // The user's diffusion model is there; the VAE is the official file (deleted, or chosen
+        // to download); the text encoder is the user's own and missing (a drive not connected).
+        std::fs::write(own.join("turbo_int8.safetensors"), b"x").unwrap();
+        let vae = own.join(VAE.file_name());
+        let p = crate::config::ModelProfile::user(own.join("turbo_int8.safetensors"), vae.clone(), own.join("mine.safetensors"), Some(dir.path().join("dl").join(VISION_PROJECTOR.file_name())));
+        let models = profile_model_downloads(&p);
+        assert_eq!(models.iter().map(|d| d.id).collect::<Vec<_>>(), ["vae", "vision_projector"], "own files are never downloaded");
+        assert_eq!(models[0].path(Path::new("ignored")), vae, "saved where the profile expects it");
+        assert_eq!(models[1].path(dir.path()), dir.path().join("dl").join(VISION_PROJECTOR.file_name()));
+        assert_eq!((models[0].size, models[0].sha256), (VAE.size, VAE.sha256));
+        // An official name with other content (wrong size) is the user's file: never replaced.
+        std::fs::write(&vae, b"mine").unwrap();
+        assert_eq!(profile_model_downloads(&p).len(), 1);
+        let all = downloads_for_profile(&p, GpuBackend::Vulkan);
+        assert_eq!(all.iter().map(|d| d.id).collect::<Vec<_>>(), ["engine_vulkan", "upscaler", "upscaler_superscale", "vision_projector"]);
     }
 
     #[test]

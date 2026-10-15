@@ -3,8 +3,8 @@
 
 import type {
   GpuBackend,
-  AppConfig, AppErrorBody, GenerationRecord, GenerationRequest, HardwareReport, InputRecord, InstallStatus, JobView, Plan, ServiceEvent, SetupReport, StatusResponse,
-  UpscalerItem,
+  AppConfig, AppErrorBody, GenerationRecord, GenerationRequest, HardwareReport, InputRecord, InstallStatus, JobView, ModelFileInfo, ModelScan, ModelSlot, ModelsStatus, Plan,
+  ServiceEvent, SetupReport, StatusResponse, UpscalerItem,
 } from "./types";
 
 export class ApiError extends Error {
@@ -64,7 +64,17 @@ export const api = {
   },
   /** `apply = false`: only download (an engine update), keeping the configured preset and settings.
    * `gpu`: card to run on once installed (index in `hardware().gpus`). */
-  install: (preset: string, backend: GpuBackend, apply = true, gpu?: number) => call<InstallStatus>("/setup/install", { method: "POST", body: json({ preset, backend, apply, gpu }) }),
+  install: (preset: string, backend: GpuBackend, apply = true, gpu?: number, target?: "official" | "user") =>
+    call<InstallStatus>("/setup/install", { method: "POST", body: json({ preset, backend, apply, gpu, target }) }),
+  /** The active model's files and what is missing. */
+  models: () => call<ModelsStatus>("/models"),
+  /** Model files in a folder (sub-folders included), with a suggested file per role. */
+  scanModels: (dir: string) => call<ModelScan>("/models/scan", { method: "POST", body: json({ dir }) }),
+  inspectModel: (path: string) => call<ModelFileInfo>("/models/inspect", { method: "POST", body: json({ path }) }),
+  /** Saves the user's own files (checked) as the active model; `vision_projector` null = not needed. */
+  setUserModels: (b: { diffusion_model: ModelSlot; vae: ModelSlot; text_encoder: ModelSlot; vision_projector: ModelSlot | null; scan_dir: string | null }) =>
+    call<ModelsStatus>("/models/user", { method: "POST", body: json(b) }),
+  useModels: (profile: "official" | "user") => call<ModelsStatus>("/models/use", { method: "POST", body: json({ profile }) }),
   /** Runs the engine on another card (index in `hardware().gpus`); needs the engine installed. */
   setGpu: (gpu: number) => call<{ saved: boolean }>("/setup/gpu", { method: "POST", body: json({ gpu }) }),
   upscalers: () => call<{ selected: string; active: string | null; items: UpscalerItem[] }>("/upscalers"),

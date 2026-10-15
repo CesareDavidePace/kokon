@@ -209,6 +209,16 @@ fn fmt_size(bytes: u64) -> String {
 
 /// First-launch / settings checks. `server_ok` is the live health result if known.
 pub fn setup_checks(cfg: &AppConfig, server_ok: Option<bool>) -> SetupReport {
+    let exe = cfg.server_exe();
+    let probe = exe.is_file();
+    let devices = if probe { list_devices(&exe) } else { vec![] };
+    let version = if probe { backend_version(&exe) } else { None };
+    setup_checks_with(cfg, server_ok, devices, version)
+}
+
+/// [`setup_checks`] with the engine's devices and version already known (the service keeps
+/// them per engine build: each probe starts sd-server, which takes seconds).
+pub fn setup_checks_with(cfg: &AppConfig, server_ok: Option<bool>, devices: Vec<(String, String)>, backend_version: Option<String>) -> SetupReport {
     let mut checks = Vec::new();
     let dir_ok = cfg.sdcpp_dir.is_dir();
     checks.push(Check { id: "sdcpp_dir", label: "stable-diffusion.cpp folder".into(), ok: dir_ok, detail: cfg.sdcpp_dir.display().to_string() });
@@ -227,7 +237,6 @@ pub fn setup_checks(cfg: &AppConfig, server_ok: Option<bool>) -> SetupReport {
             },
         });
     }
-    let devices = if exe_ok { list_devices(&exe) } else { vec![] };
     let wanted = cfg.effective_device();
     let dev = devices.iter().find(|(n, _)| n.to_ascii_lowercase() == wanted);
     let gpu_ok = dev.is_some();
@@ -254,7 +263,7 @@ pub fn setup_checks(cfg: &AppConfig, server_ok: Option<bool>) -> SetupReport {
     if exe_ok {
         checks.push(engine_release_check(cfg));
     }
-    let backend_version = if exe_ok { backend_version(&exe) } else { None };
+    let backend_version = if exe_ok { backend_version } else { None };
     // Informational: the server starts on demand; an engine of an older release still
     // generates (enlargements fall back to Lanczos), and Setup offers the update.
     let ready = checks.iter().filter(|c| c.id != "server" && c.id != "engine_release").all(|c| c.ok);

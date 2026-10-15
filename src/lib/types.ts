@@ -182,7 +182,7 @@ export type ServerState = "stopped" | "starting" | "ready" | "error";
 export interface StatusResponse {
   service: { version: string; pid: number; uptime_s: number };
   server: { state: ServerState; owned: boolean; pid: number | null; port: number; model: string | null; model_loaded: boolean; error: AppErrorBody | null };
-  profile: { id: string; display_name: string };
+  profile: { id: string; display_name: string; source: ProfileSource };
   gpu: { name: string; vendor: string; unified: boolean; memory_total_mib: number; memory_used_mib: number; memory_free_mib: number; driver_version: string } | null;
   active_job: JobView | null;
   queue: { queued: number; jobs: JobView[] };
@@ -197,9 +197,17 @@ export interface SetupReport { ready: boolean; checks: Check[]; devices: [string
 
 export type TextEncoderPlacement = "ram" | "gpu" | "cpu" | "auto" | "disk";
 
+/** Official: files Setup downloaded and Kokon tested. User: files the user already had. */
+export type ProfileSource = "official" | "user";
+
 export interface ModelProfile {
   id: string;
   displayName: string;
+  /** The model the files are ("qwen-image-2.1"). */
+  model: string;
+  source: ProfileSource;
+  /** Folder the user's files were found in. */
+  scanDir: string | null;
   diffusionModel: string;
   vae: string;
   textEncoder: string;
@@ -287,7 +295,58 @@ export interface HardwarePreset {
   disk_bytes: number;
 }
 
+export type ModelRole = "diffusion" | "vae" | "text_encoder" | "vision_projector";
+
+/** What a model file is (read from its header). */
+export interface ModelFileInfo {
+  path: string;
+  size: number;
+  role: ModelRole | null;
+  /** Usable with Qwen-Image 2.1 in this role. */
+  compatible: boolean;
+  /** A text encoder with the vision weights (no projector needed). */
+  has_vision: boolean;
+  /** Main weight type, e.g. "Q4_K", "BF16", "INT8". */
+  weights: string;
+  official: boolean;
+  problem: string | null;
+}
+
+export interface ModelScan {
+  dir: string;
+  files: ModelFileInfo[];
+  picks: Record<"diffusion" | "vae" | "text_encoder" | "vision_projector", string | null>;
+  /** Missing files of the active profile found under the same name (moved). */
+  moved: Partial<Record<ModelRole, string>>;
+}
+
+/** A file the user chose, or an official file to download into a folder. */
+export type ModelSlot = { path: string } | { download: string };
+
+/** The active model's files and what is missing (`GET /models`). */
+export interface ModelsStatus {
+  active: { id: string; display_name: string; source: ProfileSource; model: string };
+  slots: { role: ModelRole | null; label: string; path: string; exists: boolean; info: ModelFileInfo | null }[];
+  missing: { label: string; path: string }[];
+  /** Missing files Setup can download (official ones). */
+  downloadable: string[];
+  engine_installed: boolean;
+  /** Folder the active files were found in (none for the official files). */
+  scan_dir: string | null;
+  /** Folder of the user's own files. */
+  user_scan_dir: string | null;
+  has_user_profile: boolean;
+  /** Every file of the user's own profile is there. */
+  user_installed: boolean;
+  official_installed: boolean;
+  default_download_dir: string;
+}
+
 export interface HardwareReport {
+  /** Source of the active profile. */
+  active_source: ProfileSource;
+  /** What the user's own-files profile still needs (engine, upscalers, official pieces). */
+  user_files: { files: InstallItem[]; download_bytes: number; disk_bytes: number } | null;
   /** The card the presets are sized for (`gpu_index` in `gpus`). */
   gpu: StatusResponse["gpu"];
   gpus: { name: string; memory_total_mib: number }[];

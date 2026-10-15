@@ -18,12 +18,14 @@ use axum::{
 use futures_util::stream::Stream;
 use qls_core::{
     catalog,
-    config::{AppConfig, GpuBackend},
+    config::{AppConfig, GpuBackend, OFFICIAL_PROFILE_ID, USER_PROFILE_ID},
     diagnostics,
     engine::{APP_VERSION, JobView},
     error::{AppError, ErrorCode},
     geometry::{ExpansionUnits, Size, aspect_label},
-    imaging, installer, paths,
+    imaging, installer,
+    modelfile::{self, FileInfo, Role, Slot},
+    paths,
     planner::{GenerationRequest, InpaintAction, Mode, OutpaintSpec, Quality, UpscaleMethod, UpscaleSpec},
     store::{GenerationRecord, ListQuery},
 };
@@ -63,6 +65,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/setup/install/cancel", post(install_cancel))
         .route("/setup/gpu", post(setup_gpu))
         .route("/setup/legacy-upscalers", get(legacy_upscalers).delete(remove_legacy_upscalers))
+        .route("/models", get(models_status))
+        .route("/models/scan", post(models_scan))
+        .route("/models/inspect", post(models_inspect))
+        .route("/models/user", post(models_set_user))
+        .route("/models/use", post(models_use))
         .route("/upscalers", get(list_upscalers))
         .route("/upscalers/{name}/download", post(download_upscaler))
         .route("/config", get(get_config).put(put_config))
@@ -199,7 +206,7 @@ async fn status(State(s): St) -> Json<Value> {
         },
         "upscaler": { "model": cfg.upscaler().map(|u| u.0).unwrap_or_else(|| cfg.upscaler_model.clone()), "available": cfg.upscaler_file().is_some() },
         "engine": { "release": catalog::engine_tag(), "update_needed": engine_update },
-        "profile": { "id": cfg.profile().id, "display_name": cfg.profile().display_name },
+        "profile": { "id": cfg.profile().id, "display_name": cfg.profile().display_name, "source": cfg.profile().source },
         "gpu": gpu,
         "active_job": s.engine.active_job(),
         "queue": { "queued": queued, "jobs": jobs.iter().filter(|j| !j.status.is_terminal()).collect::<Vec<_>>() },
@@ -212,7 +219,8 @@ async fn setup(State(s): St) -> ApiResult<Json<Value>> {
     let _ = tokio::task::spawn_blocking(move || e.place_bundled_upscaler()).await;
     let cfg = s.engine.config();
     let srv_ok = s.engine.server.status().state == qls_core::process::ServerState::Ready;
-    let report = tokio::task::spawn_blocking(move || diagnostics::setup_checks(&cfg, Some(srv_ok))).await.map_err(AppError::internal)?;
+    let e = s.engine.clone();
+    let report = tokio::task::spawn_blocking(move || diagnostics::setup_checks_with(&cfg, Some(srv_ok), e.devices(), e.backend_version())).await.map_err(AppError::internal)?;
     Ok(Json(serde_json::to_value(report).unwrap()))
 }
 
@@ -254,7 +262,16 @@ async fn setup_hardware(State(s): St, Query(q): Query<HardwareQ>) -> ApiResult<J
                 })
             })
             .collect();
+        // The user's own files: what their profile still needs (engine, upscalers, official
+        // pieces they chose to download).
+        let user_files = cfg.user_profile().map(|u| {
+            let files = catalog::downloads_for_profile(u, backend);
+            let (download, disk) = installer::space_needed(&dir, &files);
+            json!({ "files": installer::preview(&dir, &files), "download_bytes": download, "disk_bytes": disk })
+        });
         json!({
+            "active_source": cfg.profile().source,
+            "user_files": user_files,
             "gpu": gpu,
             "gpus": cards.iter().map(|c| json!({ "name": c.name, "memory_total_mib": c.memory_total_mib })).collect::<Vec<_>>(),
             "gpu_index": card,
@@ -291,6 +308,10 @@ struct InstallBody {
     apply: bool,
     /// Card (index in `/setup/hardware` `gpus`) to run on once the engine is installed.
     gpu: Option<usize>,
+    /// Which files: "official" (the preset's, made active when done) or "user" (the engine
+    /// and what the user's own profile still needs). Default: "official" when `apply`, else
+    /// the active profile's (an engine update never downloads models a user doesn't use).
+    target: Option<String>,
 }
 
 fn yes() -> bool {
@@ -298,11 +319,23 @@ fn yes() -> bool {
 }
 
 /// Starts downloading a preset into the configured folder. When every file is installed the
-/// official profile of that preset becomes active.
+/// preset's runtime settings apply, and for the official files their profile becomes active.
 async fn install_start(State(s): St, Json(b): Json<InstallBody>) -> ApiResult<Json<Value>> {
     let preset = catalog::preset(&b.preset).ok_or_else(|| AppError::invalid(format!("Unknown preset {}.", b.preset)))?;
     let cfg = s.engine.config();
     let backend = b.backend.unwrap_or(cfg.gpu_backend);
+    let user = match b.target.as_deref() {
+        Some("user") => true,
+        Some("official") => false,
+        None => !b.apply && !cfg.profile().is_official(),
+        Some(t) => return Err(AppError::invalid(format!("Unknown install target {t}.")).into()),
+    };
+    let downloads = if user {
+        let u = cfg.user_profile().ok_or_else(|| AppError::invalid("Choose your model files first."))?;
+        catalog::downloads_for_profile(u, backend)
+    } else {
+        catalog::downloads_for(preset, backend)
+    };
     // A running server keeps its DLLs open; the engine zip may need to replace them.
     let st = s.engine.server.status();
     if st.owned && st.state != qls_core::process::ServerState::Stopped {
@@ -323,6 +356,9 @@ async fn install_start(State(s): St, Json(b): Json<InstallBody>) -> ApiResult<Js
         }
         let mut c = engine.config();
         c.apply_preset(preset);
+        if !user {
+            c.use_official();
+        }
         c.gpu_backend = backend;
         if backend == GpuBackend::Metal && small_unified {
             c.text_encoder_placement = qls_core::config::TextEncoderPlacement::Disk;
@@ -342,7 +378,8 @@ async fn install_start(State(s): St, Json(b): Json<InstallBody>) -> ApiResult<Js
     // The bundled upscaler first, so it is not downloaded again.
     let e = s.engine.clone();
     let _ = tokio::task::spawn_blocking(move || e.place_bundled_upscaler()).await;
-    s.engine.installer.start(cfg.sdcpp_dir.clone(), preset.id, catalog::downloads_for(preset, backend), on_finish)?;
+    let label = if user { format!("user:{}", preset.id) } else { preset.id.to_string() };
+    s.engine.installer.start(cfg.sdcpp_dir.clone(), &label, downloads, on_finish)?;
     Ok(Json(serde_json::to_value(s.engine.installer.status()).unwrap()))
 }
 
@@ -504,12 +541,19 @@ async fn diagnostics_json(State(s): St) -> ApiResult<Json<Value>> {
         }
         let _ = writeln!(text, "\n[Configuration]");
         let _ = writeln!(text, "sdcpp dir: {}", cfg.sdcpp_dir.display());
-        let _ = writeln!(text, "Preset: {}, profile: {}", cfg.hardware_preset, cfg.profile().display_name);
+        let official = cfg.profile().is_official();
+        let _ = writeln!(text, "Preset: {}, profile: {} ({})", cfg.hardware_preset, cfg.profile().display_name, if official { "official files" } else { "the user's own files, not tested by Kokon" });
         if cfg.vram_override_mib > 0 {
             let _ = writeln!(text, "Simulated VRAM for planning: {} MiB", cfg.vram_override_mib);
         }
         for (label, p, _) in cfg.profile().files() {
-            let _ = writeln!(text, "{label}: {} ({})", p.display(), if p.is_file() { "ok" } else { "MISSING" });
+            let state = match (p.is_file(), official) {
+                (false, _) => "MISSING".to_string(),
+                (true, true) => "ok".to_string(),
+                // Own files: what they are, so a report shows the quantization in use.
+                (true, false) => modelfile::inspect(p).map(|i| format!("ok, {:.2} GB, {}{}", i.size as f64 / 1e9, i.weights, i.problem.map(|e| format!(", {e}")).unwrap_or_default())).unwrap_or_else(|e| e.to_string()),
+            };
+            let _ = writeln!(text, "{label}: {} ({state})", p.display());
         }
         let _ = writeln!(text, "Device: {}, text encoder: {:?}, VRAM reserve: {} GiB, flash attention: {}, sage attention: {}", cfg.device, cfg.text_encoder_placement, cfg.vram_reserve_gib, cfg.flash_attention, cfg.sage_attention);
         let _ = writeln!(text, "VAE tile size: {}, upscale tile size: {}", cfg.vae_tile_size, cfg.upscale_tile_size);
@@ -1025,4 +1069,150 @@ fn percent_decode(s: &str) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+// ---------------------------------------------------------------------------------------
+// The user's own model files (#14)
+// ---------------------------------------------------------------------------------------
+
+/// Saves `cfg`; restarts an idle server of ours when the model changed.
+async fn save_and_restart(s: &AppState, cfg: AppConfig) -> ApiResult<()> {
+    let restart = s.engine.set_config(cfg)?;
+    let st = s.engine.server.status();
+    if restart && st.owned && st.state != qls_core::process::ServerState::Stopped && !s.engine.has_pending_work() {
+        s.engine.server.stop().await;
+        s.engine.emit_server();
+    }
+    Ok(())
+}
+
+fn role_of(label: &str) -> Option<Role> {
+    Role::ALL.into_iter().find(|r| r.label() == label)
+}
+
+/// The active model: its files (what each is, whether it is there), what is missing and what
+/// can be done about it. Setup shows this when a file is missing.
+async fn models_status(State(s): St) -> ApiResult<Json<Value>> {
+    let cfg = s.engine.config();
+    let v = tokio::task::spawn_blocking(move || {
+        let p = cfg.profile();
+        let slots: Vec<Value> = p
+            .files()
+            .into_iter()
+            .map(|(label, path, _)| {
+                let exists = path.is_file();
+                // Own files only: the official ones are known (and their headers are big).
+                let info = (exists && !p.is_official()).then(|| modelfile::inspect(path).ok()).flatten();
+                json!({ "role": role_of(label), "label": label, "path": path, "exists": exists, "info": info })
+            })
+            .collect();
+        let downloadable: Vec<&str> = catalog::profile_model_downloads(p).iter().map(|d| d.label).collect();
+        let official_installed = cfg.profiles.iter().find(|q| q.id == OFFICIAL_PROFILE_ID).is_some_and(|q| q.files().iter().all(|(_, f, _)| f.is_file()));
+        json!({
+            "active": { "id": p.id, "display_name": p.display_name, "source": p.source, "model": p.model },
+            "slots": slots,
+            "missing": cfg.missing_files().iter().map(|(l, f)| json!({ "label": l, "path": f })).collect::<Vec<_>>(),
+            "downloadable": downloadable,
+            "engine_installed": cfg.server_exe().is_file(),
+            // The folder the active files were found in (none for the official ones), and the
+            // one of the user's own files (offered to switch back to them).
+            "scan_dir": p.scan_dir,
+            "user_scan_dir": cfg.user_profile().and_then(|u| u.scan_dir.clone()),
+            "has_user_profile": cfg.user_profile().is_some(),
+            "user_installed": cfg.user_profile().is_some_and(|u| u.files().iter().all(|(_, f, _)| f.is_file())),
+            "official_installed": official_installed,
+            "default_download_dir": catalog::join_rel(&cfg.sdcpp_dir, catalog::MODEL_SUBDIR),
+        })
+    })
+    .await
+    .map_err(AppError::internal)?;
+    Ok(Json(v))
+}
+
+#[derive(Deserialize)]
+struct ScanBody {
+    dir: PathBuf,
+}
+
+/// Every model file in a folder (sub-folders included), the suggested file for each role, and
+/// files with the same name as missing ones of the active profile (moved within the folder).
+async fn models_scan(State(s): St, Json(b): Json<ScanBody>) -> ApiResult<Json<Value>> {
+    if !b.dir.is_dir() {
+        return Err(AppError::invalid(format!("{} is not a folder.", b.dir.display())).into());
+    }
+    let engine = s.engine.clone();
+    let v = tokio::task::spawn_blocking(move || {
+        let cfg = engine.config();
+        let files = modelfile::scan(&b.dir);
+        let vram = cfg.planning_vram_mib(engine.gpu().map(|g| g.planning_mib()));
+        let picks = modelfile::best(&files, vram);
+        let mut moved = serde_json::Map::new();
+        for (label, path) in cfg.missing_files() {
+            let name = path.file_name().map(|n| n.to_ascii_lowercase());
+            let role = role_of(label);
+            if let Some(f) = files.iter().find(|f| f.compatible && f.role == role && f.path.file_name().map(|n| n.to_ascii_lowercase()) == name) {
+                moved.insert(serde_json::to_value(role).unwrap().as_str().unwrap_or_default().to_string(), json!(f.path));
+            }
+        }
+        json!({ "dir": b.dir, "files": files, "picks": picks, "moved": moved })
+    })
+    .await
+    .map_err(AppError::internal)?;
+    Ok(Json(v))
+}
+
+#[derive(Deserialize)]
+struct InspectBody {
+    path: PathBuf,
+}
+
+async fn models_inspect(Json(b): Json<InspectBody>) -> ApiResult<Json<FileInfo>> {
+    let p = b.path.clone();
+    let info = tokio::task::spawn_blocking(move || modelfile::inspect(&p)).await.map_err(AppError::internal)?.map_err(|e| AppError::io("read", &b.path, e))?;
+    Ok(Json(info))
+}
+
+#[derive(Deserialize)]
+struct UserFilesBody {
+    diffusion_model: Slot,
+    vae: Slot,
+    text_encoder: Slot,
+    /// None: not needed (the text encoder carries the vision weights).
+    vision_projector: Option<Slot>,
+    scan_dir: Option<PathBuf>,
+}
+
+/// Saves the user's own files (checked) as the active profile. Official pieces to download are
+/// then fetched by `/setup/install` with target "user", together with the engine.
+async fn models_set_user(State(s): St, Json(b): Json<UserFilesBody>) -> ApiResult<Json<Value>> {
+    let engine = s.engine.clone();
+    let cfg = tokio::task::spawn_blocking(move || -> Result<AppConfig, AppError> {
+        let mut cfg = engine.config();
+        let p = modelfile::user_profile(&b.diffusion_model, &b.vae, &b.text_encoder, b.vision_projector.as_ref(), b.scan_dir, cfg.preset())?;
+        cfg.set_user_files(p);
+        Ok(cfg)
+    })
+    .await
+    .map_err(AppError::internal)??;
+    save_and_restart(&s, cfg).await?;
+    models_status(State(s)).await
+}
+
+#[derive(Deserialize)]
+struct UseBody {
+    /// "official" or "user".
+    profile: String,
+}
+
+/// Switches between the official files and the user's own (both stay saved).
+async fn models_use(State(s): St, Json(b): Json<UseBody>) -> ApiResult<Json<Value>> {
+    let mut cfg = s.engine.config();
+    match b.profile.as_str() {
+        "official" => cfg.use_official(),
+        "user" if cfg.user_profile().is_some() => cfg.active_profile = USER_PROFILE_ID.into(),
+        "user" => return Err(AppError::invalid("Choose your model files first.").into()),
+        other => return Err(AppError::invalid(format!("Unknown profile {other}.")).into()),
+    }
+    save_and_restart(&s, cfg).await?;
+    models_status(State(s)).await
 }

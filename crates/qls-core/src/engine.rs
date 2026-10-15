@@ -186,15 +186,20 @@ impl Engine {
     }
 
     /// Replaces the configuration. Returns true when the backend must restart.
-    pub fn set_config(&self, new: AppConfig) -> AppResult<bool> {
+    pub fn set_config(&self, mut new: AppConfig) -> AppResult<bool> {
+        // The official profile follows the folder and preset; see `AppConfig::normalize`.
+        new.normalize();
         new.validate()?;
         new.save()?;
         let mut g = self.cfg.write().unwrap();
         let restart = crate::process::build_server_args(&g, g.profile()) != crate::process::build_server_args(&new, new.profile())
             || g.sdcpp_dir != new.sdcpp_dir
             || g.gpu_backend != new.gpu_backend;
+        // The engine's version is probed again only when another build is in use.
+        if g.server_exe() != new.server_exe() {
+            *self.backend_version.lock().unwrap() = None;
+        }
         *g = new;
-        *self.backend_version.lock().unwrap() = None;
         drop(g);
         self.place_bundled_upscaler();
         Ok(restart)
@@ -408,6 +413,12 @@ impl Engine {
         if request.images.len() > 16 {
             return Err(AppError::invalid("Too many images."));
         }
+        // A model file on a drive that is not connected, moved or deleted: say so now, so the
+        // app can guide the user (Setup), instead of failing once the job starts. Also with the
+        // model loaded: sd-server opens the files again for every image.
+        if let Some(e) = self.config().missing_files_error() {
+            return Err(e);
+        }
         if let Some(seed) = request.seed
             && seed < 0
         {
@@ -557,10 +568,18 @@ impl Engine {
         self.speed.get(&crate::speed::machine_key(cfg, self.gpu().as_ref())).map(|c| c.factor)
     }
 
+    /// VRAM to plan with: the card's (or the simulated size), less what the user's own model
+    /// files take beyond the official ones the budgets were measured with.
+    fn planning_vram(&self, cfg: &AppConfig) -> Option<u64> {
+        let gpu = self.gpu();
+        let unified = gpu.as_ref().is_some_and(|g| g.unified);
+        cfg.planning_vram_mib(gpu.map(|g| g.planning_mib())).map(|v| v.saturating_sub(cfg.model_vram_extra_mib(unified)))
+    }
+
     /// Dry run: the plan a request would get (used by the UI to show working sizes).
     pub fn preview_plan(&self, req: &GenerationRequest, sizes: Vec<Size>, mask: Option<(Size, Option<crate::geometry::Rect>, f64)>) -> AppResult<Plan> {
         let cfg = self.config();
-        let vram = cfg.planning_vram_mib(self.gpu().map(|g| g.planning_mib()));
+        let vram = self.planning_vram(&cfg);
         let mut inputs = plan_inputs(&cfg, sizes, mask, vram);
         inputs.speed_factor = self.speed_factor(&cfg);
         inputs.unified_memory = self.gpu().is_some_and(|g| g.unified);
@@ -579,6 +598,10 @@ impl Engine {
             j.view.started_at = Some(now_rfc3339());
             j.view.queue_position = 0;
         });
+        // A file that went missing while the job was queued (see `submit`).
+        if let Some(e) = self.config().missing_files_error() {
+            return Err(e);
+        }
 
         // 1. Load inputs (off the async runtime: decoding large photos is CPU work).
         let this = self.clone();
@@ -608,7 +631,7 @@ impl Engine {
         // 2. Plan.
         let cfg = self.config();
         let profile = cfg.profile().clone();
-        let vram = cfg.planning_vram_mib(self.gpu().map(|g| g.planning_mib()));
+        let vram = self.planning_vram(&cfg);
         let mask_info = mask.as_ref().map(|(m, _)| (Size::new(m.width(), m.height()), imaging::mask_bbox(m, 16), imaging::mask_coverage(m, 16)));
         let mut plan_inputs = plan_inputs(&cfg, images.iter().map(|i| i.size()).collect(), mask_info, vram);
         plan_inputs.speed_factor = self.speed_factor(&cfg);
@@ -1236,7 +1259,24 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // SAFETY: test-only env override, single-threaded setup.
         unsafe { std::env::set_var("QLS_CONFIG_DIR", dir.path().join("cfg")) };
-        let e = Engine::new(AppConfig::default(), dir.path()).unwrap();
+        // Engine and model files (empty) in the test's own folder, never the real one.
+        let mut cfg = AppConfig::default();
+        cfg.sdcpp_dir = dir.path().join("sdcpp");
+        cfg.normalize();
+        std::fs::create_dir_all(cfg.engine_dir()).unwrap();
+        std::fs::write(cfg.server_exe(), b"").unwrap();
+        for (_, p, _) in cfg.profile().files() {
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, b"").unwrap();
+        }
+        let te = cfg.profile().text_encoder.clone();
+        let e = Engine::new(cfg, dir.path()).unwrap();
+        // A model file that is gone (drive disconnected, moved): refused before queueing.
+        std::fs::rename(&te, te.with_extension("moved")).unwrap();
+        let err = e.submit(GenerationRequest { prompt: "a fox".into(), ..Default::default() }, None).unwrap_err();
+        assert_eq!(err.code, ErrorCode::MissingModel);
+        assert!(err.message.contains("Text encoder") && err.suggestion.as_deref().unwrap().contains("drive"), "{err:?}");
+        std::fs::rename(te.with_extension("moved"), &te).unwrap();
         assert!(e.submit(GenerationRequest { prompt: " ".into(), ..Default::default() }, None).is_err());
         // Remove needs no prompt; other inpaint actions do.
         let remove = GenerationRequest { images: vec!["gen:x".into()], mask: Some("input:m".into()), inpaint_action: planner::InpaintAction::Remove, ..Default::default() };

@@ -127,6 +127,13 @@ pub fn translate_generation_failure(backend_message: &str, log_tail: &str, size:
         };
         return e.detail(combined);
     }
+    // A model file that went missing after the job was queued (sd-server opens the files for
+    // every image): the app guides the user to find, choose or download it.
+    if lc.contains("cannot inspect model source") || (lc.contains("model") && (lc.contains("cannot find the file") || lc.contains("cannot find the path") || lc.contains("no such file"))) {
+        return AppError::new(ErrorCode::MissingModel, "A model file could not be found.")
+            .suggest("If it is on a drive that is not connected, connect it and try again. Otherwise open Setup to find the file again, choose other files, or download the missing ones.")
+            .detail(combined);
+    }
     if lc.contains("requires qwen3-vl vision weights") || lc.contains("llm_vision") {
         return AppError::new(ErrorCode::InvalidConfig, "Image editing needs the vision projector (mmproj) model.")
             .suggest("Set the vision projector file in Settings.")
@@ -191,6 +198,17 @@ mod tests {
     fn generic_failure() {
         let e = translate_generation_failure("boom", "", (1024, 1024), None);
         assert_eq!(e.code, ErrorCode::GenerationFailed);
+    }
+
+    #[test]
+    fn model_file_gone_while_loaded() {
+        // Seen 2026-10-16: the text encoder moved after the model was loaded.
+        let log = r"[E] cannot inspect model source 'C:\models\qwen3vl.gguf': The system cannot find the file specified. --- model_loader_files.cpp:25";
+        let e = translate_generation_failure("generate_image returned no results", log, (1024, 1024), None);
+        assert_eq!(e.code, ErrorCode::MissingModel);
+        assert!(e.suggestion.unwrap().contains("drive"));
+        let e = translate_generation_failure("", r"[E] cannot inspect model source 'K:\models\x.gguf': The system cannot find the path specified.", (1024, 1024), None);
+        assert_eq!(e.code, ErrorCode::MissingModel, "a drive that is gone");
     }
 
     #[test]

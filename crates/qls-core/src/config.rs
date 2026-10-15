@@ -19,7 +19,9 @@ pub const DEFAULT_SERVER_PORT: u16 = 39150;
 pub const DEFAULT_SERVICE_PORT: u16 = 39151;
 /// Schema 8 (2026-10-12): the upscalers folder setting is gone (always `<sdcpp>/models/upscalers`)
 /// and ESRGAN tile sizes reset to automatic.
-const SCHEMA_VERSION: u32 = 8;
+/// Schema 9 (2026-10-16, #14): profiles record their model and source; model paths edited by
+/// hand on the official profile move to a profile of the user's own files.
+const SCHEMA_VERSION: u32 = 9;
 /// `upscaler_model` value for a plain Lanczos resize (no model).
 pub const LANCZOS: &str = "lanczos";
 /// Upscalers offered in Settings: (file stem, label). Superscale-SP is a setup download, MoSR is
@@ -38,6 +40,11 @@ pub const DEFAULT_UPSCALER: &str = if cfg!(target_os = "macos") { LANCZOS } else
 pub const UPSCALER_EXTENSIONS: &[&str] = &["pth", "safetensors", "gguf", "pt"];
 /// Profile id of the official Qwen-Image 2.1 weights (the default since schema 5).
 pub const OFFICIAL_PROFILE_ID: &str = "qwen-image-2.1";
+/// Profile id of Qwen-Image 2.1 files the user already had (#14): one per model.
+pub const USER_PROFILE_ID: &str = "qwen-image-2.1-user";
+/// The model a profile's files are (`ModelProfile::model`). Today the only one; future model
+/// definitions (strategy, presets, prompts) will be looked up by this id.
+pub const QWEN_IMAGE_21: &str = "qwen-image-2.1";
 
 /// Where the text encoder's weights live. Compute always runs on the selected GPU except
 /// for `Cpu`, which also computes on the CPU (slow for image editing, measured ~35×).
@@ -164,11 +171,26 @@ impl Default for ProfileCapabilities {
     }
 }
 
+/// Where a profile's files come from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileSource {
+    /// Downloaded by Setup from the catalog, tested with Kokon. Paths follow the folder and preset.
+    Official,
+    /// Files the user already had (any folder, any quantization), not tested by Kokon.
+    User,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ModelProfile {
     pub id: String,
     pub display_name: String,
+    /// The model these files are ([`QWEN_IMAGE_21`]).
+    pub model: String,
+    pub source: ProfileSource,
+    /// Folder the user's files were found in (Setup searches it again when one has moved).
+    pub scan_dir: Option<PathBuf>,
     pub diffusion_model: PathBuf,
     pub vae: PathBuf,
     pub text_encoder: PathBuf,
@@ -194,6 +216,9 @@ impl ModelProfile {
         Self {
             id: OFFICIAL_PROFILE_ID.into(),
             display_name: format!("Qwen-Image 2.1 Turbo {quant} (official)"),
+            model: QWEN_IMAGE_21.into(),
+            source: ProfileSource::Official,
+            scan_dir: None,
             diffusion_model: preset.diffusion.path(sdcpp_dir),
             vae: VAE.path(sdcpp_dir),
             text_encoder: preset.text_encoder.path(sdcpp_dir),
@@ -215,6 +240,29 @@ impl ModelProfile {
             v.push(("Vision projector (mmproj)", p.as_path(), true));
         }
         v
+    }
+
+    /// Files the user already had.
+    pub fn user(diffusion_model: PathBuf, vae: PathBuf, text_encoder: PathBuf, vision_projector: Option<PathBuf>) -> Self {
+        Self {
+            id: USER_PROFILE_ID.into(),
+            display_name: "Qwen-Image 2.1 (your files)".into(),
+            source: ProfileSource::User,
+            scan_dir: None,
+            diffusion_model,
+            vae,
+            text_encoder,
+            vision_projector,
+            ..Self::default()
+        }
+    }
+
+    pub fn is_official(&self) -> bool {
+        self.source == ProfileSource::Official
+    }
+
+    fn same_files(&self, o: &ModelProfile) -> bool {
+        (&self.diffusion_model, &self.vae, &self.text_encoder, &self.vision_projector) == (&o.diffusion_model, &o.vae, &o.text_encoder, &o.vision_projector)
     }
 
     pub fn model_name(&self) -> String {
@@ -408,11 +456,6 @@ impl AppConfig {
                         c.profiles.push(ModelProfile::official(&c.sdcpp_dir, c.preset()));
                         c.active_profile = OFFICIAL_PROFILE_ID.into();
                     }
-                    // A file without profiles got the default one, built for the default
-                    // folder and preset: build it for the configured folder and preset.
-                    if c.profiles.len() == 1 && c.profiles[0] == ModelProfile::default() {
-                        c.profiles[0] = ModelProfile::official(&c.sdcpp_dir, c.preset());
-                    }
                     if c.schema_version < 8 {
                         // ESRGAN tile sizes don't carry over to MoSR, which picks its own by
                         // GPU memory. The custom upscalers folder key is ignored.
@@ -441,11 +484,19 @@ impl AppConfig {
                     if std::env::var("QLS_DATA_DIR").is_err() {
                         c.relocate_paths(&legacy_data_dir(), &data_dir());
                     }
-                    if c.schema_version < 5 && !c.profiles.iter().any(|p| p.id == OFFICIAL_PROFILE_ID) {
-                        // The official weights become available as a profile; the active one
-                        // stays until the user downloads them (setup wizard) or switches.
-                        c.profiles.push(ModelProfile::official(&c.sdcpp_dir, c.preset()));
+                    if c.schema_version < 9 {
+                        // Older files have no source: every profile but the official one is
+                        // the user's.
+                        for p in &mut c.profiles {
+                            if p.id != OFFICIAL_PROFILE_ID {
+                                p.source = ProfileSource::User;
+                            }
+                        }
+                        c.keep_hand_edited_paths();
                     }
+                    // The official weights are always available as a profile, built for the
+                    // configured folder and preset; the active one stays as it is.
+                    c.normalize();
                     c.schema_version = c.schema_version.max(SCHEMA_VERSION);
                     c
                 }
@@ -479,6 +530,113 @@ impl AppConfig {
         self.profiles.iter().find(|p| p.id == self.active_profile).unwrap_or(&self.profiles[0])
     }
 
+    pub fn user_profile(&self) -> Option<&ModelProfile> {
+        self.profiles.iter().find(|p| p.id == USER_PROFILE_ID)
+    }
+
+    /// Keeps the invariants every saved config has: the official profile exists and points to
+    /// the official files of the configured folder and preset (its tuning is kept), every
+    /// other profile is the user's, and the active profile exists.
+    pub fn normalize(&mut self) {
+        for p in &mut self.profiles {
+            p.source = if p.id == OFFICIAL_PROFILE_ID { ProfileSource::Official } else { ProfileSource::User };
+            if p.model.trim().is_empty() {
+                p.model = QWEN_IMAGE_21.into();
+            }
+        }
+        let mut official = ModelProfile::official(&self.sdcpp_dir, self.preset());
+        match self.profiles.iter_mut().find(|p| p.id == OFFICIAL_PROFILE_ID) {
+            Some(p) => {
+                official.recommended_settings = p.recommended_settings.clone();
+                official.backend_args = p.backend_args.clone();
+                official.capabilities = p.capabilities.clone();
+                *p = official;
+            }
+            None => self.profiles.insert(0, official),
+        }
+        if !self.profiles.iter().any(|p| p.id == self.active_profile) {
+            self.active_profile = OFFICIAL_PROFILE_ID.into();
+        }
+    }
+
+    /// Before schema 9, own files were set by editing the official profile's paths
+    /// (Settings → Models, or config.json by hand). When those files are all there, they move
+    /// to the user profile (active if the official one was), so presets can't overwrite them.
+    fn keep_hand_edited_paths(&mut self) {
+        let canonical = ModelProfile::official(&self.sdcpp_dir, self.preset());
+        let Some(p) = self.profiles.iter().find(|p| p.id == OFFICIAL_PROFILE_ID) else { return };
+        if p.same_files(&canonical) || !p.files().iter().all(|(_, f, _)| f.is_file()) || self.user_profile().is_some() {
+            return;
+        }
+        let mut user = ModelProfile::user(p.diffusion_model.clone(), p.vae.clone(), p.text_encoder.clone(), p.vision_projector.clone());
+        user.recommended_settings = p.recommended_settings.clone();
+        user.backend_args = p.backend_args.clone();
+        tracing::info!("model paths edited on the official profile moved to the profile of your own files");
+        self.profiles.push(user);
+        if self.active_profile == OFFICIAL_PROFILE_ID {
+            self.active_profile = USER_PROFILE_ID.into();
+        }
+    }
+
+    /// Saves the user's own files as the user profile and makes it active. Tuning of an
+    /// earlier user profile is kept.
+    pub fn set_user_files(&mut self, mut profile: ModelProfile) {
+        profile.id = USER_PROFILE_ID.into();
+        profile.source = ProfileSource::User;
+        if let Some(old) = self.user_profile() {
+            profile.recommended_settings = old.recommended_settings.clone();
+            profile.backend_args = old.backend_args.clone();
+        }
+        self.profiles.retain(|p| p.id != USER_PROFILE_ID);
+        self.profiles.push(profile);
+        self.active_profile = USER_PROFILE_ID.into();
+    }
+
+    /// Makes the official files the active model (they may still need downloading).
+    pub fn use_official(&mut self) {
+        self.normalize();
+        self.active_profile = OFFICIAL_PROFILE_ID.into();
+    }
+
+    /// Model files of the active profile that are not there (label, path).
+    pub fn missing_files(&self) -> Vec<(&'static str, PathBuf)> {
+        self.profile().files().into_iter().filter(|(_, p, required)| *required && !p.is_file()).map(|(l, p, _)| (l, p.to_path_buf())).collect()
+    }
+
+    /// Why the inference server cannot start: the engine or a model file is missing.
+    pub fn missing_files_error(&self) -> Option<AppError> {
+        let exe = self.server_exe();
+        if !exe.is_file() {
+            return Some(
+                AppError::new(ErrorCode::MissingModel, format!("sd-server was not found in {}.", self.engine_dir().display()))
+                    .suggest("Install it from Settings → Models → Set up models…, or set the stable-diffusion.cpp folder in Settings."),
+            );
+        }
+        let missing = self.missing_files();
+        let (label, path) = missing.first()?;
+        let more = match missing.len() {
+            1 => String::new(),
+            n => format!(" (and {} more)", n - 1),
+        };
+        Some(
+            AppError::new(ErrorCode::MissingModel, format!("{label} not found: {}{more}", path.display()))
+                .suggest("If it is on a drive that is not connected, connect it and try again. Otherwise open Setup to find the file again, choose other files, or download the missing ones."),
+        )
+    }
+
+    /// VRAM (MiB) the user's own files take beyond the official ones, which the planner's
+    /// budgets were measured with: a larger diffusion model (and, with unified memory, a larger
+    /// text encoder) leaves less room for the images. 0 for the official files.
+    pub fn model_vram_extra_mib(&self, unified: bool) -> u64 {
+        let p = self.profile();
+        if p.is_official() {
+            return 0;
+        }
+        let size = |f: &Path| std::fs::metadata(f).map(|m| m.len()).unwrap_or(0);
+        let te = size(&p.text_encoder) + p.vision_projector.as_deref().map(size).unwrap_or(0);
+        extra_weights_mib(size(&p.diffusion_model), te, unified)
+    }
+
     pub fn relocate_paths(&mut self, old: &Path, new: &Path) {
         relocate(&mut self.sdcpp_dir, old, new);
         for p in &mut self.profiles {
@@ -495,20 +653,13 @@ impl AppConfig {
         crate::catalog::preset(&self.hardware_preset).unwrap_or_else(|| crate::catalog::preset(crate::catalog::DEFAULT_PRESET).unwrap())
     }
 
-    /// Switches to the official weights of `preset` (replacing an older official profile)
-    /// and its runtime settings. Used when the setup wizard finishes.
+    /// Uses `preset`'s runtime settings, and its files for the official profile (tuning kept).
+    /// The active profile stays: a preset never replaces the user's own files. Setup also calls
+    /// [`Self::use_official`] when it installs the official files.
     pub fn apply_preset(&mut self, preset: &crate::catalog::Preset) {
-        let mut profile = ModelProfile::official(&self.sdcpp_dir, preset);
-        if let Some(old) = self.profiles.iter().find(|p| p.id == OFFICIAL_PROFILE_ID) {
-            // Keep presets the user tuned on the official profile.
-            profile.recommended_settings = old.recommended_settings.clone();
-            profile.backend_args = old.backend_args.clone();
-        }
-        self.profiles.retain(|p| p.id != OFFICIAL_PROFILE_ID);
-        self.profiles.insert(0, profile);
-        self.active_profile = OFFICIAL_PROFILE_ID.into();
         self.hardware_preset = preset.id.into();
         self.text_encoder_placement = preset.text_encoder_placement;
+        self.normalize();
     }
 
     /// VRAM the planner should assume: the override when set, otherwise the detected size.
@@ -600,9 +751,127 @@ impl AppConfig {
     }
 }
 
+/// [`AppConfig::model_vram_extra_mib`] for files of these sizes (bytes; text encoder plus
+/// vision projector together). Smaller files give nothing back: the budgets stay as measured.
+fn extra_weights_mib(diffusion: u64, text_encoder: u64, unified: bool) -> u64 {
+    use crate::catalog::{TEXT_ENCODER_Q4_K_M, TURBO_Q4_K, VISION_PROJECTOR};
+    let mut extra = diffusion.saturating_sub(TURBO_Q4_K.size);
+    if unified {
+        extra += text_encoder.saturating_sub(TEXT_ENCODER_Q4_K_M.size + VISION_PROJECTOR.size);
+    }
+    extra >> 20
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Empty files at every path of `p`.
+    fn touch_files(p: &ModelProfile) {
+        for (_, f, _) in p.files() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            std::fs::write(f, b"").unwrap();
+        }
+    }
+
+    fn own_files(dir: &Path) -> ModelProfile {
+        let m = dir.join("ComfyUI").join("models");
+        ModelProfile::user(m.join("diffusion_models").join("turbo_int8.safetensors"), m.join("vae").join("vae.safetensors"), m.join("text_encoders").join("qwen3vl_fused.safetensors"), None)
+    }
+
+    #[test]
+    fn hand_edited_official_paths_move_to_the_user_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let sd = dir.path().join("sd");
+        let mine = own_files(dir.path());
+        touch_files(&mine);
+        // badraymen's config (#14): the official profile pointed at ComfyUI files by hand.
+        let mut old = AppConfig { sdcpp_dir: sd.clone(), schema_version: 8, ..AppConfig::default() };
+        old.normalize();
+        let p = &mut old.profiles[0];
+        (p.diffusion_model, p.vae, p.text_encoder, p.vision_projector) = (mine.diffusion_model.clone(), mine.vae.clone(), mine.text_encoder.clone(), None);
+        p.backend_args = vec!["--x".into()];
+        let path = dir.path().join("config.json");
+        old.save_to(&path).unwrap();
+        let c = AppConfig::load_from(&path);
+        assert_eq!(c.active_profile, USER_PROFILE_ID, "the edited files stay in use");
+        let user = c.profile();
+        assert_eq!((user.source, user.diffusion_model.clone(), user.vision_projector.clone()), (ProfileSource::User, mine.diffusion_model.clone(), None));
+        assert_eq!(user.backend_args, vec!["--x".to_string()]);
+        assert_eq!(user.model, QWEN_IMAGE_21);
+        let off = c.profiles.iter().find(|p| p.id == OFFICIAL_PROFILE_ID).unwrap();
+        assert!(off.same_files(&ModelProfile::official(&sd, c.preset())) && off.is_official(), "the official profile is official again");
+        c.save_to(&path).unwrap();
+        assert_eq!(AppConfig::load_from(&path), c, "nothing changes on the next load");
+
+        // Edited paths whose files are gone are not kept: back to the official files.
+        std::fs::remove_file(&mine.vae).unwrap();
+        old.save_to(&path).unwrap();
+        let c = AppConfig::load_from(&path);
+        assert_eq!((c.active_profile.as_str(), c.profiles.len()), (OFFICIAL_PROFILE_ID, 1));
+        assert!(c.profile().same_files(&ModelProfile::official(&sd, c.preset())));
+    }
+
+    #[test]
+    fn presets_never_replace_the_users_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut c = AppConfig { sdcpp_dir: dir.path().join("sd"), ..AppConfig::default() };
+        c.normalize();
+        let mut mine = own_files(dir.path());
+        mine.scan_dir = Some(dir.path().join("ComfyUI"));
+        c.set_user_files(mine.clone());
+        c.profiles.iter_mut().find(|p| p.id == USER_PROFILE_ID).unwrap().recommended_settings.area_fast = 768 * 768;
+        c.apply_preset(crate::catalog::preset("32gb").unwrap());
+        assert_eq!(c.active_profile, USER_PROFILE_ID);
+        assert_eq!((c.profile().text_encoder.clone(), c.hardware_preset.as_str()), (mine.text_encoder.clone(), "32gb"));
+        let off = c.profiles.iter().find(|p| p.id == OFFICIAL_PROFILE_ID).unwrap();
+        assert!(off.text_encoder.ends_with("Qwen3VL-8B-Instruct-Q8_0.gguf"), "the official profile follows the preset");
+        // Choosing files again keeps the tuning; switching to the official files keeps them.
+        c.set_user_files(own_files(dir.path()));
+        assert_eq!(c.profile().recommended_settings.area_fast, 768 * 768);
+        assert_eq!(c.profiles.len(), 2);
+        c.use_official();
+        assert_eq!(c.active_profile, OFFICIAL_PROFILE_ID);
+        assert!(c.user_profile().is_some(), "the user's profile is never deleted");
+        // The official files follow the folder.
+        c.sdcpp_dir = dir.path().join("elsewhere");
+        c.normalize();
+        assert!(c.profile().diffusion_model.starts_with(dir.path().join("elsewhere")));
+        // An active profile that is gone falls back to the official one.
+        c.active_profile = "nope".into();
+        c.normalize();
+        assert_eq!(c.active_profile, OFFICIAL_PROFILE_ID);
+    }
+
+    #[test]
+    fn missing_files_are_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut c = AppConfig { sdcpp_dir: dir.path().join("sd"), ..AppConfig::default() };
+        c.normalize();
+        assert!(c.missing_files_error().unwrap().message.contains("sd-server"), "the engine first");
+        std::fs::create_dir_all(c.engine_dir()).unwrap();
+        std::fs::write(c.server_exe(), b"").unwrap();
+        let mine = own_files(dir.path());
+        c.set_user_files(mine.clone());
+        assert_eq!(c.missing_files().len(), 3);
+        let e = c.missing_files_error().unwrap();
+        assert_eq!(e.code, ErrorCode::MissingModel);
+        assert!(e.message.starts_with("Diffusion model not found") && e.message.ends_with("(and 2 more)"), "{}", e.message);
+        touch_files(&mine);
+        assert!(c.missing_files().is_empty() && c.missing_files_error().is_none());
+    }
+
+    #[test]
+    fn larger_own_files_take_planning_memory() {
+        use crate::catalog::{TEXT_ENCODER_Q8_0, TURBO_Q4_K};
+        assert_eq!(extra_weights_mib(TURBO_Q4_K.size, 0, false), 0);
+        assert_eq!(extra_weights_mib(TURBO_Q4_K.size / 2, 0, false), 0, "smaller files give nothing back");
+        assert_eq!(extra_weights_mib(TURBO_Q4_K.size + (6 << 30), 0, false), 6 * 1024);
+        assert_eq!(extra_weights_mib(0, TEXT_ENCODER_Q8_0.size, false), 0, "the text encoder sits in system RAM");
+        assert!(extra_weights_mib(0, TEXT_ENCODER_Q8_0.size, true) > 2000, "unified memory: it shares the GPU's memory");
+        // The official profile is what the budgets were measured with.
+        assert_eq!(AppConfig::default().model_vram_extra_mib(true), 0);
+    }
 
     #[test]
     fn defaults_match_spec() {

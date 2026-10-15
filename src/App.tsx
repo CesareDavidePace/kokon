@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, configure } from "./lib/api";
 import { native } from "./lib/native";
 import {
-  addExampleProjects, addInputs, dismissToast, getState, newProject, redoVersion, refreshStatus, selectItem, setPrivateMode, setState, startEvents, startTour, submitComposer, toastError, toastInfo, undoKey, undoVersion, useStore,
+  addExampleProjects, addInputs, dismissToast, getState, isMissingModel, newProject, openModelSetup, redoVersion, refreshStatus, selectItem, setPrivateMode, setState, startEvents, startTour, submitComposer, toastError, toastInfo, undoKey, undoVersion, useStore,
 } from "./lib/store";
 import { Composer, importPaths } from "./components/Composer";
 import { ExpandEditor } from "./components/ExpandEditor";
@@ -47,7 +47,7 @@ function StatusIndicator() {
       case "error":
         cls = "dot error";
         text = server.error?.message ?? "Inference server error";
-        title = "Open Diagnostics";
+        title = isMissingModel(server.error) ? "Find or download the missing file" : "Open Diagnostics";
         break;
       default:
         text = "Model not loaded";
@@ -59,7 +59,8 @@ function StatusIndicator() {
       className="status"
       title={title}
       onClick={() => {
-        if (server.state === "error") setState({ overlay: "settings" });
+        if (server.state === "error" && isMissingModel(server.error)) openModelSetup();
+        else if (server.state === "error") setState({ overlay: "settings" });
         else if (server.state === "stopped" && connected) api.startBackend().then(refreshStatus, toastError);
       }}
     >

@@ -397,7 +397,7 @@ export function toErrorResult(e: unknown): ToolResult {
   if (e instanceof ServiceError) {
     const suggestion =
       e.code === "missing_model"
-        ? "Open the Kokon app and finish the setup (it downloads the model), or use Settings → Models → Set up models…, then try again."
+        ? "A model file or the engine is missing (for example on a drive that is not connected, or moved). Connect the drive and try again, or open the Kokon app: it shows which file is missing and finds, replaces or downloads it."
         : e.suggestion;
     return errorResult(e.message, e.code, suggestion, e.detail);
   }

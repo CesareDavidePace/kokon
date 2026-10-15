@@ -476,18 +476,8 @@ impl ServerManager {
             e
         };
         let exe = cfg.server_exe();
-        if !exe.is_file() {
-            return Err(fail(
-                AppError::new(ErrorCode::MissingModel, format!("sd-server was not found in {}.", cfg.engine_dir().display()))
-                    .suggest("Install it from Settings → Models → Set up models…, or set the stable-diffusion.cpp folder in Settings."),
-            ));
-        }
-        for (label, path, required) in profile.files() {
-            if required && !path.is_file() {
-                return Err(fail(
-                    AppError::new(ErrorCode::MissingModel, format!("{label} not found: {}", path.display())).suggest("Fix the model path in Settings."),
-                ));
-            }
+        if let Some(e) = cfg.missing_files_error() {
+            return Err(fail(e));
         }
         let log_path = self.log_path();
         if let Some(d) = log_path.parent() {

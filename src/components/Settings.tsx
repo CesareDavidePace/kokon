@@ -3,12 +3,12 @@ import { useEffect, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { api } from "../lib/api";
 import { native } from "../lib/native";
-import { getState, refreshStatus, setState, startTour, toastError, toastInfo } from "../lib/store";
+import { getState, openModelSetup, refreshStatus, setState, startTour, toastError, toastInfo } from "../lib/store";
 import { formatBytes } from "../lib/logic";
 import { setThemeChoice, themeChoice, type ThemeChoice } from "../lib/theme";
 import { UpscalerControls } from "./Upscalers";
 import { WHATS_NEW_VERSION } from "./WhatsNew";
-import type { AppConfig, Check, ModelProfile, SetupReport, TextEncoderPlacement } from "../lib/types";
+import type { AppConfig, Check, ModelProfile, ModelsStatus, SetupReport, TextEncoderPlacement } from "../lib/types";
 import { IconButton, Seg, Switch } from "./ui";
 import { autoCheckEnabled, checkForUpdate } from "../lib/updates";
 
@@ -91,6 +91,8 @@ export function Settings() {
   const [cfg, setCfg] = useState<AppConfig | null>(null);
   const [devices, setDevices] = useState<[string, string][]>([]);
   const [upscaler, setUpscaler] = useState<Check | null>(null);
+  // The saved model setup: what is missing, whether the official files are downloaded.
+  const [ms, setMs] = useState<ModelsStatus | null>(null);
   const [legacy, setLegacy] = useState<{ files: string[]; bytes: number } | null>(null);
   const [dirty, setDirty] = useState(false);
   const [theme, setTheme] = useState(themeChoice);
@@ -104,6 +106,7 @@ export function Settings() {
       },
       () => {},
     );
+    api.models().then(setMs, () => {});
   }, []);
   // Upscaler files not in use, keeping the model chosen here even before Save.
   const draftModel = cfg?.upscalerModel;
@@ -261,7 +264,7 @@ export function Settings() {
               <div className="setting-card">
                 <div className="setting-card-text">
                   <strong>Model setup</strong>
-                  <span className="muted">Downloads the official Qwen-Image 2.1 weights for your graphics card, or switches between the 12, 16, 24 and 32 GB presets.</span>
+                  <span className="muted">Downloads the official Qwen-Image 2.1 weights for your graphics card, uses model files you already have, or switches between the 12, 16, 24 and 32 GB presets.</span>
                 </div>
                 <button
                   className="btn primary"
@@ -288,10 +291,57 @@ export function Settings() {
               ) : (
                 <span className="muted">Model: {profile.displayName}</span>
               )}
-              <PathField label="Diffusion model" value={profile.diffusionModel} onChange={(v) => setProfile({ diffusionModel: v })} />
-              <PathField label="VAE" value={profile.vae} onChange={(v) => setProfile({ vae: v })} />
-              <PathField label="Text encoder (Qwen3-VL)" value={profile.textEncoder} onChange={(v) => setProfile({ textEncoder: v })} />
-              <PathField label="Vision projector (mmproj)" value={profile.visionProjector ?? ""} onChange={(v) => setProfile({ visionProjector: v || null })} />
+              {profile.source === "official" ? (
+                // The official files follow the install folder and preset; own files get their own profile.
+                <div className="setting-card">
+                  <div className="setting-card-text">
+                    <strong>Official model</strong>
+                    <span className="muted">
+                      {ms === null
+                        ? "Qwen-Image 2.1 Turbo, tested with Kokon."
+                        : ms.official_installed
+                          ? "Qwen-Image 2.1 Turbo, tested with Kokon. Downloaded."
+                          : "Qwen-Image 2.1 Turbo, tested with Kokon. Not downloaded into this folder yet: Download… gets it, or use model files you already have."}
+                    </span>
+                    <details className="model-files">
+                      <summary>Files</summary>
+                      {[profile.diffusionModel, profile.vae, profile.textEncoder, profile.visionProjector].filter(Boolean).map((p) => (
+                        <span key={p}>{p}</span>
+                      ))}
+                    </details>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {ms && !ms.official_installed && (
+                      <button
+                        className="btn primary"
+                        onClick={() => {
+                          if (dirty && !window.confirm("Discard the unsaved changes and open the model setup?")) return;
+                          openModelSetup("official");
+                        }}
+                      >
+                        <Download size={15} /> Download…
+                      </button>
+                    )}
+                    <button
+                      className="btn"
+                      onClick={() => {
+                        if (dirty && !window.confirm("Discard the unsaved changes and choose your own model files?")) return;
+                        openModelSetup("own");
+                      }}
+                    >
+                      <FolderOpen size={15} /> Use my own files…
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <span className="muted">Your own files: not tested by Kokon. Set up models… checks them and finds them again if they move.</span>
+                  <PathField label="Diffusion model" value={profile.diffusionModel} onChange={(v) => setProfile({ diffusionModel: v })} />
+                  <PathField label="VAE" value={profile.vae} onChange={(v) => setProfile({ vae: v })} />
+                  <PathField label="Text encoder (Qwen3-VL)" value={profile.textEncoder} onChange={(v) => setProfile({ textEncoder: v })} />
+                  <PathField label="Vision projector (mmproj)" value={profile.visionProjector ?? ""} onChange={(v) => setProfile({ visionProjector: v || null })} />
+                </>
+              )}
               <UpscalerControls
                 model={cfg.upscalerModel}
                 blend={cfg.upscaleBlend}

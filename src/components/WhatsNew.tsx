@@ -73,7 +73,9 @@ export function WhatsNew() {
     api.hardware().then((h) => {
       const preset = h.presets.find((p) => p.id === h.current) ?? h.presets.find((p) => p.id === h.recommended);
       setTarget(preset ? { preset: preset.id, backend: h.backend } : null);
-      setMissing((preset?.files ?? []).filter((f) => f.state !== "present"));
+      // With the user's own model files, the update downloads the engine, not official models.
+      const files = h.active_source === "user" ? h.user_files?.files ?? [] : preset?.files ?? [];
+      setMissing(files.filter((f) => f.state !== "present"));
     }, toastError);
     api.installStatus().then((i) => i.running && setInst(i), () => {});
   }, [needsEngine]);

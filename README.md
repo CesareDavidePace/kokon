@@ -198,7 +198,12 @@ the other sources are
 
 Files go to `%LOCALAPPDATA%\KokonData\sdcpp` (Mac: `~/Library/Application Support/KokonData/sdcpp`) by default. You can point the setup screen at an
 existing stable-diffusion.cpp folder instead; files that are already there are kept.
-Other weights, such as fine-tunes, can be selected in Settings → Models.
+
+Already have Qwen-Image 2.1 files, for example in ComfyUI? Choose **Use models I already have** in
+the setup screen and pick the folder (such as `ComfyUI\models`): Kokon finds the image model, VAE,
+text encoder and vision projector by their contents, as GGUF or safetensors in any quantization,
+and downloads only the engine and any piece you don't have. Files stay where they are. Your own
+files are not tested by Kokon; you can switch to the official files at any time in Settings → Models.
 
 </details>
 

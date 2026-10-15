@@ -31,6 +31,8 @@ Kokon.exe (Tauri 2 + React)      kokon-mcp.exe (MCP, stdio)      scripts
 | `store.rs` | SQLite gallery + content-addressed inputs |
 | `paths.rs` | Path validation (no UNC/device/ADS/traversal, never overwrite) |
 | `catalog.rs`, `installer.rs` | Pinned downloads (URLs, sizes, SHA-256), hardware presets, parallel resumable downloader |
+| `config.rs` | Settings and model profiles: the official files (derived from folder + preset) and the user's own files, each recording its model and source |
+| `modelfile.rs` | What a `.gguf` / `.safetensors` file is, read from its header only (role, Qwen-Image 2.1 or not, quantization, vision weights); folder scan for the user's own files |
 | `crates/qls-service` | Headless service and stable HTTP API; single instance; lifecycle |
 | `src-tauri`, `src/` | Desktop shell (Rust) and UI (React + TypeScript); in-app updates in `src/lib/updates.ts` |
 | `mcp/` | MCP server (TypeScript, official SDK) |
@@ -169,6 +171,28 @@ convolutions on for CUDA (RTX 20xx+) and Vulkan, VAE included.
 Apple Silicon renders Fast at its full ~1 MP like a PC. Rendering 768² and enlarging it was
 removed on 2026-10-10: on the M2 Pro 16 GB it took 5 min 25 s against 4 min 20 s for a direct
 1376×768 render (the upscaler pass on Metal costs more than the smaller render saves).
+
+### Model profiles and the user's own files (#14, config schema 9)
+
+- A profile is a set of model files plus `model` (which model they are: `qwen-image-2.1`, the key
+  future model definitions will use) and `source`. The **official** profile always points at the
+  catalog files in `<install folder>/models/qwen21` for the chosen preset (`AppConfig::normalize`);
+  presets change only runtime settings and never the files of the **user** profile
+  (`qwen-image-2.1-user`). Model paths edited by hand on the official profile (≤ 0.9.2) move to the
+  user profile when their files exist.
+- Setup's "Use models I already have" scans a folder (e.g. `ComfyUI/models`) and classifies files the
+  way stable-diffusion.cpp does: `txt_in.text_norm.weight` = Qwen-Image 2.1 (older Qwen-Image models
+  are refused), VAE latent 64 channels, Qwen3-VL text encoder (QK-norm, hidden size 4096; vision
+  tensors inside it make the mmproj unnecessary), mmproj projecting to 4096. Any quantization sd.cpp
+  loads is accepted; pickle formats (`.ckpt`, `.pt`, `.bin`) and split files are not. Missing pieces
+  can be the official files, downloaded into any folder; existing files are never overwritten.
+- Larger own files lower the planning VRAM by their size above the official Q4_K
+  (`AppConfig::model_vram_extra_mib`), since the budgets were measured with it.
+- Missing files (drive not connected, moved, deleted) are checked when a job is submitted and when it
+  starts (sd-server reopens the files for every image), and sd-server's "cannot inspect model source"
+  maps to `missing_model`: the UI opens Setup, which looks for them again (also in the folder they were
+  found in) or offers to choose, download or switch files. Nothing is switched or downloaded on its own.
+- Manual test in an isolated environment: `scripts/dev/test-own-models.ps1`.
 
 ### Turbo (the only image model since 2026-10-09)
 

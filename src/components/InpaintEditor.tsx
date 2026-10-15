@@ -1,9 +1,11 @@
-import { Brush, Check, Contrast, Eraser, Redo2, Trash2, Undo2, X } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Brush, Check, Contrast, Eraser, Hand, Redo2, Trash2, Undo2, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, urls } from "../lib/api";
+import { shortcut } from "../lib/platform";
 import { focusPrompt, getState, setState, toastError, updateComposer, useStore } from "../lib/store";
 import { IconButton } from "./ui";
-import { shortcut } from "../lib/platform";
+import { isTyping } from "./Viewer";
+import { ZoomPan } from "./ZoomPan";
 
 type Op =
   | { kind: "stroke"; erase: boolean; size: number; points: [number, number][] }
@@ -12,22 +14,25 @@ type Op =
 
 /** Mask canvas resolution cap (the backend resizes the mask to the source anyway). */
 const MAX_MASK_SIDE = 2048;
+/** Soft edge of the exported mask, in mask px. Brush strokes are never exactly binary, so the
+ * service keeps this softness for the blend instead of adding its own. */
+const FEATHER = 8;
 
 export function InpaintEditor() {
   const ref0 = useStore((s) => s.composer.refs[0]);
   const existingMask = useStore((s) => s.composer.mask);
   const [ops, setOps] = useState<Op[]>([]);
   const [redo, setRedo] = useState<Op[]>([]);
-  const [erase, setErase] = useState(false);
+  const [tool, setTool] = useState<"brush" | "eraser" | "pan">("brush");
+  const [spacePressed, setSpacePressed] = useState(false);
+  // Right button held: the other tool is in use, and the toolbar shows it.
+  const [swapped, setSwapped] = useState(false);
   const [brush, setBrush] = useState(48); // in screen px
-  const [feather, setFeather] = useState(8); // in mask px
   const [busy, setBusy] = useState(false);
   const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
-  const stageRef = useRef<HTMLDivElement>(null);
   const current = useRef<Op | null>(null);
-  const [disp, setDisp] = useState({ w: 0, h: 0 });
 
   const srcW = ref0?.width ?? 1;
   const srcH = ref0?.height ?? 1;
@@ -36,19 +41,8 @@ export function InpaintEditor() {
   const mh = Math.max(1, Math.round(srcH * scale));
   const src = ref0 ? (ref0.source.startsWith("gen:") ? urls.gen(ref0.source.slice(4)) : urls.input(ref0.source.slice(6))) : "";
 
-  // Fit the image into the stage.
-  useLayoutEffect(() => {
-    const el = stageRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => {
-      const W = el.clientWidth - 48;
-      const H = el.clientHeight - 24;
-      const s = Math.min(W / srcW, H / srcH);
-      setDisp({ w: Math.floor(srcW * s), h: Math.floor(srcH * s) });
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [srcW, srcH]);
+  const isPanningActive = spacePressed || tool === "pan";
+  const erase = tool === "eraser";
 
   // Load an existing mask for re-editing (as a base raster op).
   const baseMask = useRef<HTMLImageElement | null>(null);
@@ -69,7 +63,8 @@ export function InpaintEditor() {
     (list: Op[]) => {
       const c = canvasRef.current;
       if (!c) return;
-      const ctx = c.getContext("2d")!;
+      const ctx = c.getContext("2d");
+      if (!ctx) return;
       ctx.globalCompositeOperation = "source-over";
       ctx.clearRect(0, 0, mw, mh);
       const lastClear = list.map((o) => o.kind).lastIndexOf("clear");
@@ -78,16 +73,18 @@ export function InpaintEditor() {
         const tmp = document.createElement("canvas");
         tmp.width = mw;
         tmp.height = mh;
-        const t = tmp.getContext("2d")!;
-        t.drawImage(baseMask.current, 0, 0, mw, mh);
-        const d = t.getImageData(0, 0, mw, mh);
-        for (let i = 0; i < d.data.length; i += 4) {
-          const v = d.data[i];
-          d.data[i] = d.data[i + 1] = d.data[i + 2] = 255;
-          d.data[i + 3] = v;
+        const t = tmp.getContext("2d");
+        if (t) {
+          t.drawImage(baseMask.current, 0, 0, mw, mh);
+          const d = t.getImageData(0, 0, mw, mh);
+          for (let i = 0; i < d.data.length; i += 4) {
+            const v = d.data[i];
+            d.data[i] = d.data[i + 1] = d.data[i + 2] = 255;
+            d.data[i + 3] = v;
+          }
+          t.putImageData(d, 0, 0);
+          ctx.drawImage(tmp, 0, 0);
         }
-        t.putImageData(d, 0, 0);
-        ctx.drawImage(tmp, 0, 0);
       }
       for (const op of list.slice(lastClear + 1)) render2(ctx, op, mw, mh);
     },
@@ -97,30 +94,75 @@ export function InpaintEditor() {
   useEffect(() => redraw(ops), [ops, redraw]);
 
   const toMask = (e: React.PointerEvent): [number, number] => {
-    const r = canvasRef.current!.getBoundingClientRect();
-    return [((e.clientX - r.left) / r.width) * mw, ((e.clientY - r.top) / r.height) * mh];
+    const c = canvasRef.current;
+    if (!c) return [0, 0];
+    const r = c.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return [0, 0];
+    const x = Math.min(mw, Math.max(0, ((e.clientX - r.left) / r.width) * mw));
+    const y = Math.min(mh, Math.max(0, ((e.clientY - r.top) / r.height) * mh));
+    return [x, y];
   };
-  const maskBrush = () => (brush * mw) / Math.max(1, disp.w);
+
+  const maskBrush = () => {
+    const r = canvasRef.current?.getBoundingClientRect();
+    if (!r || r.width <= 0) return (brush * mw) / Math.max(1, srcW);
+    return (brush / r.width) * mw;
+  };
 
   const onDown = (e: React.PointerEvent) => {
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    current.current = { kind: "stroke", erase: erase || e.button === 2, size: maskBrush(), points: [toMask(e)] };
-    const ctx = canvasRef.current!.getContext("2d")!;
-    render2(ctx, current.current, mw, mh);
+    // If middle click or pan mode active, let event bubble to ZoomPan for panning
+    if (e.button === 1 || isPanningActive) return;
+    if (e.button !== 0 && e.button !== 2) return;
+
+    e.stopPropagation();
+    try {
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {}
+
+    // Right button: the other tool (erases with the brush, paints with the eraser), as in mask editors.
+    const isErasing = e.button === 2 ? !erase : erase;
+    setSwapped(e.button === 2);
+    current.current = { kind: "stroke", erase: isErasing, size: maskBrush(), points: [toMask(e)] };
+    const ctx = canvasRef.current?.getContext("2d");
+    if (ctx) render2(ctx, current.current, mw, mh);
   };
-  const onMove = (e: React.PointerEvent) => {
-    const r = canvasRef.current!.getBoundingClientRect();
-    setCursor({ x: e.clientX - r.left, y: e.clientY - r.top });
+
+  const onMove = (e: React.PointerEvent, transformScale: number) => {
+    if (isPanningActive) {
+      setCursor(null);
+      return;
+    }
+
+    const c = canvasRef.current;
+    if (c) {
+      const r = c.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) {
+        setCursor({
+          x: (e.clientX - r.left) / transformScale,
+          y: (e.clientY - r.top) / transformScale,
+        });
+      }
+    }
+
     const op = current.current;
     if (!op || op.kind !== "stroke") return;
+    e.stopPropagation();
     op.points.push(toMask(e));
-    const ctx = canvasRef.current!.getContext("2d")!;
-    render2(ctx, { ...op, points: op.points.slice(-2) }, mw, mh);
+    const ctx = canvasRef.current?.getContext("2d");
+    if (ctx) render2(ctx, { ...op, points: op.points.slice(-2) }, mw, mh);
   };
-  const onUp = () => {
+
+  const onUp = (e: React.PointerEvent) => {
     if (current.current) {
+      e.stopPropagation();
+      try {
+        if ((e.target as HTMLElement).hasPointerCapture(e.pointerId)) {
+          (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+        }
+      } catch {}
       const op = current.current;
       current.current = null;
+      setSwapped(false);
       setOps((o) => [...o, op]);
       setRedo([]);
     }
@@ -133,6 +175,7 @@ export function InpaintEditor() {
       return o.slice(0, -1);
     });
   };
+
   const redoOp = () => {
     setRedo((r) => {
       if (!r.length) return r;
@@ -140,31 +183,65 @@ export function InpaintEditor() {
       return r.slice(0, -1);
     });
   };
+
   const push = (op: Op) => {
     setOps((o) => [...o, op]);
     setRedo([]);
   };
 
+  // Keyboard navigation, shortcuts, and spacebar-hold pan detection
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (isTyping(e.target)) return;
+
+      if (e.code === "Space" && !e.repeat) {
+        e.preventDefault();
+        setSpacePressed(true);
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
         e.shiftKey ? redoOp() : undo();
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
         e.preventDefault();
         redoOp();
-      } else if (e.key === "Escape") setState({ overlay: null });
-      else if (e.key === "[") setBrush((b) => Math.max(4, b - 8));
-      else if (e.key === "]") setBrush((b) => Math.min(400, b + 8));
-      else if (e.key.toLowerCase() === "e") setErase((v) => !v);
+      } else if (e.key === "Escape") {
+        setState({ overlay: null });
+      } else if (e.key === "[") {
+        setBrush((b) => Math.max(4, b - 8));
+      } else if (e.key === "]") {
+        setBrush((b) => Math.min(400, b + 8));
+      } else if (e.key.toLowerCase() === "b") {
+        setTool("brush");
+      } else if (e.key.toLowerCase() === "e") {
+        setTool((t) => (t === "eraser" ? "brush" : "eraser"));
+      } else if (e.key.toLowerCase() === "h") {
+        setTool((t) => (t === "pan" ? "brush" : "pan"));
+      }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  });
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === "Space") {
+        setSpacePressed(false);
+      }
+    };
+
+    const onBlur = () => {
+      setSpacePressed(false);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
 
   const done = async () => {
     const c = canvasRef.current;
     if (!c || !ref0) return;
+
     // Export: white = edit on black, feathered.
     const out = document.createElement("canvas");
     out.width = mw;
@@ -172,9 +249,10 @@ export function InpaintEditor() {
     const ctx = out.getContext("2d")!;
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, mw, mh);
-    if (feather > 0) ctx.filter = `blur(${feather / 2}px)`;
+    ctx.filter = `blur(${FEATHER / 2}px)`;
     ctx.drawImage(c, 0, 0);
     ctx.filter = "none";
+
     // Detect empty mask.
     const data = c.getContext("2d")!.getImageData(0, 0, mw, mh).data;
     let any = false;
@@ -184,14 +262,18 @@ export function InpaintEditor() {
         break;
       }
     }
+
     if (!any) {
       updateComposer({ mask: null });
       setState({ overlay: null });
       return;
     }
+
     setBusy(true);
     try {
-      const blob: Blob = await new Promise((res, rej) => out.toBlob((b) => (b ? res(b) : rej(new Error("export failed"))), "image/png"));
+      const blob: Blob = await new Promise((res, rej) =>
+        out.toBlob((b) => (b ? res(b) : rej(new Error("export failed"))), "image/png"),
+      );
       const rec = await api.upload(blob, "mask.png");
       const refKey = getState().composer.refs[0]?.key;
       if (refKey) updateComposer({ mask: { inputId: rec.id, refKey }, outpaint: null, mode: "auto" });
@@ -207,6 +289,9 @@ export function InpaintEditor() {
   useEffect(() => {
     if (!ref0) setState({ overlay: null });
   }, [ref0]);
+
+  const contentSize = useMemo(() => ({ width: srcW, height: srcH }), [srcW, srcH]);
+
   if (!ref0) return null;
 
   return (
@@ -218,41 +303,98 @@ export function InpaintEditor() {
           <X size={18} />
         </IconButton>
       </div>
-      <div className="editor-stage" ref={stageRef}>
-        <div className="mask-wrap" style={{ width: disp.w, height: disp.h }} onContextMenu={(e) => e.preventDefault()}>
-          <img ref={imgRef} src={src} alt="" draggable={false} style={{ width: disp.w, height: disp.h }} />
-          <canvas
-            ref={canvasRef}
-            width={mw}
-            height={mh}
-            onPointerDown={onDown}
-            onPointerMove={onMove}
-            onPointerUp={onUp}
-            onPointerCancel={onUp}
-            onPointerLeave={() => setCursor(null)}
-          />
-          {cursor && <div className="brush-cursor" style={{ left: cursor.x, top: cursor.y, width: brush, height: brush }} />}
-        </div>
+
+      <div className="editor-stage">
+        <ZoomPan
+          contentSize={contentSize}
+          resetKey={src}
+          enableToggleZoom={false}
+          enablePan={isPanningActive}
+          className="inpaint-zoom-viewport"
+          minimapSrc={src}
+        >
+          {({ transform, isPanning }) => (
+            <div
+              className="mask-wrap"
+              style={{
+                width: srcW,
+                height: srcH,
+                cursor: isPanningActive ? (isPanning ? "grabbing" : "grab") : "none",
+              }}
+              onContextMenu={(e) => e.preventDefault()}
+            >
+              <img
+                ref={imgRef}
+                src={src}
+                alt=""
+                draggable={false}
+                style={{ width: "100%", height: "100%", display: "block" }}
+              />
+              <canvas
+                ref={canvasRef}
+                width={mw}
+                height={mh}
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  width: "100%",
+                  height: "100%",
+                  cursor: isPanningActive ? (isPanning ? "grabbing" : "grab") : "none",
+                }}
+                onPointerDown={onDown}
+                onPointerMove={(e) => onMove(e, transform.scale)}
+                onPointerUp={onUp}
+                onPointerCancel={onUp}
+                onPointerLeave={() => setCursor(null)}
+              />
+              {cursor && !isPanningActive && (
+                <div
+                  className="brush-cursor"
+                  style={{
+                    left: cursor.x,
+                    top: cursor.y,
+                    width: brush / transform.scale,
+                    height: brush / transform.scale,
+                  }}
+                />
+              )}
+            </div>
+          )}
+        </ZoomPan>
       </div>
+
       <div className="editor-tools">
         <div className="group">
-          <IconButton title="Brush" active={!erase} onClick={() => setErase(false)}>
+          <IconButton
+            title="Brush (B) · right-click erases"
+            active={(swapped ? tool === "eraser" : tool === "brush") && !spacePressed}
+            onClick={() => setTool("brush")}
+          >
             <Brush size={17} />
           </IconButton>
-          <IconButton title="Eraser (E)" active={erase} onClick={() => setErase(true)}>
+          <IconButton
+            title="Eraser (E) · right-click paints"
+            active={(swapped ? tool === "brush" : tool === "eraser") && !spacePressed}
+            onClick={() => setTool("eraser")}
+          >
             <Eraser size={17} />
           </IconButton>
+          <IconButton
+            title="Move (H) · or drag with the middle button, or hold Space"
+            active={tool === "pan" || spacePressed}
+            onClick={() => setTool((t) => (t === "pan" ? "brush" : "pan"))}
+          >
+            <Hand size={17} />
+          </IconButton>
         </div>
+
         <div className="group">
           <label className="slider" title="Brush size ( [ and ] )">
             Size
             <input type="range" min={4} max={400} value={brush} onChange={(e) => setBrush(Number(e.target.value))} />
           </label>
-          <label className="slider" title="Soft edge">
-            Feather
-            <input type="range" min={0} max={64} value={feather} onChange={(e) => setFeather(Number(e.target.value))} />
-          </label>
         </div>
+
         <div className="group">
           <IconButton title={`Undo (${shortcut("Z")})`} onClick={undo} disabled={!ops.length}>
             <Undo2 size={17} />
@@ -267,6 +409,7 @@ export function InpaintEditor() {
             <Trash2 size={17} />
           </IconButton>
         </div>
+
         <button className="btn primary" onClick={done} disabled={busy}>
           <Check size={15} /> Done
         </button>

@@ -668,7 +668,7 @@ function StageFullscreen({ item, session, showOriginal, onClose }: { item: Sessi
   const base = g ? compareBase(g) : null;
   const from = g?.pipeline?.original_path ? g.pipeline.enlarged_from : null;
   let content: React.ReactNode;
-  let hint = "Click to zoom to 100 %";
+  let hint = "Scroll or click to zoom · Drag to pan";
   if (g && from && showOriginal) content = <ZoomImage key={`original-${g.id}`} src={urls.genOriginal(g.id)} alt={`${g.prompt} (before upscaling)`} />;
   else if (g && base) {
     content = <CompareFullscreen key={g.id} g={g} base={base} />;

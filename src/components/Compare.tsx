@@ -1,12 +1,13 @@
 // Before / after views for results made from another image (edit, inpaint, expand, upscale).
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { urls } from "../lib/api";
 import { diffPixels, type CompareBase, type CompareMode } from "../lib/logic";
 import { setState, useStore } from "../lib/store";
 import type { GenerationRecord } from "../lib/types";
 import { Seg, useFit } from "./ui";
 import { FullscreenButton } from "./Viewer";
+import { ZoomPan } from "./ZoomPan";
 
 const MODES: { value: CompareMode; label: string }[] = [
   { value: "off", label: "Result" },
@@ -33,6 +34,8 @@ export function CompareFrame({ g, base, fullscreen = false, onFullscreen }: { g:
   const [holding, setHolding] = useState(false);
   const [phase, setPhase] = useState<"before" | "after">("after");
   const dragging = useRef(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const contentSize = useMemo(() => ({ width: g.width, height: g.height }), [g.width, g.height]);
   const after = urls.gen(g.id);
   const before = urls.input(base.inputId);
 
@@ -60,9 +63,9 @@ export function CompareFrame({ g, base, fullscreen = false, onFullscreen }: { g:
     };
   }, []);
 
-  const setFromPointer = (e: React.PointerEvent<HTMLDivElement>) => {
-    const r = e.currentTarget.getBoundingClientRect();
-    setSplit(Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)));
+  const setFromPointer = (clientX: number) => {
+    const r = boxRef.current?.getBoundingClientRect();
+    if (r && r.width > 0) setSplit(Math.min(1, Math.max(0, (clientX - r.left) / r.width)));
   };
 
   const showBefore = holding || (mode === "flicker" && phase === "before");
@@ -70,20 +73,31 @@ export function CompareFrame({ g, base, fullscreen = false, onFullscreen }: { g:
   const pct = (v: number) => `${v * 100}%`;
   const { x, y, w, h } = base.rect;
 
-  return (
-    <div className={fullscreen ? "viewer-frame" : "stage-frame"} ref={ref}>
+  // In full screen the box keeps the image's own size inside ZoomPan, which scales it; `k`
+  // undoes that scale for the labels and the slider handle so they stay at screen size.
+  // While zoomed in a drag pans the image; the handle still moves the split.
+  const frame = (scale: number, zoomed: boolean) => {
+    const k = 1 / scale;
+    const tag = (side: "left" | "right") => ({ transform: `scale(${k})`, transformOrigin: `top ${side}` });
+    return (
       <div
-        className={`compare-box ${mode === "slider" ? "slider" : ""}`}
-        style={{ width: box.w, height: box.h }}
+        ref={boxRef}
+        className={`compare-box ${mode === "slider" ? "slider" : ""} ${zoomed ? "zoomed" : ""}`}
+        style={fullscreen ? { width: g.width, height: g.height } : { width: box.w, height: box.h }}
         onPointerDown={(e) => {
-          if (e.button !== 0) return;
+          if (e.button !== 0 || zoomed) return;
+          e.stopPropagation();
           e.currentTarget.setPointerCapture(e.pointerId);
           if (mode === "slider") {
             dragging.current = true;
-            setFromPointer(e);
+            setFromPointer(e.clientX);
           } else if (mode === "off") setHolding(true);
         }}
-        onPointerMove={(e) => dragging.current && setFromPointer(e)}
+        onPointerMove={(e) => {
+          if (!dragging.current) return;
+          e.stopPropagation();
+          setFromPointer(e.clientX);
+        }}
         onPointerUp={() => {
           dragging.current = false;
           if (mode === "off") setHolding(false);
@@ -93,10 +107,10 @@ export function CompareFrame({ g, base, fullscreen = false, onFullscreen }: { g:
           setHolding(false);
         }}
         onDoubleClick={() => setState({ overlay: null })}
-        title={mode === "off" ? "Press and hold (or hold B) to see the original" : undefined}
+        title={mode === "off" && !zoomed ? "Press and hold (or hold B) to see the original" : undefined}
       >
         <img className="compare-img" src={after} alt={g.prompt} draggable={false} />
-        {mode === "diff" && !holding && <DiffCanvas after={after} before={before} rect={base.rect} />}
+        {mode === "diff" && !holding && <DiffCanvas after={after} before={before} rect={base.rect} tagStyle={tag("left")} />}
         {/* The original stays mounted (hidden) so switching is instant. */}
         <div
           className="compare-before"
@@ -109,14 +123,23 @@ export function CompareFrame({ g, base, fullscreen = false, onFullscreen }: { g:
         </div>
         {mode === "slider" && !holding && (
           <>
-            <div className="compare-handle" style={{ left: pct(split) }}>
-              <span />
+            <div
+              className="compare-handle"
+              style={{ left: pct(split), width: 2 * k, marginLeft: -k }}
+              onPointerDown={(e) => {
+                if (e.button !== 0) return;
+                e.stopPropagation();
+                boxRef.current?.setPointerCapture(e.pointerId);
+                dragging.current = true;
+              }}
+            >
+              <span style={{ transform: `scale(${k})` }} />
             </div>
-            <span className="compare-tag left">Before</span>
-            <span className="compare-tag right">After</span>
+            <span className="compare-tag left" style={tag("left")}>Before</span>
+            <span className="compare-tag right" style={tag("right")}>After</span>
           </>
         )}
-        {label && <span className="compare-tag left">{label}</span>}
+        {label && <span className="compare-tag left" style={tag("left")}>{label}</span>}
         {!fullscreen && (
           <div className="compare-overlay" onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
             <CompareBar />
@@ -126,6 +149,20 @@ export function CompareFrame({ g, base, fullscreen = false, onFullscreen }: { g:
           <FullscreenButton hint="Hold B for the original" onOpen={onFullscreen} content={<CompareFullscreen g={g} base={base} />} />
         )}
       </div>
+    );
+  };
+
+  if (fullscreen)
+    return (
+      <div className="viewer-frame">
+        <ZoomPan contentSize={contentSize} resetKey={g.id} enableToggleZoom={false} minimapSrc={after}>
+          {({ transform, isZoomed }) => frame(transform.scale, isZoomed)}
+        </ZoomPan>
+      </div>
+    );
+  return (
+    <div className="stage-frame" ref={ref}>
+      {frame(1, false)}
     </div>
   );
 }
@@ -143,7 +180,7 @@ export function CompareFullscreen({ g, base }: { g: GenerationRecord; base: Comp
 }
 
 /** Highlights what changed: dimmed result, changed pixels in red. */
-function DiffCanvas({ after, before, rect }: { after: string; before: string; rect: CompareBase["rect"] }) {
+function DiffCanvas({ after, before, rect, tagStyle }: { after: string; before: string; rect: CompareBase["rect"]; tagStyle?: CSSProperties }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const [share, setShare] = useState<number | null>(null);
   const [error, setError] = useState(false);
@@ -192,7 +229,7 @@ function DiffCanvas({ after, before, rect }: { after: string; before: string; re
   return (
     <>
       <canvas ref={ref} className="compare-diff" />
-      <span className="compare-tag left">
+      <span className="compare-tag left" style={tagStyle}>
         {error ? "Could not compare the images" : share === null ? "Comparing…" : share < 0.001 ? "No visible change" : `≈${share < 0.01 ? "<1" : Math.round(share * 100)}% of the image changed`}
       </span>
     </>

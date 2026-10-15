@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import { native } from "../lib/native";
 import { getState, refreshStatus, setState, startTour, toastError, toastInfo } from "../lib/store";
 import { formatBytes } from "../lib/logic";
+import { setThemeChoice, themeChoice, type ThemeChoice } from "../lib/theme";
 import { UpscalerControls } from "./Upscalers";
 import { WHATS_NEW_VERSION } from "./WhatsNew";
 import type { AppConfig, Check, ModelProfile, SetupReport, TextEncoderPlacement } from "../lib/types";
@@ -92,6 +93,7 @@ export function Settings() {
   const [upscaler, setUpscaler] = useState<Check | null>(null);
   const [legacy, setLegacy] = useState<{ files: string[]; bytes: number } | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [theme, setTheme] = useState(themeChoice);
 
   useEffect(() => {
     api.config().then(setCfg, toastError);
@@ -197,6 +199,19 @@ export function Settings() {
           {tab === "general" && (
             <>
               <PathField label="Save images to" value={cfg.outputDir} folder onChange={(v) => set({ outputDir: v })} />
+              <div className="field">
+                <span>Appearance</span>
+                <Seg<ThemeChoice>
+                  value={theme}
+                  options={[
+                    { value: "system", label: "System" },
+                    { value: "light", label: "Light" },
+                    { value: "dark", label: "Dark" },
+                  ]}
+                  onChange={(v) => (setThemeChoice(v), setTheme(v))}
+                />
+                <span className="muted">System follows your computer's light or dark mode. Applies at once.</span>
+              </div>
               <div className="field-row">
                 <span>Keep inference server running after closing the app</span>
                 <Switch on={cfg.keepServerRunning} onChange={(v) => set({ keepServerRunning: v })} />

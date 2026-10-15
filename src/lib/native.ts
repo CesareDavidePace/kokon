@@ -35,6 +35,7 @@ export const native = {
   confirm: (message: string, title: string) => ask(message, { title, kind: "warning" }),
   isFullscreen: () => getCurrentWindow().isFullscreen(),
   setFullscreen: (on: boolean) => getCurrentWindow().setFullscreen(on),
+  setTheme: async (theme: "light" | "dark" | null) => getCurrentWindow().setTheme(theme),
   saveAs: (defaultName: string) =>
     save({
       defaultPath: defaultName,

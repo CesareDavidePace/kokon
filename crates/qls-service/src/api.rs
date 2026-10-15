@@ -61,6 +61,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/setup/hardware", get(setup_hardware))
         .route("/setup/install", get(install_status).post(install_start))
         .route("/setup/install/cancel", post(install_cancel))
+        .route("/setup/gpu", post(setup_gpu))
         .route("/setup/legacy-upscalers", get(legacy_upscalers).delete(remove_legacy_upscalers))
         .route("/upscalers", get(list_upscalers))
         .route("/upscalers/{name}/download", post(download_upscaler))
@@ -221,13 +222,18 @@ async fn setup(State(s): St) -> ApiResult<Json<Value>> {
 struct HardwareQ {
     /// Engine to list the downloads for; default: the configured one.
     backend: Option<GpuBackend>,
+    /// Card (index in `gpus`) to size the presets for; default: the one in use.
+    gpu: Option<usize>,
 }
 
 async fn setup_hardware(State(s): St, Query(q): Query<HardwareQ>) -> ApiResult<Json<Value>> {
     let engine = s.engine.clone();
     let v = tokio::task::spawn_blocking(move || {
         let cfg = engine.config();
-        let gpu = engine.gpu();
+        let cards = engine.gpus();
+        let in_use = engine.gpu_index();
+        let card = q.gpu.filter(|&i| i < cards.len()).unwrap_or(in_use);
+        let gpu = cards.get(card).cloned();
         let detected = gpu.as_ref().map(|g| g.planning_mib());
         let vram = cfg.planning_vram_mib(detected);
         let mut sys = sysinfo::System::new();
@@ -250,6 +256,9 @@ async fn setup_hardware(State(s): St, Query(q): Query<HardwareQ>) -> ApiResult<J
             .collect();
         json!({
             "gpu": gpu,
+            "gpus": cards.iter().map(|c| json!({ "name": c.name, "memory_total_mib": c.memory_total_mib })).collect::<Vec<_>>(),
+            "gpu_index": card,
+            "gpu_in_use": in_use,
             "nvidia": vendor.as_deref() == Some("nvidia"),
             "vendor": vendor,
             "backend": backend,
@@ -280,6 +289,8 @@ struct InstallBody {
     /// Make the preset active when done (false: an engine update keeps the current settings).
     #[serde(default = "yes")]
     apply: bool,
+    /// Card (index in `/setup/hardware` `gpus`) to run on once the engine is installed.
+    gpu: Option<usize>,
 }
 
 fn yes() -> bool {
@@ -305,6 +316,7 @@ async fn install_start(State(s): St, Json(b): Json<InstallBody>) -> ApiResult<Js
     // Below ~8 GiB of planning memory (a 16 GB Mac) only streaming weights from disk fits.
     let small_unified = s.engine.gpu().is_some_and(|g| g.unified && g.planning_mib() < 8 * 1024);
     let apply = b.apply;
+    let card = b.gpu;
     let on_finish = Box::new(move |complete: bool| {
         if !complete || !apply {
             return;
@@ -317,6 +329,14 @@ async fn install_start(State(s): St, Json(b): Json<InstallBody>) -> ApiResult<Js
         }
         if let Err(e) = engine.set_config(c) {
             tracing::error!("could not save the installed preset: {}", e.message);
+        }
+        // The engine can name its devices only now that it is installed.
+        if let Some(i) = card {
+            match engine.use_card(i) {
+                Ok(Some(_)) => {}
+                Ok(None) => tracing::warn!("the engine does not list card {i}; keeping device {}", engine.config().device),
+                Err(e) => tracing::error!("could not save the chosen GPU: {}", e.message),
+            }
         }
     });
     // The bundled upscaler first, so it is not downloaded again.
@@ -369,6 +389,27 @@ async fn remove_legacy_upscalers(State(s): St, Query(q): Query<KeepQ>) -> ApiRes
     let keep = q.keep.unwrap_or_default();
     let freed = tokio::task::spawn_blocking(move || installer::remove_legacy_upscalers(&cfg.sdcpp_dir, &[cfg.upscaler_model.trim(), keep.as_str()])).await.map_err(AppError::internal)??;
     Ok(Json(json!({ "freed_bytes": freed })))
+}
+
+#[derive(Deserialize)]
+struct GpuBody {
+    /// Index in `/setup/hardware` `gpus`.
+    gpu: usize,
+}
+
+/// Runs the engine on another card (setup's GPU picker).
+async fn setup_gpu(State(s): St, Json(b): Json<GpuBody>) -> ApiResult<Json<Value>> {
+    let e = s.engine.clone();
+    let r = tokio::task::spawn_blocking(move || e.use_card(b.gpu)).await.map_err(AppError::internal)??;
+    let Some(restart) = r else {
+        return Err(AppError::invalid("The engine does not see this graphics card. Pick it in Settings → Performance → GPU device.").into());
+    };
+    let st = s.engine.server.status();
+    if restart && st.owned && st.state != qls_core::process::ServerState::Stopped && !s.engine.has_pending_work() {
+        s.engine.server.stop().await;
+        s.engine.emit_server();
+    }
+    Ok(Json(json!({ "saved": true })))
 }
 
 async fn install_status(State(s): St) -> Json<Value> {

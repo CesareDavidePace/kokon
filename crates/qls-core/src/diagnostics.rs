@@ -43,6 +43,37 @@ pub fn query_gpus() -> Option<Vec<GpuInfo>> {
     query_nvidia().or_else(query_dxgi).or_else(query_apple)
 }
 
+/// Card and engine device names refer to the same GPU ("NVIDIA GeForce RTX 3090" from
+/// nvidia-smi, DXGI or ggml; one may carry a suffix).
+fn same_gpu(card: &str, device: &str) -> bool {
+    let (a, b) = (card.trim().to_ascii_lowercase(), device.trim().to_ascii_lowercase());
+    !a.is_empty() && !b.is_empty() && (a.contains(&b) || b.contains(&a))
+}
+
+/// Engine devices (`--list-devices`) of this engine's kind, in their order.
+fn engine_gpus<'a>(devices: &'a [(String, String)], prefix: &str) -> impl Iterator<Item = &'a (String, String)> {
+    let prefix = prefix.to_string();
+    devices.iter().filter(move |(n, _)| n.to_ascii_lowercase().starts_with(&prefix))
+}
+
+/// The engine device (e.g. "cuda1") of card `card` in `cards`. Matched by name, not by
+/// position: nvidia-smi, DXGI (sorted by VRAM) and the engine each order cards their own
+/// way. The k-th card of a name maps to the k-th engine device of that name.
+pub fn device_for_card(devices: &[(String, String)], cards: &[GpuInfo], card: usize, prefix: &str) -> Option<String> {
+    let name = &cards.get(card)?.name;
+    let k = cards[..card].iter().filter(|c| c.name.eq_ignore_ascii_case(name)).count();
+    engine_gpus(devices, prefix).filter(|(_, d)| same_gpu(name, d)).nth(k).map(|(n, _)| n.to_ascii_lowercase())
+}
+
+/// The card in `cards` behind engine device `device` (inverse of `device_for_card`).
+pub fn card_for_device(devices: &[(String, String)], cards: &[GpuInfo], device: &str, prefix: &str) -> Option<usize> {
+    let gpus: Vec<_> = engine_gpus(devices, prefix).collect();
+    let i = gpus.iter().position(|(n, _)| n.eq_ignore_ascii_case(device))?;
+    let desc = &gpus[i].1;
+    let k = gpus[..i].iter().filter(|(_, d)| d.eq_ignore_ascii_case(desc)).count();
+    cards.iter().enumerate().filter(|(_, c)| same_gpu(&c.name, desc)).nth(k).map(|(j, _)| j)
+}
+
 /// Apple Silicon: chip name and unified memory from sysctl (they never change, so read once).
 #[cfg(target_os = "macos")]
 fn query_apple() -> Option<Vec<GpuInfo>> {
@@ -282,6 +313,26 @@ mod tests {
         let mac = GpuInfo { name: "Apple M2 Pro".into(), vendor: "apple".into(), unified: true, memory_total_mib: 16384, ..Default::default() };
         assert!(mac.planning_mib() < 6 * 1024, "16 GB Mac plans like a small card");
         assert_eq!(crate::catalog::recommended_preset(Some(mac.planning_mib())).id, "12gb");
+    }
+
+    #[test]
+    fn cards_map_to_engine_devices_by_name() {
+        let card = |n: &str, mib| GpuInfo { name: n.into(), memory_total_mib: mib, ..Default::default() };
+        // DXGI sorts by VRAM; the engine lists the 3060 first.
+        let cards = vec![card("NVIDIA GeForce RTX 3090", 24576), card("NVIDIA GeForce RTX 3060", 12288), card("NVIDIA GeForce RTX 3060", 12288)];
+        let devs: Vec<(String, String)> = [("CUDA0", "NVIDIA GeForce RTX 3060"), ("CUDA1", "NVIDIA GeForce RTX 3090"), ("CUDA2", "NVIDIA GeForce RTX 3060"), ("CPU", "AMD Ryzen 9")]
+            .iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect();
+        assert_eq!(device_for_card(&devs, &cards, 0, "cuda").as_deref(), Some("cuda1"));
+        assert_eq!(device_for_card(&devs, &cards, 1, "cuda").as_deref(), Some("cuda0"));
+        assert_eq!(device_for_card(&devs, &cards, 2, "cuda").as_deref(), Some("cuda2"));
+        assert_eq!(device_for_card(&devs, &cards, 0, "vulkan"), None, "another engine's devices");
+        for i in 0..3 {
+            let dev = device_for_card(&devs, &cards, i, "cuda").unwrap();
+            assert_eq!(card_for_device(&devs, &cards, &dev, "cuda"), Some(i));
+        }
+        assert_eq!(card_for_device(&devs, &cards, "cuda7", "cuda"), None);
     }
 
     #[test]

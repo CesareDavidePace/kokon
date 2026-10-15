@@ -99,12 +99,17 @@ pub struct Engine {
     active: Mutex<Option<String>>,
     wake: Notify,
     pub events: broadcast::Sender<Event>,
-    gpu: Mutex<(Option<Instant>, Option<GpuInfo>)>,
+    gpus: Mutex<(Option<Instant>, Vec<GpuInfo>)>,
+    /// `--list-devices` of the engine, keyed by its path and modification time.
+    devices: Mutex<Option<DeviceList>>,
     /// First-run downloads (setup wizard).
     pub installer: Arc<crate::installer::Installer>,
     backend_version: Mutex<Option<String>>,
     last_activity: Mutex<Instant>,
 }
+
+/// An engine's path, its modification time and its `--list-devices` output.
+type DeviceList = (PathBuf, Option<std::time::SystemTime>, Vec<(String, String)>);
 
 fn random_seed() -> i64 {
     let b = uuid::Uuid::new_v4();
@@ -168,7 +173,8 @@ impl Engine {
             active: Mutex::new(None),
             wake: Notify::new(),
             events,
-            gpu: Mutex::new((None, None)),
+            gpus: Mutex::new((None, Vec::new())),
+            devices: Mutex::new(None),
             installer: crate::installer::Installer::new(),
             backend_version: Mutex::new(None),
             last_activity: Mutex::new(Instant::now()),
@@ -268,14 +274,63 @@ impl Engine {
         self.active.lock().unwrap().is_some() || self.jobs.lock().unwrap().values().any(|j| !j.view.status.is_terminal()) || self.installer.is_running()
     }
 
-    pub fn gpu(&self) -> Option<GpuInfo> {
-        let mut g = self.gpu.lock().unwrap();
-        if g.0.map(|t| t.elapsed() < Duration::from_secs(3)).unwrap_or(false) {
-            return g.1.clone();
+    /// Every graphics card found (refreshed every few seconds for the live memory use).
+    pub fn gpus(&self) -> Vec<GpuInfo> {
+        let mut g = self.gpus.lock().unwrap();
+        if !g.0.is_some_and(|t| t.elapsed() < Duration::from_secs(3)) {
+            *g = (Some(Instant::now()), query_gpus().unwrap_or_default());
         }
-        let info = query_gpus().and_then(|v| v.into_iter().next());
-        *g = (Some(Instant::now()), info.clone());
-        info
+        g.1.clone()
+    }
+
+    /// The engine's devices (`--list-devices`); empty until the engine is installed.
+    pub fn devices(&self) -> Vec<(String, String)> {
+        let exe = self.config().server_exe();
+        let mtime = std::fs::metadata(&exe).and_then(|m| m.modified()).ok();
+        if mtime.is_none() {
+            return Vec::new();
+        }
+        let mut d = self.devices.lock().unwrap();
+        if let Some((p, t, list)) = d.as_ref()
+            && *p == exe
+            && *t == mtime
+        {
+            return list.clone();
+        }
+        let list = crate::diagnostics::list_devices(&exe);
+        *d = Some((exe, mtime, list.clone()));
+        list
+    }
+
+    /// Index in `gpus()` of the card the engine runs on (the configured device); the first
+    /// card when there is one or the engine can't tell.
+    pub fn gpu_index(&self) -> usize {
+        let cards = self.gpus();
+        if cards.len() < 2 {
+            return 0;
+        }
+        let cfg = self.config();
+        crate::diagnostics::card_for_device(&self.devices(), &cards, &cfg.effective_device(), cfg.gpu_backend.device_prefix()).unwrap_or(0)
+    }
+
+    /// The card the engine runs on; plans and presets are sized for it.
+    pub fn gpu(&self) -> Option<GpuInfo> {
+        let i = self.gpu_index();
+        self.gpus().into_iter().nth(i)
+    }
+
+    /// Runs the engine on card `card` of `gpus()`: Some(whether the server must restart), or
+    /// None if the engine can't list its devices yet (not installed) or doesn't see that card.
+    pub fn use_card(&self, card: usize) -> AppResult<Option<bool>> {
+        let mut cfg = self.config();
+        let Some(dev) = crate::diagnostics::device_for_card(&self.devices(), &self.gpus(), card, cfg.gpu_backend.device_prefix()) else {
+            return Ok(None);
+        };
+        if cfg.effective_device() == dev {
+            return Ok(Some(false));
+        }
+        cfg.device = dev;
+        self.set_config(cfg).map(Some)
     }
 
     pub fn backend_version(&self) -> Option<String> {

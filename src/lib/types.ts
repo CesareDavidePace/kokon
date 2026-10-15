@@ -288,7 +288,12 @@ export interface HardwarePreset {
 }
 
 export interface HardwareReport {
+  /** The card the presets are sized for (`gpu_index` in `gpus`). */
   gpu: StatusResponse["gpu"];
+  gpus: { name: string; memory_total_mib: number }[];
+  gpu_index: number;
+  /** Card the engine runs on now. */
+  gpu_in_use: number;
   nvidia: boolean;
   vendor: string | null;
   /** Engine the presets' file lists are for. */

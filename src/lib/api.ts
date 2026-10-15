@@ -54,9 +54,19 @@ const json = (body: unknown) => JSON.stringify(body);
 export const api = {
   status: () => call<StatusResponse>("/status"),
   setup: () => call<SetupReport>("/setup"),
-  hardware: (backend?: GpuBackend) => call<HardwareReport>(backend ? `/setup/hardware?backend=${backend}` : "/setup/hardware"),
-  /** `apply = false`: only download (an engine update), keeping the configured preset and settings. */
-  install: (preset: string, backend: GpuBackend, apply = true) => call<InstallStatus>("/setup/install", { method: "POST", body: json({ preset, backend, apply }) }),
+  /** `gpu`: index in `gpus` to size the presets for (default: the card in use). */
+  hardware: (backend?: GpuBackend, gpu?: number) => {
+    const q = new URLSearchParams();
+    if (backend) q.set("backend", backend);
+    if (gpu !== undefined) q.set("gpu", String(gpu));
+    const qs = q.toString();
+    return call<HardwareReport>(`/setup/hardware${qs ? `?${qs}` : ""}`);
+  },
+  /** `apply = false`: only download (an engine update), keeping the configured preset and settings.
+   * `gpu`: card to run on once installed (index in `hardware().gpus`). */
+  install: (preset: string, backend: GpuBackend, apply = true, gpu?: number) => call<InstallStatus>("/setup/install", { method: "POST", body: json({ preset, backend, apply, gpu }) }),
+  /** Runs the engine on another card (index in `hardware().gpus`); needs the engine installed. */
+  setGpu: (gpu: number) => call<{ saved: boolean }>("/setup/gpu", { method: "POST", body: json({ gpu }) }),
   upscalers: () => call<{ selected: string; active: string | null; items: UpscalerItem[] }>("/upscalers"),
   /** Progress in `installStatus` (preset "upscaler:<name>"). */
   downloadUpscaler: (name: string) => call<InstallStatus>(`/upscalers/${encodeURIComponent(name)}/download`, { method: "POST" }),

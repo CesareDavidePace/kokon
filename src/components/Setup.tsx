@@ -85,16 +85,18 @@ export function Setup() {
   const [inst, setInst] = useState<InstallStatus | null>(null);
   const [preset, setPreset] = useState<string | null>(null);
   const [backend, setBackend] = useState<GpuBackend | null>(null);
+  // Card picked on a multi-GPU machine (index in hw.gpus); null: the one in use.
+  const [card, setCard] = useState<number | null>(null);
   const [showFiles, setShowFiles] = useState(false);
   const [checking, setChecking] = useState(false);
   const wasRunning = useRef(false);
   const setupDone = useStore((s) => s.status?.setup_complete ?? false);
   const engineUpdate = useStore((s) => s.status?.engine);
 
-  const refresh = async (engine: GpuBackend | null = backend) => {
+  const refresh = async (engine: GpuBackend | null = backend, gpu: number | null = card) => {
     setChecking(true);
     try {
-      const [h, r, i] = await Promise.all([api.hardware(engine ?? undefined), api.setup(), api.installStatus()]);
+      const [h, r, i] = await Promise.all([api.hardware(engine ?? undefined, gpu ?? undefined), api.setup(), api.installStatus()]);
       setHw(h);
       setBackend(h.backend);
       setReport(r);
@@ -139,7 +141,7 @@ export function Setup() {
   const install = async () => {
     if (!preset) return;
     try {
-      setInst(await api.install(preset, backend ?? hw?.backend ?? "cuda"));
+      setInst(await api.install(preset, backend ?? hw?.backend ?? "cuda", true, card ?? undefined));
     } catch (e) {
       toastError(e);
     }
@@ -147,6 +149,7 @@ export function Setup() {
 
   const start = async () => {
     try {
+      if (hw && card !== null && card !== hw.gpu_in_use) await api.setGpu(card);
       const [cfg, st] = await Promise.all([api.config(), refreshStatus()]);
       // An engine update the user chose not to install now: don't open Setup for it again.
       const ui = { ...((cfg.ui ?? {}) as Record<string, unknown>) };
@@ -240,6 +243,29 @@ export function Setup() {
               </div>
             ) : (
               <>
+                {hw.gpus.length > 1 && (
+                  <label className="field">
+                    <span>Graphics card</span>
+                    <select
+                      className="select"
+                      value={hw.gpu_index}
+                      onChange={(e) => {
+                        const i = Number(e.target.value);
+                        setCard(i);
+                        setPreset(null); // the recommendation follows the card
+                        refresh(backend, i);
+                      }}
+                    >
+                      {hw.gpus.map((g, i) => (
+                        <option key={i} value={i}>
+                          {g.name} · {gb(g.memory_total_mib)}
+                          {i === hw.gpu_in_use && setupDone ? " (in use)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="muted">Kokon runs on one card. The preset is sized for the card you pick; you can change it later in Settings → Performance.</span>
+                  </label>
+                )}
                 {hw.gpu && (
                   <div className="field">
                     <span>Engine</span>
@@ -248,7 +274,7 @@ export function Setup() {
                       options={engineOptions(hw.vendor)}
                       onChange={(b) => {
                         setBackend(b);
-                        refresh(b);
+                        refresh(b, card);
                       }}
                     />
                     <span className="muted">{engineNote(backend ?? hw.backend, hw.nvidia)}</span>

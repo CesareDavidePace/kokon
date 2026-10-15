@@ -29,5 +29,5 @@ Updating from 0.9.2: the app offers the new decoder (675 MB). If you accept, it 
 
 | File | SHA-256 |
 |---|---|
-| `Kokon_0.9.3_x64-setup.exe` (Windows) | `TODO` |
-| `Kokon_0.9.3_aarch64.dmg` (Mac) | `TODO` |
+| `Kokon_0.9.3_x64-setup.exe` (Windows) | `25a4a72c92a32a60fe7d12595edae148b7f8230c051016aee6d3245426e2571d` |
+| `Kokon_0.9.3_aarch64.dmg` (Mac) | `f764ce42ccc8262b0370fe20ebbdcf8c623b5bd8b2768da30e4b353b01e2a78f` |

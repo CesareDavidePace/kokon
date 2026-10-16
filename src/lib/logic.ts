@@ -682,3 +682,12 @@ export function neighbourAfterRemoval(ids: string[], id: string): string | null 
   if (i < 0) return null;
   return ids[i + 1] ?? ids[i - 1] ?? null;
 }
+
+/** Images made with the app before the one-time "star on GitHub" card. */
+export const STAR_PROMPT_AFTER = 5;
+
+/** Whether to show the star card now: enough images made, and nothing else on screen (a dialog,
+ * the tour or setup), else it waits for the next finished image. */
+export function starPromptDue(made: number, busy: boolean): boolean {
+  return made >= STAR_PROMPT_AFTER && !busy;
+}

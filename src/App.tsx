@@ -1,10 +1,10 @@
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { ArrowDownToLine, CircleHelp, EyeOff, PanelLeft, Redo2, Settings, SquarePen, Undo2, X } from "lucide-react";
+import { ArrowDownToLine, CircleHelp, EyeOff, PanelLeft, Redo2, Settings, SquarePen, Star, Undo2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, configure } from "./lib/api";
 import { native } from "./lib/native";
 import {
-  addExampleProjects, addInputs, dismissToast, getState, isMissingModel, newProject, openModelSetup, redoVersion, refreshStatus, selectItem, setPrivateMode, setState, startEvents, startTour, submitComposer, toastError, toastInfo, undoKey, undoVersion, useStore,
+  addExampleProjects, addInputs, closeStarPrompt, dismissToast, getState, initStarPrompt, isMissingModel, newProject, openModelSetup, redoVersion, refreshStatus, selectItem, setPrivateMode, setState, startEvents, startTour, submitComposer, toastError, toastInfo, undoKey, undoVersion, useStore,
 } from "./lib/store";
 import { Composer, importPaths } from "./components/Composer";
 import { ExpandEditor } from "./components/ExpandEditor";
@@ -25,6 +25,7 @@ import { KokonMark, Welcome } from "./components/Welcome";
 import { autoCheckForUpdate, installUpdate } from "./lib/updates";
 
 const IMAGE_EXT = /\.(png|jpe?g|webp|bmp|gif|tiff?|heic|heif)$/i;
+const REPO_URL = "https://github.com/GabrieleLozupone/kokon";
 
 function StatusIndicator() {
   const connected = useStore((s) => s.connected);
@@ -144,6 +145,7 @@ function Toasts() {
   const [open, setOpen] = useState<string | null>(null);
   return (
     <div className="toasts" role="status">
+      <StarPrompt />
       {toasts.map((t) => (
         <div key={t.id} className="toast">
           <div className="body">
@@ -161,6 +163,35 @@ function Toasts() {
           </button>
         </div>
       ))}
+    </div>
+  );
+}
+
+/** Once, after a few images made with Kokon (store.ts): a star helps other people find it. */
+function StarPrompt() {
+  const on = useStore((s) => s.starPrompt);
+  if (!on) return null;
+  const star = () => {
+    native.openLink(REPO_URL).catch(toastError);
+    closeStarPrompt();
+  };
+  return (
+    <div className="star-prompt">
+      <div className="body">
+        <strong>Enjoying Kokon?</strong>
+        <div className="sugg">A star on GitHub helps other people find it. This is the only time we ask.</div>
+        <div className="star-actions">
+          <button className="btn primary" onClick={star}>
+            <Star size={14} /> Star on GitHub
+          </button>
+          <button className="btn ghost" onClick={closeStarPrompt}>
+            No thanks
+          </button>
+        </div>
+      </div>
+      <button onClick={closeStarPrompt} aria-label="Dismiss">
+        <X size={14} />
+      </button>
     </div>
   );
 }
@@ -208,6 +239,7 @@ export default function App() {
         // First launch: the welcome screen, once (Settings → General shows it again).
         const ui = (cfg.ui ?? {}) as Record<string, unknown>;
         const welcomeSeen = !!ui.welcomeSeen;
+        initStarPrompt(ui);
         // ...with example projects to look at, and the tour through the first one.
         if (!welcomeSeen && !ui.tourSeen) {
           tourPending.current = true;

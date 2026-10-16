@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   activeOverrides, buildRequest, compareBase, diffPixels, emptyComposer, expansionPixels, expansionPreset, jobFraction, jobLabel, moveRef, needsPrompt, normalizeQuality, persistentAdvanced, pipelineSummary,
   planPipeline, remainingSeconds, sizeForWidth, timeAgo, upscaleRequest, upscaleTargets, versionLabels, type Ref,
-  neighbourAfterRemoval, previewIndex, formatBytes, formatDuration, installItemShort, installItemText, installProgress, installStep, installTimeLeft, timelineLinks, undoTarget, aspectLabel, parseRatio, sizeForRatio, expandToRatio, expandToSize, arcLayout,
+  neighbourAfterRemoval, previewIndex, starPromptDue, STAR_PROMPT_AFTER, formatBytes, formatDuration, installItemShort, installItemText, installProgress, installStep, installTimeLeft, timelineLinks, undoTarget, aspectLabel, parseRatio, sizeForRatio, expandToRatio, expandToSize, arcLayout,
 } from "./logic";
 import type { GenerationRecord, InstallItem, JobView, Plan } from "./types";
 
@@ -398,5 +398,14 @@ describe("formatDuration", () => {
     expect(formatDuration(119.6)).toBe("2m");
     expect(formatDuration(125)).toBe("2m 5s");
     expect(formatDuration(3900)).toBe("65m");
+  });
+});
+
+describe("star prompt", () => {
+  it("waits for enough images and a free screen", () => {
+    expect(starPromptDue(STAR_PROMPT_AFTER - 1, false)).toBe(false);
+    expect(starPromptDue(STAR_PROMPT_AFTER, true)).toBe(false);
+    expect(starPromptDue(STAR_PROMPT_AFTER, false)).toBe(true);
+    expect(starPromptDue(STAR_PROMPT_AFTER + 3, false)).toBe(true);
   });
 });

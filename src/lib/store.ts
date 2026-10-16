@@ -7,7 +7,7 @@
 
 import { useSyncExternalStore } from "react";
 import { api, ApiError, setPrivateInputs, subscribe } from "./api";
-import { buildRequest, emptyComposer, needsPrompt, newKey, persistentAdvanced, refFromGen, refFromInput, timelineLinks, undoTarget, versionLabels, type CompareMode, type Composer, type Ref } from "./logic";
+import { buildRequest, emptyComposer, needsPrompt, newKey, persistentAdvanced, refFromGen, refFromInput, starPromptDue, timelineLinks, undoTarget, versionLabels, type CompareMode, type Composer, type Ref } from "./logic";
 import type { AppErrorBody, GenerationRecord, GenerationRequest, InputRecord, JobView, ServerState, StatusResponse } from "./types";
 
 export type Overlay = null | "gallery" | "settings" | "inpaint" | "expand" | "welcome" | "whats-new" | "prompt-tips" | "shortcuts";
@@ -85,6 +85,8 @@ export interface State {
   redo: string[];
   /** Step of the first-run tour on screen (components/Tour.tsx), or null. */
   tour: number | null;
+  /** The one-time "star on GitHub" card is on screen (App.tsx). */
+  starPrompt: boolean;
 }
 
 const PREFS_KEY = "qls.prefs.v1";
@@ -289,6 +291,7 @@ let state: State = {
   privateMode: false,
   redo: [],
   tour: null,
+  starPrompt: false,
 };
 
 const listeners = new Set<() => void>();
@@ -399,6 +402,8 @@ function onJob(job: JobView) {
   if (job.status === "failed" && prev?.status !== "failed" && isMissingModel(job.error) && job.finished_at && Date.now() - Date.parse(job.finished_at) < 60_000) {
     openModelSetup();
   }
+  // Made with this app (it had a pending version), not by another client such as MCP.
+  let made = false;
   setState((s) => {
     const jobs = { ...s.jobs, [job.id]: job };
     if (job.status !== "done") return { jobs };
@@ -406,6 +411,7 @@ function onJob(job: JobView) {
     // Replace the pending version with one version per result.
     const idx = s.session.findIndex((i) => i.jobId === job.id && i.kind === "job");
     if (idx >= 0) {
+      made = true;
       const pending = s.session[idx];
       const session = [...s.session.slice(0, idx), ...results, ...s.session.slice(idx + 1)];
       const wasSelected = s.selected === pending.key;
@@ -421,6 +427,7 @@ function onJob(job: JobView) {
     for (const p of Object.values(projects)) {
       const k = p.items.findIndex((i) => i.jobId === job.id && i.kind === "job");
       if (k < 0) continue;
+      made = true;
       const stored = results.map(toStored);
       for (const g of job.results) genCache.set(g.id, g);
       const wasSelected = p.selected === p.items[k].key;
@@ -433,7 +440,45 @@ function onJob(job: JobView) {
     // A job from another client (e.g. MCP): track it but do not add it to a project.
     return { jobs };
   });
+  if (made && job.results.length) countImageMade();
   if (job.status === "failed" && job.error) toastError(new ApiError(job.error, 500));
+}
+
+// ---------------------------------------------------------------------------------------
+// Star prompt: once, after a few images made with the app, never again whatever the answer.
+// ---------------------------------------------------------------------------------------
+
+const MADE_KEY = "kokon.imagesMade";
+/** Config `ui.starPromptSeen`; true until read at start, so nothing shows before that. */
+let starSeen = true;
+
+export function initStarPrompt(ui: Record<string, unknown>) {
+  starSeen = !!ui.starPromptSeen;
+}
+
+function countImageMade() {
+  if (starSeen) return;
+  let made: number;
+  try {
+    made = (Number(localStorage.getItem(MADE_KEY)) || 0) + 1;
+    localStorage.setItem(MADE_KEY, String(made));
+  } catch {
+    return;
+  }
+  const s = getState();
+  if (!starPromptDue(made, s.overlay !== null || s.tour !== null || s.needsSetup)) return;
+  starSeen = true;
+  setState({ starPrompt: true });
+  api
+    .config()
+    .then((cfg) => api.saveConfig({ ...cfg, ui: { ...((cfg.ui ?? {}) as Record<string, unknown>), starPromptSeen: true } }))
+    .catch(() => {
+      /* only means it may show once more after a restart */
+    });
+}
+
+export function closeStarPrompt() {
+  setState({ starPrompt: false });
 }
 
 // ---------------------------------------------------------------------------------------

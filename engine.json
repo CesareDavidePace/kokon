@@ -15,5 +15,10 @@
     "url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-964-1d0a58a/sd-master-1d0a58a-bin-Darwin-macOS-26.6.2-arm64.zip",
     "size": 35213648,
     "sha256": "45001839e925f98ecd18ef5251725f74cff874eeac4599f1136acba65b26911e"
+  },
+  "metal_macos15": {
+    "url": "https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/download/kokon-macos-1d0a58a/sd-master-1d0a58a-bin-Darwin-macOS-15.0-arm64.zip",
+    "size": 35215022,
+    "sha256": "d9b2d6885e0b0cdbdb5a1acd629cf0191e748c2806d3e529d4a6ae1a60bd207e"
   }
 }

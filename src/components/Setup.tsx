@@ -19,7 +19,7 @@ function engineOptions(vendor: string | null): { value: GpuBackend; label: strin
 
 function engineNote(b: GpuBackend, nvidia: boolean): string {
   if (b === "cuda") return "NVIDIA's CUDA build: the fastest and tested path. Recommended.";
-  if (b === "metal") return "Beta. Runs on the Mac's GPU through Metal. Needs macOS 26 or newer.";
+  if (b === "metal") return "Beta. Runs on the Mac's GPU through Metal. Needs macOS 15 or newer.";
   return nvidia
     ? "The same model through Vulkan: works on NVIDIA, but slower than CUDA (no SageAttention) and the first image takes longer. Useful to try the AMD / Intel path; both engines can stay installed."
     : "Beta. AMD and Intel cards run the model through Vulkan, with the graphics driver you already have. Not yet tested on a real AMD or Intel card: please report how it goes.";

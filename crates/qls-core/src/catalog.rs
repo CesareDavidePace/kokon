@@ -237,21 +237,29 @@ const LINUX_VULKAN_SIZE: u64 = 38_456_278;
 #[cfg(target_os = "linux")]
 const LINUX_VULKAN_SHA256: &str = "d998e8b831e9228571e7203020f503a3fea70b87f57ba5e0a106ae4e3afb7f60";
 
-/// Same commit, macOS build: universal binary with the Metal shaders embedded, needs
-/// macOS 26. Ad-hoc signed; downloaded by the app (not a browser) it gets no quarantine flag.
+/// Kokon's macOS build of the same commit (fork `kokon-linux`, workflow kokon-macos.yml): upstream's
+/// Mac zip declares macOS 26 as its minimum (built with the 26 SDK, no deployment target); this one
+/// is built for macOS 15 (#24), upstream's flags otherwise. Universal binary with the Metal shaders
+/// embedded. Ad-hoc signed; downloaded by the app (not a browser) it gets no quarantine flag.
+const KOKON_MACOS_RELEASE: &str = "https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/tag/kokon-macos-1d0a58a";
+
 pub const ENGINE_METAL: Download = Download {
     id: "engine_metal",
     label: "stable-diffusion.cpp (Metal)",
     kind: FileKind::Engine,
-    url: "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-964-1d0a58a/sd-master-1d0a58a-bin-Darwin-macOS-26.6.2-arm64.zip",
+    url: "https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/download/kokon-macos-1d0a58a/sd-master-1d0a58a-bin-Darwin-macOS-15.0-arm64.zip",
     fallback_urls: &[],
-    page: SDCPP_RELEASE,
-    size: 35_213_648,
-    sha256: "45001839e925f98ecd18ef5251725f74cff874eeac4599f1136acba65b26911e",
-    dest: "engine-metal/sd-master-1d0a58a-bin-Darwin-macOS-26.6.2-arm64.zip",
+    page: KOKON_MACOS_RELEASE,
+    size: MACOS_METAL_SIZE,
+    sha256: MACOS_METAL_SHA256,
+    dest: "engine-metal/sd-master-1d0a58a-bin-Darwin-macOS-15.0-arm64.zip",
     provides: &["engine-metal/sd-server", "engine-metal/libstable-diffusion.dylib"],
     engine_tag: Some(ENGINE_TAG),
 };
+
+// From the kokon-macos-1d0a58a release (run 38907832092, 2026-10-16: minos 15.0, Metal initialised on a macOS 15.7 runner).
+const MACOS_METAL_SIZE: u64 = 35_215_022;
+const MACOS_METAL_SHA256: &str = "d9b2d6885e0b0cdbdb5a1acd629cf0191e748c2806d3e529d4a6ae1a60bd207e";
 
 /// The engine files of a backend, in download order: the engine manifest's release when one
 /// newer than the built-in pins was applied ([`apply_engine_release`]), else the pins.
@@ -302,7 +310,12 @@ pub struct EngineManifest {
     pub min_app: String,
     pub cuda: ManifestAsset,
     pub vulkan: ManifestAsset,
+    /// Upstream's Mac build (macOS 26+), for apps up to 0.9.3.
     pub metal: ManifestAsset,
+    /// Kokon's macOS 15 build of the same commit (`kokon-macos-<commit>` in the fork), used by
+    /// apps from 0.9.4. Without it Macs keep their pinned engine: upstream's needs macOS 26.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metal_macos15: Option<ManifestAsset>,
 }
 
 /// Build number of an upstream release tag (`master-964-1d0a58a` -> 964).
@@ -333,20 +346,35 @@ pub fn apply_engine_release(m: &EngineManifest, app_version: &str) -> Result<boo
         *ENGINE_OVERRIDE.write().unwrap() = None;
         return Ok(false);
     }
-    let page = format!("https://github.com/leejet/stable-diffusion.cpp/releases/tag/{}", m.tag);
-    let prefix = format!("https://github.com/leejet/stable-diffusion.cpp/releases/download/{}/", m.tag);
     let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
     let tag = leak(m.tag.clone());
-    let page = leak(page);
-    let build = |a: &ManifestAsset, base: Download, folder: &str| -> Result<Download, String> {
-        let file = a.url.strip_prefix(&prefix).filter(|f| !f.is_empty() && !f.contains(['/', '\\'])).ok_or_else(|| format!("unexpected engine URL: {}", a.url))?;
+    let upstream = format!("https://github.com/leejet/stable-diffusion.cpp/releases/download/{}/", m.tag);
+    let upstream_page = leak(format!("https://github.com/leejet/stable-diffusion.cpp/releases/tag/{}", m.tag));
+    let commit = m.tag.rsplit('-').next().unwrap_or_default();
+    let kokon = format!("https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/download/kokon-macos-{commit}/");
+    let kokon_page = leak(format!("https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/tag/kokon-macos-{commit}"));
+    let build = |a: &ManifestAsset, base: Download, folder: &str, prefix: &str, page: &'static str| -> Result<Download, String> {
+        let file = a.url.strip_prefix(prefix).filter(|f| !f.is_empty() && !f.contains(['/', '\\'])).ok_or_else(|| format!("unexpected engine URL: {}", a.url))?;
         if a.sha256.len() != 64 || !a.sha256.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()) || a.size == 0 {
             return Err(format!("bad size or SHA-256 for {}", a.url));
         }
         Ok(Download { url: leak(a.url.clone()), page, size: a.size, sha256: leak(a.sha256.clone()), dest: leak(format!("{folder}{file}")), engine_tag: Some(tag), ..base })
     };
-    let r = EngineRelease { tag, cuda: build(&m.cuda, ENGINE_CUDA, "")?, vulkan: build(&m.vulkan, ENGINE_VULKAN, "engine-vulkan/")?, metal: build(&m.metal, ENGINE_METAL, "engine-metal/")? };
-    *ENGINE_OVERRIDE.write().unwrap() = Some(r);
+    let cuda = build(&m.cuda, ENGINE_CUDA, "", &upstream, upstream_page)?;
+    let vulkan = build(&m.vulkan, ENGINE_VULKAN, "engine-vulkan/", &upstream, upstream_page)?;
+    let upstream_metal = build(&m.metal, ENGINE_METAL, "engine-metal/", &upstream, upstream_page)?;
+    let metal15 = m.metal_macos15.as_ref().map(|a| build(a, ENGINE_METAL, "engine-metal/", &kokon, kokon_page)).transpose()?;
+    let metal = if cfg!(target_os = "macos") {
+        // Macs run only Kokon's macOS 15 builds: no such build, no engine update.
+        let Some(metal) = metal15 else {
+            *ENGINE_OVERRIDE.write().unwrap() = None;
+            return Ok(false);
+        };
+        metal
+    } else {
+        upstream_metal
+    };
+    *ENGINE_OVERRIDE.write().unwrap() = Some(EngineRelease { tag, cuda, vulkan, metal });
     Ok(true)
 }
 
@@ -774,7 +802,11 @@ mod tests {
             size: 1,
             sha256: "0".repeat(64),
         };
-        EngineManifest { tag: format!("master-{n}-abcdef0"), min_app: "0.9.2".into(), cuda: asset("win-cuda12-x64"), vulkan: asset("win-vulkan-x64"), metal: asset("Darwin-macOS-26.6.2-arm64") }
+        EngineManifest { tag: format!("master-{n}-abcdef0"), min_app: "0.9.2".into(), cuda: asset("win-cuda12-x64"), vulkan: asset("win-vulkan-x64"), metal: asset("Darwin-macOS-26.6.2-arm64"), metal_macos15: Some(ManifestAsset {
+            url: "https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/download/kokon-macos-abcdef0/sd-master-abcdef0-bin-Darwin-macOS-15.0-arm64.zip".into(),
+            size: 1,
+            sha256: "1".repeat(64),
+        }) }
     }
 
     #[test]
@@ -793,7 +825,14 @@ mod tests {
         assert_eq!(cuda[0].provides, ENGINE_CUDA.provides);
         assert_eq!(cuda[1].id, "cuda_runtime");
         assert_eq!(engine_downloads(GpuBackend::Vulkan)[0].dest, "engine-vulkan/sd-master-abcdef0-bin-win-vulkan-x64.zip");
-        assert_eq!(engine_downloads(GpuBackend::Metal)[0].dest, "engine-metal/sd-master-abcdef0-bin-Darwin-macOS-26.6.2-arm64.zip");
+        let metal = engine_downloads(GpuBackend::Metal)[0];
+        if cfg!(target_os = "macos") {
+            // Kokon's macOS 15 build, never upstream's (macOS 26).
+            assert_eq!(metal.dest, "engine-metal/sd-master-abcdef0-bin-Darwin-macOS-15.0-arm64.zip");
+            assert!(metal.page.ends_with("/kokon-macos-abcdef0"));
+        } else {
+            assert_eq!(metal.dest, "engine-metal/sd-master-abcdef0-bin-Darwin-macOS-26.6.2-arm64.zip");
+        }
         // Only official release downloads of that tag, with a real hash.
         let mut bad = manifest(971);
         bad.cuda.url = "https://example.com/sd.zip".into();
@@ -803,6 +842,14 @@ mod tests {
         assert!(apply_engine_release(&bad, "0.9.2").is_err());
         assert!(apply_engine_release(&EngineManifest { tag: "kokon-x".into(), ..manifest(971) }, "0.9.2").is_err());
         assert_eq!(engine_tag(), "master-970-abcdef0", "a bad manifest keeps the last good release");
+        // Kokon's macOS 15 build must come from the fork release of the same commit.
+        let mut bad = manifest(971);
+        bad.metal_macos15.as_mut().unwrap().url = "https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/download/kokon-macos-1234567/x.zip".into();
+        assert!(apply_engine_release(&bad, "0.9.2").is_err(), "another commit's build");
+        // A manifest without it (written for apps up to 0.9.3) updates PCs; Macs keep their pin.
+        let old = EngineManifest { metal_macos15: None, ..manifest(972) };
+        assert!(!serde_json::to_string(&old).unwrap().contains("metal_macos15"));
+        assert_eq!(apply_engine_release(&old, "0.9.2"), Ok(!cfg!(target_os = "macos")));
         // An app that pins a newer engine drops an older manifest release.
         assert_eq!(apply_engine_release(&manifest(960), "0.9.2"), Ok(false));
         assert_eq!(engine_tag(), ENGINE_TAG);

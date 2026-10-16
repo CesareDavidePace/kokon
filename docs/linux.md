@@ -60,7 +60,13 @@ direct-convolution fix and FLUX.3 Klein). When Windows/Mac move to a newer engin
 3. Wait for the run; it publishes `kokon-linux-<new commit>`. Check the glibc report in the build log.
 4. In Kokon: update the Linux URLs, sizes and SHA-256 in `catalog.rs` with the `ENGINE_TAG` bump,
    test once in WSL (engine download + one image), release.
-5. Same pipeline later for #24: a Mac engine built for macOS 15 (planned 0.9.4).
+5. **Mac too (#24, from 0.9.4):** the same push runs `kokon-macos.yml` (same `ENGINE_SHORT` to set),
+   which builds upstream's Mac job with `CMAKE_OSX_DEPLOYMENT_TARGET=15.0`, checks `minos` 15.0, starts
+   the engine on a macOS 15 runner and publishes prerelease `kokon-macos-<commit>`
+   (`sd-master-<commit>-bin-Darwin-macOS-15.0-arm64.zip`). Pin it in `catalog.rs` (`ENGINE_METAL`,
+   `MACOS_METAL_*`) and add it to `engine.json` as `metal_macos15`: apps from 0.9.4 on a Mac take
+   engine updates only from that entry (`metal` stays upstream's build for apps up to 0.9.3, on 26).
+   The two workflows ignore each other's file, so editing one doesn't rebuild the other.
 
 ## Building and testing the Linux app
 

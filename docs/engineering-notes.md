@@ -49,7 +49,7 @@ Details and the reasoning are in [platforms.md](platforms.md); the short version
 | --- | --- | --- | --- |
 | Windows + NVIDIA | CUDA 12 build | `<sdcpp>` | `--backend cuda0 --params-backend te=cpu`, SageAttention |
 | Windows + AMD / Intel (also NVIDIA) | Vulkan build | `<sdcpp>/engine-vulkan` | `--backend vulkan0`, no SageAttention |
-| macOS, Apple Silicon | Metal build (macOS 26+) | `<sdcpp>/engine-metal` | `--backend mtl0 --mmap`; 24 GB+: `--auto-fit off` (all weights on the GPU, zero-copy); 16 GB: `--params-backend disk` |
+| macOS, Apple Silicon | Metal build (macOS 15+) | `<sdcpp>/engine-metal` | `--backend mtl0 --mmap`; 24 GB+: `--auto-fit off` (all weights on the GPU, zero-copy); 16 GB: `--params-backend disk` |
 
 - `GpuBackend` in `config.rs` picks the engine, its folder, device name and flags. Each engine
   is a pinned download in `catalog.rs`, so both Windows engines can stay installed.

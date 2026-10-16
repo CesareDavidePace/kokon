@@ -74,7 +74,7 @@ pub enum GpuBackend {
     Cuda,
     /// AMD, Intel and NVIDIA through Vulkan. Works on NVIDIA; AMD/Intel unverified.
     Vulkan,
-    /// Apple Silicon (Metal build, macOS 26+). Beta.
+    /// Apple Silicon (Metal build, macOS 15+). Beta.
     Metal,
 }
 

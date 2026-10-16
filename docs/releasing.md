@@ -56,8 +56,11 @@ How to publish a version that installed copies update to, on Windows and macOS.
    3. Upload with `gh release upload v0.9.1 <files> dist-release/latest.json --clobber`.
 7. **MCP server** (after the GitHub release is out): `cd mcp && npm publish` (runs the build and
    tests first), then `mcp-publisher login github` and `mcp-publisher publish` from `mcp/` so the
-   MCP Registry lists the new version. Glama (https://glama.ai/mcp/servers/GabrieleLozupone/kokon)
-   indexes the GitHub repo by itself; check the listing a day later.
+   MCP Registry lists the new version. Glama (https://glama.ai/mcp/servers/GabrieleLozupone/kokon):
+   Admin → Repository → **Sync Server**, then Admin → Dockerfile → **Build** (the saved spec:
+   build `cd mcp && npm ci && npm run build`, CMD `mcp-proxy -- node ./mcp/build/kokon-mcp.cjs`;
+   no Kokon app needed to list the tools), and on the passed test **Create Release** with the
+   new version. The release is what Glama grades the tools on.
 
 ## Testing an update
 

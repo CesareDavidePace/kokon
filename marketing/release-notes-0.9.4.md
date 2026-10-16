@@ -38,7 +38,7 @@ LoRA support was announced for this version. It moved to 0.10.0 so that Linux co
 
 | File | SHA-256 |
 |---|---|
-| `Kokon_0.9.4_x64-setup.exe` (Windows) | `<sha256>` |
-| `Kokon_0.9.4_aarch64.dmg` (Mac, macOS 15+) | `<sha256>` |
-| `Kokon_0.9.4_amd64.deb` (Ubuntu, Debian, Mint) | `<sha256>` |
-| `Kokon-0.9.4-1.x86_64.rpm` (Fedora) | `<sha256>` |
+| `Kokon_0.9.4_x64-setup.exe` (Windows) | `a44254255b4e6078643c565238c7793a6480c0f55cf60d49b5f5342f91f9d911` |
+| `Kokon_0.9.4_aarch64.dmg` (Mac, macOS 15+) | `0b978390be59fbeea30760d61180d1a781e3531673946541310f180860549c85` |
+| `Kokon_0.9.4_amd64.deb` (Ubuntu, Debian, Mint) | `af66cc93bc432750e69170d5374b10e97e73fe8af749f8b1cf68245ce3703e18` |
+| `Kokon-0.9.4-1.x86_64.rpm` (Fedora) | `0b5417f634c7f1022619c3a31c4b2cbce7e1a41fdd175a5e4a0e3db6ae560703` |

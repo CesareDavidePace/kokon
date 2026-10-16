@@ -162,6 +162,7 @@ h2 { font-size: clamp(36px, 5.6vw, 68px); line-height: 1.04; letter-spacing: -0.
 /* Requirements */
 .req { margin-top: 48px; display: grid; gap: 16px; grid-template-columns: 1fr; }
 @media (min-width: 900px) { .req { grid-template-columns: 1fr 1fr; } }
+@media (min-width: 1180px) { .req { grid-template-columns: 1fr 1fr 1fr; } }
 .req .card { min-height: 0; }
 .req h3 { display: flex; align-items: center; gap: 12px; }
 .req h3 svg { width: 26px; height: 26px; fill: var(--text); }

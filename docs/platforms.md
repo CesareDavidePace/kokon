@@ -8,9 +8,9 @@ so model behaviour is identical everywhere; only speed and memory differ.
 | --- | --- | --- |
 | Windows + NVIDIA | CUDA 12 build | ✅ verified (RTX 5070 Ti 16 GB, RTX 5070 12 GB) |
 | Windows + AMD / Intel | Vulkan build (30 MB, uses the driver's Vulkan runtime) | 🟡 beta: works on NVIDIA (RTX 5070 Ti, 2K/20 steps, slower than CUDA); AMD / Intel to verify |
-| macOS + Apple Silicon | Metal build (universal binary, shaders embedded) | 🟡 beta: packaged 0.9.0 runs on an M2 Pro 16 GB (Turbo: ~1 MP in ~4 min 20 s, lightest mode) |
+| macOS + Apple Silicon | Metal build (universal binary, shaders embedded; Kokon's own build for macOS 15 from 0.9.4) | 🟡 beta: packaged 0.9.0 runs on an M2 Pro 16 GB (Turbo: ~1 MP in ~4 min 20 s, lightest mode) |
 | Windows + AMD via ROCm | ROCm build | ✗ not planned: open crashes (#2008), DLL conflicts (#2012), black images with k-quants (#1385) |
-| Linux | Vulkan / CUDA builds exist | later |
+| Linux x86-64 (.deb / .rpm) | Kokon's own CUDA 12.8 and Vulkan builds of the same commit (Ubuntu 22.04, glibc 2.35) | 🟡 beta from 0.9.4: CUDA verified on an RTX 5070 Ti under WSL; Vulkan loads on Ubuntu 22.04/24.04, Debian 12, Fedora 40/42. Details in [linux.md](linux.md) |
 
 ## How the app sizes itself (all platforms)
 
@@ -49,7 +49,7 @@ pass. Kokon uses CFG 1, which is one pass per step.
 | | Minimum | Recommended |
 | --- | --- | --- |
 | **Chip** | Apple M1 or newer (Intel Macs: no) | M-series Pro / Max / Ultra |
-| **macOS** | 26 Tahoe (the engine binary's minimum) | latest |
+| **macOS** | 15 Sequoia (Kokon's engine build; upstream's needs 26) | latest |
 | **Unified memory** | 16 GB: works, but slowly (lightest mode, ~1 MP, ~4–5 min on an M2 Pro) | 32 GB+ (everything stays loaded, Quality 2K) |
 | **Disk** | 15 GB free | 25 GB on the internal SSD |
 

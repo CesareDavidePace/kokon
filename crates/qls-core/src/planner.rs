@@ -645,6 +645,13 @@ pub const TURBO_STEPS: u32 = TURBO_SIGMAS.len() as u32 - 1;
 /// share of the working canvas: enough to locate the area, cheap in tokens.
 pub const INPAINT_GUIDE_AREA: f64 = 0.25;
 
+/// An inpaint paints its region at most this many times its real pixel area (at least
+/// [`INPAINT_MIN_AREA`]): enlarging a small image to the quality tier costs time, and the extra
+/// pixels are thrown away when the patch is shrunk back (1024² painted at 1888²: ~40 s vs ~15 s).
+pub const INPAINT_MAX_ENLARGE: f64 = 1.5;
+/// Smallest inpaint canvas: the model's own ~1 MP, below which it does worse.
+pub const INPAINT_MIN_AREA: u64 = 1024 * 1024;
+
 /// Seconds per sampling step, from RTX 5070 Ti measurements at CFG 6 (two model passes per
 /// step): 1 MP ≈ 2.0 s (1.63 s with SageAttention), 2048x1152 ≈ 5.6 s (3.8 s with
 /// SageAttention). CFG 1 (always, with Turbo) runs one pass, so half of that.
@@ -1000,7 +1007,8 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
             // At least the working size of context around the mask, so the model sees the scene.
             let min_ctx = (area as f64).sqrt() as u32;
             let region = geometry::inpaint_region(src, bbox, min_ctx, 0.55);
-            let l = CanvasLimits { upscale_to_area: Some(area), max_upscale: 4.0, ..limits(area, rec) };
+            let paint_area = area.min(((region.area() as f64 * INPAINT_MAX_ENLARGE) as u64).max(INPAINT_MIN_AREA));
+            let l = CanvasLimits { upscale_to_area: Some(paint_area), max_upscale: 4.0, ..limits(paint_area, rec) };
             working = plan_working_canvas(region.size(), &l);
             if region.size() != src {
                 notes.push(format!("Focused on a {}×{} area around the mask.", region.width, region.height));
@@ -1581,6 +1589,26 @@ mod tests {
         assert_eq!(p.output, Size::new(4032, 3024));
         assert_eq!(p.strength, Some(1.0));
         assert!(p.working.is_aligned(32));
+    }
+
+    #[test]
+    fn small_images_are_not_inpainted_at_the_full_tier() {
+        let painted = |w: u32, h: u32| {
+            let mut r = req("a red hat");
+            r.mask = Some("input:m".into());
+            r.quality = Quality::Quality;
+            let mut i = inputs(&[(w, h)]);
+            i.vram_total_mib = Some(32607);
+            i.mask = Some((Size::new(w, h), Some(Rect::new(w / 4, 0, w / 2, h / 3)), 0.1));
+            let p = plan(&r, &i, &rec()).unwrap();
+            assert_eq!(p.output, Size::new(w, h));
+            p.working.area()
+        };
+        let a = painted(1024, 1024);
+        assert!(a <= 1_650_000 && a >= 1_400_000, "1 MP photo painted at ~1.5 MP, not the 2K tier: {a}");
+        let a = painted(600, 400);
+        assert!((1_000_000..=1_150_000).contains(&a), "small photos get the model's ~1 MP: {a}");
+        assert!(painted(4000, 3000) > 3_000_000, "large photos keep the tier");
     }
 
     #[test]

@@ -1,4 +1,4 @@
-import { CircleAlert, Cpu, FolderOpen, Layers, Palette, Sparkles, ZoomIn } from "lucide-react";
+import { CircleAlert, Laptop, Layers, Monitor, Palette, Wrench, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { formatBytes, installProgress, installStep, installTimeLeft } from "../lib/logic";
@@ -7,38 +7,38 @@ import type { GpuBackend, InstallItem, InstallStatus, ModelsStatus } from "../li
 import { KokonMark } from "./Welcome";
 
 /** The release these notes describe. Shown once to people updating from an earlier version. */
-export const WHATS_NEW_VERSION = "0.9.3";
+export const WHATS_NEW_VERSION = "0.9.4";
 
 const NEWS = [
   {
-    icon: Sparkles,
-    title: "Cleaner images",
-    text: "A new image decoder removes the fine grid pattern that showed on skin, hair and smooth areas. Same speed, same colours.",
-  },
-  {
-    icon: FolderOpen,
-    title: "Use the model files you have",
-    text: "Already downloaded Qwen-Image 2.1 for ComfyUI or another app? Point Kokon at those files instead of downloading them again.",
-  },
-  {
-    icon: ZoomIn,
-    title: "Zoom and pan",
-    text: "Zoom into images in full screen and in the inpaint editor. The painted area now shows on the image while it is being edited.",
-  },
-  {
-    icon: Cpu,
-    title: "Pick your graphics card",
-    text: "On computers with more than one GPU, setup lets you choose which one runs the model and sizes the preset for it.",
-  },
-  {
     icon: Palette,
-    title: "Light and dark",
-    text: "Settings → General → Appearance: System, Light or Dark. Press ? for the keyboard shortcuts.",
+    title: "Colour LUTs",
+    text: "Press LUT under an image: eight built-in looks (Neutral takes out the yellow cast) or your own .cube files. Live preview with an intensity slider; saving makes a new version and keeps the original.",
+  },
+  {
+    icon: Zap,
+    title: "Faster inpainting",
+    text: "Inpainting gives the model a lighter copy of the image and no longer enlarges small photos to 2K: about twice as fast on 1 MP images, and no slowdowns from running out of GPU memory on large ones.",
+  },
+  {
+    icon: Monitor,
+    title: "Kokon on Linux",
+    text: "Now also on Ubuntu, Debian, Mint and Fedora (.deb and .rpm), with NVIDIA CUDA or Vulkan for AMD and Intel cards.",
+  },
+  {
+    icon: Laptop,
+    title: "macOS 15 Sequoia",
+    text: "Kokon now runs on Macs with macOS 15 too, with its own build of the engine.",
+  },
+  {
+    icon: Wrench,
+    title: "Fixes",
+    text: "Square 2K upscales use the upscaler model again instead of Lanczos. RTX 20 and older cards no longer try SageAttention. Uninstalling also removes the app's WebView cache.",
   },
   {
     icon: Layers,
-    title: "Coming in 0.9.4: LoRA",
-    text: "Add LoRAs to your edits, with a weight for each. A curated list of LoRAs tested with Kokon, one click to download, and your own files too.",
+    title: "Coming in 0.10.0: LoRA",
+    text: "LoRA support moved to the next release so Linux could come first. Sorry for the wait: add LoRAs to your edits, with a weight for each, from a curated list or your own files.",
   },
 ];
 

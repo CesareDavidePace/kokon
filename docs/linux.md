@@ -66,7 +66,7 @@ direct-convolution fix and FLUX.3 Klein). When Windows/Mac move to a newer engin
 
 - Build machine: **WSL Ubuntu-22.04** on the dev PC (installed 2026-10-16; sees the RTX 5070 Ti through
   the Windows driver, so CUDA can be tested; windows open through WSLg). Clone on the Linux disk:
-  `git clone -b <branch> /mnt/c/AI/qwen-local-studio ~/kokon` (never build from /mnt/c: npm would replace
+  `git clone -b master /mnt/c/AI/qwen-local-studio ~/kokon` (never build from /mnt/c: npm would replace
   the Windows node_modules). Ubuntu's `cargo` package is too old; use rustup (`. ~/.cargo/env`).
 - Release: `bash scripts/build-release-linux.sh --setup` once, then `bash scripts/build-release-linux.sh`
   → `dist-release/Kokon_<v>_amd64.deb`, `Kokon-<v>-1.x86_64.rpm`, `updater-linux-x86_64-{deb,rpm}.json`.
@@ -85,7 +85,7 @@ direct-convolution fix and FLUX.3 Klein). When Windows/Mac move to a newer engin
 Done
 - ✅ Fork workflow + first engine build; prerelease `kokon-linux-1d0a58a` published (Vulkan loads on
   Ubuntu 22.04/24.04, Debian 12, Fedora 40/42; CUDA finds the RTX 5070 Ti in WSL).
-- ✅ Kokon branch `linux` (commit 9d8ed7f, local): Linux engines in the catalog, manifest ignored on
+- ✅ Kokon `linux` work (9d8ed7f…b4e6802), merged into master and pushed 10-16: Linux engines in the catalog, manifest ignored on
   Linux, AMD GPU detection from /sys/class/drm + pci.ids names, deb/rpm config, bundled resources in
   /usr/lib/Kokon, logs-folder path, kokon-mcp Linux build, updater manifest Linux entries,
   build-release-linux.sh. Windows tests still pass (core 185, UI 128).

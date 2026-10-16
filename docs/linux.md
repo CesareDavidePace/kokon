@@ -1,6 +1,6 @@
 # Linux: plan, status and engine upkeep
 
-Kokon supports **Linux from 0.9.3** (x86_64, `.deb` + `.rpm`, NVIDIA CUDA and Vulkan for AMD/Intel),
+Kokon supports **Linux from 0.9.4** (x86_64, `.deb` + `.rpm`, NVIDIA CUDA and Vulkan for AMD/Intel),
 next to Windows and macOS. Every release from now on ships all three.
 
 ## The plan (decided 2026-10-16)
@@ -9,11 +9,11 @@ The app is already client/server: the UI talks to `kokon-service` only over HTTP
 `src/lib/api.ts`); the desktop shell just starts the service and hands the UI `127.0.0.1` + token
 (`src-tauri/src/lib.rs` `connect`). So the three steps are one product started three ways:
 
-1. **Native Linux app** (this document, 0.9.3). Same app as Windows/Mac: local service on 127.0.0.1.
+1. **Native Linux app** (this document, 0.9.4). Same app as Windows/Mac: local service on 127.0.0.1.
 2. **Headless server + browser UI**, then **Docker**. `kokon-service` serves the built UI itself;
    network access is opt-in, off by default, with a real password (rate-limited) before anything
    listens beyond localhost; recommend Tailscale/VPN over exposing it. Docker = the same Linux build
-   without a window, model folders mounted as volumes.
+   without a window, model folders mounted as volumes. Planned as 0.11.0.
 3. **Kokon as a client**: the desktop app (Windows/Mac/Linux) connects to a Kokon server elsewhere.
    "Connect to a server" in Setup/Settings (address + password); `connect` returns the remote URL.
    Needs: copy-image by bytes instead of a local path (`Stage.tsx` → `copy_image`), hide "Show in
@@ -92,14 +92,14 @@ Done
 - ✅ First Linux compile in WSL OK; app opens, detects RTX 5070 Ti 16 GB, picks CUDA + 16 GB preset,
   install folder ~/.local/share/KokonData/sdcpp.
 
-To do for "0.9.3 for Linux"
+To do for 0.9.4 (Linux + fixes for every platform)
 - ✅ Engine sizes and SHA-256 pinned in catalog.rs (from GitHub's asset digests).
 - [ ] Full test in WSL: Install → CUDA engine download → one image + one edit on the 5070 Ti.
 - [ ] `build-release-linux.sh` end to end (tests, kokon-mcp, deb + rpm, signatures). Install the .deb in
       a clean WSL distro; ideally also Fedora (`wsl --install -d FedoraLinux-42`) and Debian.
-- [ ] Merge `linux` into master (no app change for Windows/Mac), add the .deb/.rpm to the v0.9.3 release,
-      merge the Linux entries into v0.9.3's `latest.json` (download it, add the two platforms, re-upload;
-      Windows/Mac entries unchanged).
+- [ ] Ship as **0.9.4 on all three platforms** (not as extra 0.9.3 assets: one version = one code).
+      The `linux` branch also fixes, for everyone, square 2K upscales that fell back to Lanczos and the
+      prompt box height on Linux. `latest.json` gets `linux-x86_64-deb` / `linux-x86_64-rpm` entries.
 - [ ] README (platform table, badges, install commands `sudo apt install ./Kokon_…deb` /
       `sudo dnf install ./Kokon-…rpm`), site download button + FAQ, release notes section, bug-report
       template OS list, docs/platforms.md.

@@ -20,9 +20,18 @@ pub struct GpuInfo {
     pub memory_used_mib: u64,
     pub memory_free_mib: u64,
     pub driver_version: String,
+    /// NVIDIA compute capability, e.g. "7.5" (empty when unknown: other vendors, old drivers).
+    pub compute_capability: String,
 }
 
 impl GpuInfo {
+    /// An NVIDIA card older than Ampere (compute capability below 8.0, e.g. an RTX 2080 Ti):
+    /// the engine's SageAttention kernels need SM80+ and log an error instead. Unknown
+    /// capability counts as supported.
+    pub fn lacks_sage_attention(&self) -> bool {
+        self.vendor == "nvidia" && self.compute_capability.split('.').next().and_then(|m| m.parse::<u32>().ok()).is_some_and(|m| m < 8)
+    }
+
     /// Memory the planner may use for the diffusion model, as on a discrete card. Apple
     /// Silicon shares it with the system and the text encoder
     /// (`planner::unified_memory_planning_mib`).
@@ -89,7 +98,7 @@ fn query_apple() -> Option<Vec<GpuInfo>> {
         }
         let total = read("hw.memsize")?.parse::<u64>().ok()? / (1024 * 1024);
         let name = read("machdep.cpu.brand_string").unwrap_or_else(|| "Apple Silicon".into());
-        Some(GpuInfo { name, vendor: "apple".into(), unified: true, memory_total_mib: total, memory_used_mib: 0, memory_free_mib: total, driver_version: String::new() })
+        Some(GpuInfo { name, vendor: "apple".into(), unified: true, memory_total_mib: total, memory_used_mib: 0, memory_free_mib: total, ..Default::default() })
     })
     .clone()
     .map(|g| vec![g])
@@ -102,20 +111,23 @@ fn query_apple() -> Option<Vec<GpuInfo>> {
 
 /// NVIDIA GPUs through nvidia-smi (ships with the driver). None if unavailable.
 fn query_nvidia() -> Option<Vec<GpuInfo>> {
+    // Drivers before compute_cap existed (R510) reject the whole query: ask again without it.
+    let fields = "name,memory.total,memory.used,memory.free,driver_version";
+    let text = nvidia_smi(&format!("{fields},compute_cap")).or_else(|| nvidia_smi(fields))?;
+    let gpus: Vec<GpuInfo> = text.lines().filter_map(parse_gpu_line).collect();
+    (!gpus.is_empty()).then_some(gpus)
+}
+
+fn nvidia_smi(fields: &str) -> Option<String> {
     let mut cmd = std::process::Command::new("nvidia-smi");
-    cmd.args(["--query-gpu=name,memory.total,memory.used,memory.free,driver_version", "--format=csv,noheader,nounits"]);
+    cmd.args([format!("--query-gpu={fields}").as_str(), "--format=csv,noheader,nounits"]);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000);
     }
     let out = cmd.output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&out.stdout);
-    let gpus: Vec<GpuInfo> = text.lines().filter_map(parse_gpu_line).collect();
-    (!gpus.is_empty()).then_some(gpus)
+    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 pub fn parse_gpu_line(line: &str) -> Option<GpuInfo> {
@@ -131,6 +143,7 @@ pub fn parse_gpu_line(line: &str) -> Option<GpuInfo> {
         memory_used_mib: f[2].parse().ok()?,
         memory_free_mib: f[3].parse().ok()?,
         driver_version: f[4].to_string(),
+        compute_capability: f.get(5).filter(|c| c.parse::<f32>().is_ok()).map(|c| c.to_string()).unwrap_or_default(),
     })
 }
 
@@ -169,6 +182,7 @@ fn query_dxgi() -> Option<Vec<GpuInfo>> {
             memory_used_mib: 0,
             memory_free_mib: total,
             driver_version: String::new(),
+            compute_capability: String::new(),
         });
     }
     gpus.sort_by(|a, b| b.memory_total_mib.cmp(&a.memory_total_mib));
@@ -206,6 +220,7 @@ fn query_drm() -> Option<Vec<GpuInfo>> {
             memory_used_mib: used,
             memory_free_mib: total.saturating_sub(used),
             driver_version: String::new(),
+            compute_capability: String::new(),
         });
     }
     gpus.sort_by(|a, b| b.memory_total_mib.cmp(&a.memory_total_mib));
@@ -382,6 +397,14 @@ mod tests {
         assert_eq!(g.driver_version, "617.14");
         assert!(parse_gpu_line("garbage").is_none());
         assert_eq!(g.vendor, "nvidia");
+        assert!(g.compute_capability.is_empty() && !g.lacks_sage_attention(), "old driver: unknown, kept on");
+        let g = parse_gpu_line("NVIDIA GeForce RTX 5070 Ti, 16303, 2312, 13991, 617.14, 12.0").unwrap();
+        assert_eq!(g.compute_capability, "12.0");
+        assert!(!g.lacks_sage_attention());
+        let turing = parse_gpu_line("NVIDIA GeForce RTX 2080 Ti, 11264, 500, 10764, 581.57, 7.5").unwrap();
+        assert!(turing.lacks_sage_attention(), "SageAttention needs SM80+");
+        assert!(!parse_gpu_line("NVIDIA GeForce RTX 3060, 12288, 0, 12288, 581.57, 8.6").unwrap().lacks_sage_attention());
+        assert!(!parse_gpu_line("NVIDIA GeForce RTX 3060, 12288, 0, 12288, 581.57, [N/A]").unwrap().lacks_sage_attention());
         assert_eq!(g.planning_mib(), 16303);
         let mac = GpuInfo { name: "Apple M2 Pro".into(), vendor: "apple".into(), unified: true, memory_total_mib: 16384, ..Default::default() };
         assert!(mac.planning_mib() < 6 * 1024, "16 GB Mac plans like a small card");

@@ -292,6 +292,11 @@ pub struct AppConfig {
     /// steps at 2K on an RTX 5070 Ti with near-identical output. CUDA only (SM80+);
     /// ignored by other engines.
     pub sage_attention: bool,
+    /// The card the engine runs on is too old for SageAttention (`GpuInfo::lacks_sage_attention`).
+    /// Set by `Engine::config` from the detected GPU and shown in Settings; never read from
+    /// the settings file.
+    #[serde(skip_deserializing)]
+    pub sage_unsupported: bool,
     /// VAE tile size in pixels (`--vae-tiling --vae-tile-size N`); 0 disables tiling.
     /// Untiled 2K decodes need ~18 GB, OOM and retry with 256px tiles (~22 s); 768px
     /// tiles decode 2K in ~4 s on a 16 GB card.
@@ -349,6 +354,7 @@ impl Default for AppConfig {
             vram_reserve_gib: 1.0,
             flash_attention: true,
             sage_attention: true,
+            sage_unsupported: false,
             vae_tile_size: 768,
             prefix_cache_type: "q8_0".into(),
             eager_load: true,
@@ -707,9 +713,9 @@ impl AppConfig {
         }
     }
 
-    /// SageAttention is requested and the engine supports it.
+    /// SageAttention is requested and the engine and card support it.
     pub fn uses_sage_attention(&self) -> bool {
-        self.sage_attention && self.gpu_backend == GpuBackend::Cuda
+        self.sage_attention && !self.sage_unsupported && self.gpu_backend == GpuBackend::Cuda
     }
 
     /// Folder of the upscaler (`--hires-upscalers-dir`).
@@ -919,6 +925,11 @@ mod tests {
         assert_eq!(c.engine_dir(), c.sdcpp_dir);
         assert_eq!(c.effective_device(), "cuda0");
         assert!(c.uses_sage_attention());
+        c.sage_unsupported = true;
+        assert!(!c.uses_sage_attention(), "pre-Ampere card");
+        let saved: AppConfig = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+        assert!(!saved.sage_unsupported, "detected per run, not read back");
+        c.sage_unsupported = false;
         c.gpu_backend = GpuBackend::Vulkan;
         assert_eq!(c.engine_dir(), c.sdcpp_dir.join("engine-vulkan"));
         assert!(c.server_exe().starts_with(c.sdcpp_dir.join("engine-vulkan")));

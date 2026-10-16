@@ -493,10 +493,13 @@ export function Settings() {
                 <Switch on={cfg.flashAttention} onChange={(v) => set({ flashAttention: v })} />
               </div>
               {cfg.gpuBackend === "cuda" && (
-                <div className="field-row">
-                  <span>SageAttention (faster sampling)</span>
-                  <Switch on={cfg.sageAttention} onChange={(v) => set({ sageAttention: v })} />
-                </div>
+                <>
+                  <div className="field-row">
+                    <span>SageAttention (faster sampling)</span>
+                    <Switch on={cfg.sageAttention && !cfg.sageUnsupported} disabled={cfg.sageUnsupported} onChange={(v) => set({ sageAttention: v })} />
+                  </div>
+                  {cfg.sageUnsupported && <span className="muted" style={{ marginTop: -10 }}>Needs an RTX 30 series or newer card; off on this one.</span>}
+                </>
               )}
               <label className="field-row">
                 <span>VAE tile size (px, 0 = off)</span>

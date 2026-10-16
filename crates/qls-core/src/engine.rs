@@ -182,7 +182,29 @@ impl Engine {
     }
 
     pub fn config(&self) -> AppConfig {
-        self.cfg.read().unwrap().clone()
+        let mut cfg = self.cfg.read().unwrap().clone();
+        cfg.sage_unsupported = self.lacks_sage_attention(&cfg);
+        cfg
+    }
+
+    /// The card `cfg` runs the CUDA engine on can't run SageAttention. Uses the cached card
+    /// list (queried once if empty) and engine devices, never `config()` or an engine probe.
+    fn lacks_sage_attention(&self, cfg: &AppConfig) -> bool {
+        if cfg.gpu_backend != crate::config::GpuBackend::Cuda {
+            return false;
+        }
+        let cached = {
+            let g = self.gpus.lock().unwrap();
+            g.0.is_some().then(|| g.1.clone())
+        };
+        let cards = cached.unwrap_or_else(|| self.gpus());
+        let i = if cards.len() < 2 {
+            0
+        } else {
+            let devices = self.devices.lock().unwrap().as_ref().map(|d| d.2.clone()).unwrap_or_default();
+            crate::diagnostics::card_for_device(&devices, &cards, &cfg.effective_device(), cfg.gpu_backend.device_prefix()).unwrap_or(0)
+        };
+        cards.get(i).is_some_and(GpuInfo::lacks_sage_attention)
     }
 
     /// Replaces the configuration. Returns true when the backend must restart.
@@ -191,7 +213,9 @@ impl Engine {
         new.normalize();
         new.validate()?;
         new.save()?;
+        new.sage_unsupported = self.lacks_sage_attention(&new);
         let mut g = self.cfg.write().unwrap();
+        g.sage_unsupported = self.lacks_sage_attention(&g);
         let restart = crate::process::build_server_args(&g, g.profile()) != crate::process::build_server_args(&new, new.profile())
             || g.sdcpp_dir != new.sdcpp_dir
             || g.gpu_backend != new.gpu_backend;

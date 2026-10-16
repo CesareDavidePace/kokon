@@ -233,6 +233,8 @@ export interface AppConfig {
   vramReserveGib: number;
   flashAttention: boolean;
   sageAttention: boolean;
+  /** The card is too old for SageAttention (before RTX 30 / compute capability 8.0); detected, read-only. */
+  sageUnsupported?: boolean;
   vaeTileSize: number;
   prefixCacheType: string;
   eagerLoad: boolean;

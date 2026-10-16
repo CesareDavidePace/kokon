@@ -512,7 +512,7 @@ async fn diagnostics_json(State(s): St) -> ApiResult<Json<Value>> {
         match &gpus {
             Some(g) => {
                 for x in g {
-                    let _ = writeln!(text, "{} — {} MiB total, {} MiB used, {} MiB free, driver {}", x.name, x.memory_total_mib, x.memory_used_mib, x.memory_free_mib, x.driver_version);
+                    let _ = writeln!(text, "{} — {} MiB total, {} MiB used, {} MiB free, driver {}{}", x.name, x.memory_total_mib, x.memory_used_mib, x.memory_free_mib, x.driver_version, if x.compute_capability.is_empty() { String::new() } else { format!(", compute capability {}", x.compute_capability) });
                 }
             }
             None => {
@@ -557,7 +557,7 @@ async fn diagnostics_json(State(s): St) -> ApiResult<Json<Value>> {
             };
             let _ = writeln!(text, "{label}: {} ({state})", p.display());
         }
-        let _ = writeln!(text, "Device: {}, text encoder: {:?}, VRAM reserve: {} GiB, flash attention: {}, sage attention: {}", cfg.device, cfg.text_encoder_placement, cfg.vram_reserve_gib, cfg.flash_attention, cfg.sage_attention);
+        let _ = writeln!(text, "Device: {}, text encoder: {:?}, VRAM reserve: {} GiB, flash attention: {}, sage attention: {} (in use: {})", cfg.device, cfg.text_encoder_placement, cfg.vram_reserve_gib, cfg.flash_attention, cfg.sage_attention, cfg.uses_sage_attention());
         let _ = writeln!(text, "VAE tile size: {}, upscale tile size: {}", cfg.vae_tile_size, cfg.upscale_tile_size);
         let up = diagnostics::upscaler_check(&cfg);
         let model = cfg.upscaler().map(|u| u.0).unwrap_or_default();

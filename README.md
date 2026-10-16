@@ -130,8 +130,8 @@ seeds and times are in [marketing/showcase/PROMPTS.md](marketing/showcase/PROMPT
   administrator rights.
 - **Mac (Apple Silicon, beta):** `Kokon_<version>_aarch64.dmg`. Open it and drag Kokon to
   Applications. The first time, macOS blocks it because the app is not notarized by Apple:
-  open System Settings → Privacy & Security and click **Open Anyway**
-  ([details](#macos-says-kokon-cannot-be-opened)).
+  open System Settings → Privacy & Security and click **Open Anyway**, or run one Terminal
+  command if there is no such button ([details](#macos-says-kokon-cannot-be-opened)).
 
 **2. Set up models.** On first launch Kokon shows your graphics card (or your Mac's chip and
 memory), recommends a preset and downloads everything it needs. The download resumes if it is
@@ -438,6 +438,16 @@ it the first time. You only do this once; in-app updates don't trigger it again.
    <img src="docs/media/mac/open-anyway.png" alt="System Settings, Privacy and Security: “Kokon” was blocked to protect your Mac, with the Open Anyway button highlighted" width="560">
 
 3. Open Kokon again and click **Open** in the last prompt.
+
+If macOS instead only says **The application “Kokon” can't be opened**, with just an **OK**
+button, and Privacy & Security shows no *Open Anyway*: open **Terminal** and run
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Kokon.app
+```
+
+then open Kokon as usual. This removes the "downloaded from the internet" flag from Kokon only;
+Gatekeeper stays on for everything else.
 
 You can also [build it yourself](#build-from-source).
 

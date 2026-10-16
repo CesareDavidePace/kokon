@@ -175,7 +175,7 @@
    "name": "macOS says Kokon cannot be opened. What do I do?",
    "acceptedAnswer": {
     "@type": "Answer",
-    "text": "The beta is not notarized by Apple yet, so macOS blocks it the first time. Try to open it once, then go to System Settings, Privacy & Security, scroll down and click \"Open Anyway\". You only do this once; in-app updates don't trigger it again."
+    "text": "The beta is not notarized by Apple yet, so macOS blocks it the first time. Try to open it once, then go to System Settings, Privacy & Security, scroll down and click \"Open Anyway\". You only do this once; in-app updates don't trigger it again. If macOS only says the app can't be opened, with just an OK button and no Open Anyway in Settings, run xattr -dr com.apple.quarantine /Applications/Kokon.app in Terminal, then open Kokon."
    }
   },
   {
@@ -467,6 +467,7 @@
             <li>Open <strong>System Settings &rarr; Privacy &amp; Security</strong> and scroll down to <strong>Security</strong>. Next to &ldquo;Kokon&rdquo; was blocked to protect your Mac, click <strong>Open Anyway</strong> and confirm with your password or Touch ID.<img class="settings" src="assets/mac/open-anyway.webp" width="970" height="360" alt="System Settings, Privacy and Security: &ldquo;Kokon&rdquo; was blocked to protect your Mac, with the Open Anyway button highlighted" loading="lazy"></li>
             <li>Open Kokon again and click <strong>Open</strong>. You only do this once; in-app updates don&#39;t trigger it again.</li>
           </ol>
+          <p>If macOS instead only says <strong>The application &ldquo;Kokon&rdquo; can&#39;t be opened</strong>, with just an <strong>OK</strong> button, and Privacy &amp; Security shows no <em>Open Anyway</em>: open <strong>Terminal</strong>, run <code>xattr -dr com.apple.quarantine /Applications/Kokon.app</code>, then open Kokon as usual. This removes the &ldquo;downloaded from the internet&rdquo; flag from Kokon only.</p>
         </details>
         <details><summary>How do I write good prompts for Qwen-Image 2.1?</summary><p>Describe the scene, not just the subject: who, doing what, where, in what light. Never write &ldquo;no X&rdquo; (it adds X), put text in quotes, and for edits name the exact thing to change. The <a href="prompt-guide/" style="text-decoration:underline">prompt guide</a> shows each rule with a vague and a clear prompt side by side.</p></details>
         <details><summary>Does it work offline?</summary><p>Yes. After setup has downloaded the models, everything runs offline.</p></details>

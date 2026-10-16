@@ -120,6 +120,7 @@
       <li>Open <strong>System Settings &rarr; Privacy &amp; Security</strong> and scroll down to <strong>Security</strong>. Next to &ldquo;Kokon&rdquo; was blocked to protect your Mac, click <strong>Open Anyway</strong> and confirm with your password or Touch ID.<img class="settings" src="../assets/mac/open-anyway.webp" width="970" height="360" alt="System Settings, Privacy and Security: &ldquo;Kokon&rdquo; was blocked to protect your Mac, with the Open Anyway button highlighted" loading="lazy"></li>
       <li>Open Kokon again and click <strong>Open</strong>. You only do this once; in-app updates don&#39;t trigger it again.</li>
     </ol>
+    <p>If macOS instead only says <strong>The application &ldquo;Kokon&rdquo; can&#39;t be opened</strong>, with just an <strong>OK</strong> button, and Privacy &amp; Security shows no <em>Open Anyway</em>: open <strong>Terminal</strong>, run <code>xattr -dr com.apple.quarantine /Applications/Kokon.app</code>, then open Kokon as usual. This removes the &ldquo;downloaded from the internet&rdquo; flag from Kokon only.</p>
 
     <h2>Step 2: Let it download the model</h2>
     <p>On first launch Kokon shows your graphics card (or your Mac's chip and memory) and recommends a preset. It downloads what it needs: the stable-diffusion.cpp engine, <strong>Qwen-Image 2.1 Turbo</strong> as a 4-bit GGUF (about 4 GB), the Qwen3-VL text encoder and the VAE, about 12 GB in total. Downloads resume if interrupted, and every file is checked against a pinned SHA-256 hash.</p>

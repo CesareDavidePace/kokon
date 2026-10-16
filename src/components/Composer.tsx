@@ -293,8 +293,22 @@ export function Composer() {
   useEffect(() => {
     const ta = taRef.current;
     if (!ta) return;
-    ta.style.height = "auto";
-    ta.style.height = Math.min(200, ta.scrollHeight) + "px";
+    const fit = () => {
+      ta.style.height = "auto";
+      ta.style.height = Math.min(200, ta.scrollHeight) + "px";
+    };
+    fit();
+    // Also when its width changes: WebKitGTK (Linux) lays the box out while the window is still
+    // hidden at startup, so the first measure wraps the placeholder into a column.
+    let width = ta.clientWidth;
+    const ro = new ResizeObserver(() => {
+      if (ta.clientWidth !== width) {
+        width = ta.clientWidth;
+        fit();
+      }
+    });
+    ro.observe(ta);
+    return () => ro.disconnect();
   }, [c.prompt]);
 
   const outPx = hasOutpaint(c.outpaint) && c.refs[0] ? expansionPixels(c.outpaint!, c.refs[0].width, c.refs[0].height) : null;

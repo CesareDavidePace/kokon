@@ -929,7 +929,7 @@ impl Engine {
             let (inp, t) = (input.clone(), *tile);
             let png = blocking(move || pipeline::tile_png_b64(&inp, &t)).await?;
             let resp = client.upscale(&UpscaleRequest { image: png, upscaler: Some(upscaler.to_string()), tile_size: (tile_px > 0).then_some(tile_px), output_format: "png".into() }).await?;
-            let up = blocking(move || Ok(imaging::decode_image(&crate::sdcpp::b64_decode(&resp.images[0].b64_json)?)?.pixels)).await?;
+            let up = blocking(move || imaging::decode_engine_image(&crate::sdcpp::b64_decode(&resp.images[0].b64_json)?, pipeline::ESRGAN_MAX_OUTPUT_SIDE)).await?;
             stitcher.add(tile, &up)?;
         }
         Ok(Some(blocking(move || stitcher.finish(&content)).await?))

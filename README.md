@@ -188,8 +188,10 @@ from then on.
 
 > [!NOTE]
 > NVIDIA cards run on the CUDA engine, the fastest and tested path. AMD and Intel cards use the
-> **Vulkan engine (beta)**: it works on NVIDIA, but nobody has tried it on a real AMD or Intel
-> card yet, so please [report how it goes](https://github.com/GabrieleLozupone/kokon/issues).
+> **Vulkan engine (beta)**. First user report on AMD: an RX 9060 XT 16 GB on Windows made a 16:9
+> 1080p image at Balanced in about 80 s (the first image after start, model loading included),
+> with edits quicker after that. Intel is still untested, so please
+> [report how it goes](https://github.com/GabrieleLozupone/kokon/issues).
 > Vulkan is slower than CUDA, and its first image takes longer. Macs use the **Metal engine
 > (beta)**, tested so far on a 16 GB M2 Pro. On Linux Kokon ships its own CUDA and Vulkan builds
 > of the same engine, tested so far on an RTX 5070 Ti under WSL. Details in
@@ -493,8 +495,9 @@ General.
 <br>
 
 AMD and Intel: in beta. The setup screen installs stable-diffusion.cpp's Vulkan build for
-them, which uses the graphics driver you already have. It works on NVIDIA cards, but it has not
-been verified on a real AMD or Intel card yet; integrated graphics are not supported. Please
+them, which uses the graphics driver you already have. A user's RX 9060 XT 16 GB made a 1080p
+image at Balanced in about 80 s (first image, model loading included); Intel Arc is still
+untested, and integrated graphics are not supported. Please
 [open an issue](https://github.com/GabrieleLozupone/kokon/issues) with your card and how it went.
 
 Mac: yes, in beta, on Apple Silicon (M1 or newer) with macOS 15 Sequoia or newer. It runs on a

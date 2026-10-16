@@ -7,7 +7,7 @@ so model behaviour is identical everywhere; only speed and memory differ.
 | Platform | Engine | Status |
 | --- | --- | --- |
 | Windows + NVIDIA | CUDA 12 build | ✅ verified (RTX 5070 Ti 16 GB, RTX 5070 12 GB) |
-| Windows + AMD / Intel | Vulkan build (30 MB, uses the driver's Vulkan runtime) | 🟡 beta: works on NVIDIA (RTX 5070 Ti, 2K/20 steps, slower than CUDA); AMD / Intel to verify |
+| Windows + AMD / Intel | Vulkan build (30 MB, uses the driver's Vulkan runtime) | 🟡 beta: works on NVIDIA (RTX 5070 Ti, 2K/20 steps, slower than CUDA); first AMD user report: RX 9060 XT 16 GB, 16:9 1080p Balanced ~80 s on the first image (incl. model load), no errors; Intel to verify |
 | macOS + Apple Silicon | Metal build (universal binary, shaders embedded; Kokon's own build for macOS 15 from 0.9.4) | 🟡 beta: packaged 0.9.0 runs on an M2 Pro 16 GB (Turbo: ~1 MP in ~4 min 20 s, lightest mode) |
 | Windows + AMD via ROCm | ROCm build | ✗ not planned: open crashes (#2008), DLL conflicts (#2012), black images with k-quants (#1385) |
 | Linux x86-64 (.deb / .rpm) | Kokon's own CUDA 12.8 and Vulkan builds of the same commit (Ubuntu 22.04, glibc 2.35) | 🟡 beta from 0.9.4: CUDA verified on an RTX 5070 Ti under WSL; Vulkan loads on Ubuntu 22.04/24.04, Debian 12, Fedora 40/42. Details in [linux.md](linux.md) |

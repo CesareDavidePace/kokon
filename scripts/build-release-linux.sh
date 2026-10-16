@@ -20,7 +20,8 @@ if [ "${1:-}" = "--setup" ]; then
   sudo apt-get update
   sudo apt-get install -y build-essential curl wget file pkg-config libssl-dev libgtk-3-dev \
     libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf
-  command -v cargo >/dev/null || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+  # Not Ubuntu's cargo package (too old for this workspace): rustup's current stable.
+  command -v rustup >/dev/null || [ -x "$HOME/.cargo/bin/rustup" ] || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
   if ! node --version 2>/dev/null | grep -q '^v2[2-9]'; then
     curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
     sudo apt-get install -y nodejs
@@ -30,6 +31,7 @@ if [ "${1:-}" = "--setup" ]; then
 fi
 
 . "$HOME/.cargo/env" 2>/dev/null || true
+cargo --version | grep -qE "^cargo 1.(8[4-9]|9[0-9]|[1-9][0-9]{2})" || { echo "✗ $(cargo --version) is too old (Ubuntu's package?): sudo apt remove cargo rustc, then run with --setup."; exit 1; }
 for c in cargo node npm pkg-config; do command -v "$c" >/dev/null || { echo "✗ $c not found: run with --setup first."; exit 1; }; done
 pkg-config --exists webkit2gtk-4.1 || { echo "✗ webkit2gtk-4.1 not found: run with --setup first."; exit 1; }
 

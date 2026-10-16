@@ -233,9 +233,9 @@ const LINUX_CUDART_SIZE: u64 = 0;
 #[cfg(target_os = "linux")]
 const LINUX_CUDART_SHA256: &str = "";
 #[cfg(target_os = "linux")]
-const LINUX_VULKAN_SIZE: u64 = 0;
+const LINUX_VULKAN_SIZE: u64 = 38_456_278;
 #[cfg(target_os = "linux")]
-const LINUX_VULKAN_SHA256: &str = "";
+const LINUX_VULKAN_SHA256: &str = "d998e8b831e9228571e7203020f503a3fea70b87f57ba5e0a106ae4e3afb7f60";
 
 /// Same commit, macOS build: universal binary with the Metal shaders embedded, needs
 /// macOS 26. Ad-hoc signed; downloaded by the app (not a browser) it gets no quarantine flag.

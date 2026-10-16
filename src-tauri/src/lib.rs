@@ -69,7 +69,7 @@ fn service_exe() -> Option<PathBuf> {
     let me = std::env::current_exe().ok()?;
     let dir = me.parent()?;
     // Bundled sidecar (Tauri strips the target suffix) or a dev build next to the shell.
-    for name in ["kokon-service.exe", "kokon-service-x86_64-pc-windows-msvc.exe", "kokon-service", "kokon-service-aarch64-apple-darwin"] {
+    for name in ["kokon-service.exe", "kokon-service-x86_64-pc-windows-msvc.exe", "kokon-service", "kokon-service-aarch64-apple-darwin", "kokon-service-x86_64-unknown-linux-gnu"] {
         let p = dir.join(name);
         if p.is_file() {
             return Some(p);

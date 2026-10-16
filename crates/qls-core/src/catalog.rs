@@ -120,6 +120,7 @@ const SDCPP_RELEASE: &str = "https://github.com/leejet/stable-diffusion.cpp/rele
 /// MoSR upscaler merged (PR #2128, commit 792bcd3), plus automatic flash-attention and
 /// direct/implicit-GEMM convolution selection. CUDA 12 build; it runs on RTX 20xx to RTX 50xx.
 /// Sizes and SHA-256 from GitHub's asset digests.
+#[cfg(not(target_os = "linux"))]
 pub const ENGINE_CUDA: Download = Download {
     id: "engine_cuda",
     label: "stable-diffusion.cpp (CUDA 12)",
@@ -135,6 +136,7 @@ pub const ENGINE_CUDA: Download = Download {
 };
 
 /// CUDA 12.8.1, unchanged since the upstream release: no marker, never downloaded again.
+#[cfg(not(target_os = "linux"))]
 pub const CUDA_RUNTIME: Download = Download {
     id: "cuda_runtime",
     label: "CUDA 12 runtime (cuBLAS)",
@@ -152,6 +154,7 @@ pub const CUDA_RUNTIME: Download = Download {
 /// Same commit, Vulkan build: AMD, Intel and NVIDIA cards through the GPU driver's Vulkan
 /// runtime (nothing else to install). Kept in its own folder so it can sit next to the
 /// CUDA build.
+#[cfg(not(target_os = "linux"))]
 pub const ENGINE_VULKAN: Download = Download {
     id: "engine_vulkan",
     label: "stable-diffusion.cpp (Vulkan)",
@@ -165,6 +168,74 @@ pub const ENGINE_VULKAN: Download = Download {
     provides: &["engine-vulkan/sd-server.exe", "engine-vulkan/stable-diffusion.dll", "engine-vulkan/ggml-vulkan.dll"],
     engine_tag: Some(ENGINE_TAG),
 };
+
+/// Linux builds of the same commit, made by Kokon: upstream's Linux zips need glibc 2.38 (no
+/// Ubuntu 22.04 / Debian 12) and have no CUDA variant. Built on Ubuntu 22.04 with upstream's flags
+/// and CUDA architectures by `.github/workflows/kokon-linux.yml` on the kokon-linux branch of
+/// Kokon's stable-diffusion.cpp fork, smoke-tested on Ubuntu 22.04/24.04, Debian 12, Fedora 40/42.
+/// The libraries find each other and the CUDA runtime next to them (RPATH `$ORIGIN`).
+#[cfg(target_os = "linux")]
+const KOKON_LINUX_RELEASE: &str = "https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/tag/kokon-linux-1d0a58a";
+
+#[cfg(target_os = "linux")]
+pub const ENGINE_CUDA: Download = Download {
+    id: "engine_cuda",
+    label: "stable-diffusion.cpp (CUDA 12)",
+    kind: FileKind::Engine,
+    url: "https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/download/kokon-linux-1d0a58a/sd-master-1d0a58a-bin-Linux-Ubuntu-22.04-x86_64-cuda12.zip",
+    fallback_urls: &[],
+    page: KOKON_LINUX_RELEASE,
+    size: LINUX_CUDA_SIZE,
+    sha256: LINUX_CUDA_SHA256,
+    dest: "sd-master-1d0a58a-bin-Linux-Ubuntu-22.04-x86_64-cuda12.zip",
+    provides: &["sd-server", "libstable-diffusion.so", "libggml-cuda.so"],
+    engine_tag: Some(ENGINE_TAG),
+};
+
+/// CUDA 12.8 runtime libraries (NVIDIA redistributables), next to the CUDA engine.
+#[cfg(target_os = "linux")]
+pub const CUDA_RUNTIME: Download = Download {
+    id: "cuda_runtime",
+    label: "CUDA 12 runtime (cuBLAS)",
+    kind: FileKind::Engine,
+    url: "https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/download/kokon-linux-1d0a58a/cudart-sd-bin-linux-cu12-x64.zip",
+    fallback_urls: &[],
+    page: KOKON_LINUX_RELEASE,
+    size: LINUX_CUDART_SIZE,
+    sha256: LINUX_CUDART_SHA256,
+    dest: "cudart-sd-bin-linux-cu12-x64.zip",
+    provides: &["libcudart.so.12", "libcublas.so.12", "libcublasLt.so.12"],
+    engine_tag: None,
+};
+
+#[cfg(target_os = "linux")]
+pub const ENGINE_VULKAN: Download = Download {
+    id: "engine_vulkan",
+    label: "stable-diffusion.cpp (Vulkan)",
+    kind: FileKind::Engine,
+    url: "https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/download/kokon-linux-1d0a58a/sd-master-1d0a58a-bin-Linux-Ubuntu-22.04-x86_64-vulkan.zip",
+    fallback_urls: &[],
+    page: KOKON_LINUX_RELEASE,
+    size: LINUX_VULKAN_SIZE,
+    sha256: LINUX_VULKAN_SHA256,
+    dest: "engine-vulkan/sd-master-1d0a58a-bin-Linux-Ubuntu-22.04-x86_64-vulkan.zip",
+    provides: &["engine-vulkan/sd-server", "engine-vulkan/libstable-diffusion.so", "engine-vulkan/libggml-vulkan.so"],
+    engine_tag: Some(ENGINE_TAG),
+};
+
+// FILL FROM THE kokon-linux-1d0a58a RELEASE (SHA256SUMS.txt).
+#[cfg(target_os = "linux")]
+const LINUX_CUDA_SIZE: u64 = 0;
+#[cfg(target_os = "linux")]
+const LINUX_CUDA_SHA256: &str = "";
+#[cfg(target_os = "linux")]
+const LINUX_CUDART_SIZE: u64 = 0;
+#[cfg(target_os = "linux")]
+const LINUX_CUDART_SHA256: &str = "";
+#[cfg(target_os = "linux")]
+const LINUX_VULKAN_SIZE: u64 = 0;
+#[cfg(target_os = "linux")]
+const LINUX_VULKAN_SHA256: &str = "";
 
 /// Same commit, macOS build: universal binary with the Metal shaders embedded, needs
 /// macOS 26. Ad-hoc signed; downloaded by the app (not a browser) it gets no quarantine flag.
@@ -248,6 +319,10 @@ fn version_tuple(v: &str) -> Option<(u32, u32, u32)> {
 /// the built-in pins (an app update that pins a newer engine is never downgraded by an old
 /// manifest). Returns whether it is now in use.
 pub fn apply_engine_release(m: &EngineManifest, app_version: &str) -> Result<bool, String> {
+    // The manifest lists upstream's Windows and Mac builds; Linux keeps Kokon's own pinned build.
+    if cfg!(target_os = "linux") {
+        return Ok(false);
+    }
     let (Some(n), Some(builtin)) = (release_number(&m.tag), release_number(ENGINE_TAG)) else {
         return Err(format!("not an upstream release tag: {}", m.tag));
     };
@@ -668,7 +743,8 @@ mod tests {
         // Every engine build is marked with this release; the unchanged CUDA runtime is not.
         for d in [ENGINE_CUDA, ENGINE_VULKAN, ENGINE_METAL] {
             assert_eq!(d.engine_tag, Some(ENGINE_TAG), "{}", d.id);
-            assert!(d.url.contains(&format!("/{ENGINE_TAG}/")), "{}", d.id);
+            let commit = ENGINE_TAG.rsplit('-').next().unwrap();
+            assert!(d.url.contains(&format!("-{commit}")), "{}", d.id);
         }
         assert_eq!(CUDA_RUNTIME.engine_tag, None);
         // sd-server finds the upscaler by file stem in the upscalers folder.
@@ -702,6 +778,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "linux"))]
     fn engine_manifest_overrides_only_newer_releases() {
         let _guard = ENGINE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         assert_eq!(release_number(ENGINE_TAG), Some(964));
@@ -837,8 +914,8 @@ mod tests {
         let mut cfg = crate::config::AppConfig::default();
         cfg.sdcpp_dir = dir.path().to_path_buf();
         cfg.gpu_backend = GpuBackend::Vulkan;
-        if cfg!(windows) {
-            // The Vulkan build is a Windows download (sd-server.exe).
+        if !cfg!(target_os = "macos") {
+            // The Vulkan build is a Windows or Linux download (no Mac one).
             assert_eq!(cfg.server_exe(), join_rel(dir.path(), ENGINE_VULKAN.provides[0]), "installer and launcher agree on the path");
         }
         cfg.gpu_backend = GpuBackend::Metal;

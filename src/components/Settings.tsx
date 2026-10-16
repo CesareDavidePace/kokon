@@ -77,7 +77,7 @@ function Diagnostics() {
         >
           <RotateCcw size={14} /> {busy ? "Restarting…" : "Restart server"}
         </button>
-        <button className="btn" onClick={async () => native.openFolder(`${await native.dataFolder()}\\logs`).catch(toastError)}>
+        <button className="btn" onClick={async () => native.openFolder(await native.dataFolder().then((d) => `${d}${d.includes("\\") ? "\\" : "/"}logs`)).catch(toastError)}>
           <FolderOpen size={14} /> Logs
         </button>
       </div>

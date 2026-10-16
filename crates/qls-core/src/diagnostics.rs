@@ -38,9 +38,10 @@ impl GpuInfo {
 }
 
 /// The GPUs to plan for: NVIDIA through nvidia-smi (live memory use), otherwise any
-/// graphics card Windows knows (AMD, Intel), or the Apple Silicon GPU. None if there is none.
+/// graphics card Windows knows (AMD, Intel), an AMD card on Linux, or the Apple Silicon GPU.
+/// None if there is none.
 pub fn query_gpus() -> Option<Vec<GpuInfo>> {
-    query_nvidia().or_else(query_dxgi).or_else(query_apple)
+    query_nvidia().or_else(query_dxgi).or_else(query_drm).or_else(query_apple)
 }
 
 /// Card and engine device names refer to the same GPU ("NVIDIA GeForce RTX 3090" from
@@ -177,6 +178,69 @@ fn query_dxgi() -> Option<Vec<GpuInfo>> {
 #[cfg(not(windows))]
 fn query_dxgi() -> Option<Vec<GpuInfo>> {
     None
+}
+
+/// Linux graphics cards other than NVIDIA's (which nvidia-smi covers): the cards in
+/// /sys/class/drm whose driver reports its VRAM (amdgpu does), largest first.
+#[cfg(target_os = "linux")]
+fn query_drm() -> Option<Vec<GpuInfo>> {
+    let read = |p: &Path| std::fs::read_to_string(p).ok().map(|s| s.trim().to_string());
+    let hex = |s: Option<String>| s.and_then(|s| u32::from_str_radix(s.trim_start_matches("0x"), 16).ok());
+    let mut gpus = Vec::new();
+    for entry in std::fs::read_dir("/sys/class/drm").ok()?.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        // card0, card1…; not the connectors (card0-DP-1).
+        if !name.strip_prefix("card").is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())) {
+            continue;
+        }
+        let dev = entry.path().join("device");
+        let (Some(vendor), Some(device)) = (hex(read(&dev.join("vendor"))), hex(read(&dev.join("device")))) else { continue };
+        let Some(total) = read(&dev.join("mem_info_vram_total")).and_then(|s| s.parse::<u64>().ok()) else { continue };
+        let used = read(&dev.join("mem_info_vram_used")).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+        let (total, used) = (total / (1024 * 1024), used / (1024 * 1024));
+        gpus.push(GpuInfo {
+            name: pci_name(vendor, device).unwrap_or_else(|| format!("{} GPU {vendor:04x}:{device:04x}", vendor_name(vendor).to_ascii_uppercase())),
+            vendor: vendor_name(vendor).into(),
+            unified: false,
+            memory_total_mib: total,
+            memory_used_mib: used,
+            memory_free_mib: total.saturating_sub(used),
+            driver_version: String::new(),
+        });
+    }
+    gpus.sort_by(|a, b| b.memory_total_mib.cmp(&a.memory_total_mib));
+    (!gpus.is_empty()).then_some(gpus)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn query_drm() -> Option<Vec<GpuInfo>> {
+    None
+}
+
+/// Marketing name of a PCI device from the system's pci.ids, as the engine's Vulkan device
+/// names it: "Navi 44 [Radeon RX 9060 XT]" → "AMD Radeon RX 9060 XT".
+#[cfg(target_os = "linux")]
+fn pci_name(vendor: u32, device: u32) -> Option<String> {
+    let ids = ["/usr/share/hwdata/pci.ids", "/usr/share/misc/pci.ids", "/usr/share/pci.ids"].iter().find_map(|p| std::fs::read_to_string(p).ok())?;
+    parse_pci_name(&ids, vendor, device)
+}
+
+pub fn parse_pci_name(ids: &str, vendor: u32, device: u32) -> Option<String> {
+    let (v, d) = (format!("{vendor:04x}  "), format!("\t{device:04x}  "));
+    let mut lines = ids.lines().skip_while(|l| !l.starts_with(&v)).skip(1).take_while(|l| l.starts_with('\t'));
+    let desc = lines.find_map(|l| l.strip_prefix(&d))?.trim();
+    let model = match (desc.rfind('['), desc.ends_with(']')) {
+        (Some(i), true) => &desc[i + 1..desc.len() - 1],
+        _ => desc,
+    };
+    // A bracket may list several models ("Radeon RX 7900 XT/7900 XTX"): keep the first.
+    let model = model.split('/').next().unwrap_or(model).trim();
+    let brand = match vendor_name(vendor) {
+        "amd" => "AMD",
+        "intel" => "Intel",
+        _ => "",
+    };
+    Some(if brand.is_empty() || model.starts_with(brand) { model.to_string() } else { format!("{brand} {model}") })
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -352,6 +416,16 @@ mod tests {
             println!("DXGI: {} ({}) {} MiB", g.name, g.vendor, g.memory_total_mib);
             assert!(!g.name.is_empty() && !g.name.contains("Basic Render"));
         }
+    }
+
+    #[test]
+    fn pci_names_match_the_engine_device_names() {
+        let ids = "1002  Advanced Micro Devices, Inc. [AMD/ATI]\n\t744c  Navi 31 [Radeon RX 7900 XT/7900 XTX/7900 GRE/7900M]\n\t7590  Navi 44 [Radeon RX 9060 XT]\n\t1234  Some Device\n10de  NVIDIA Corporation\n\t7590  Not this one\n";
+        assert_eq!(parse_pci_name(ids, 0x1002, 0x7590).as_deref(), Some("AMD Radeon RX 9060 XT"));
+        assert_eq!(parse_pci_name(ids, 0x1002, 0x744c).as_deref(), Some("AMD Radeon RX 7900 XT"));
+        assert_eq!(parse_pci_name(ids, 0x1002, 0x1234).as_deref(), Some("AMD Some Device"));
+        assert_eq!(parse_pci_name(ids, 0x1002, 0x9999), None);
+        assert!(same_gpu("AMD Radeon RX 9060 XT", "AMD Radeon RX 9060 XT (RADV GFX1200)"));
     }
 
     #[test]

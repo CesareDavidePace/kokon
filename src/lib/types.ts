@@ -2,6 +2,8 @@
 
 export type Mode = "auto" | "generate" | "edit" | "inpaint" | "outpaint" | "multi_reference" | "upscale";
 export type ResolvedMode = Exclude<Mode, "auto">;
+/** What made a saved result: a generation mode, or a colour LUT applied to an image. */
+export type RecordMode = ResolvedMode | "lut";
 /** What an inpaint does in the painted area. */
 export type InpaintAction = "edit" | "remove" | "replace" | "add";
 /** Presets of the Turbo model (8 steps, no CFG): ~1 MP, ~1.5K, native 2K. */
@@ -111,7 +113,7 @@ export interface PipelineRecord {
 export interface GenerationRecord {
   id: string;
   created_at: string;
-  mode: ResolvedMode;
+  mode: RecordMode;
   prompt: string;
   negative_prompt: string;
   seed: number;
@@ -140,6 +142,11 @@ export interface GenerationRecord {
   request: GenerationRequest | null;
   pipeline?: PipelineRecord | null;
 }
+
+/** A .cube LUT in Kokon's list (most recently used first). */
+export interface LutEntry { name: string; title: string | null; kind: "1d" | "3d"; size: number }
+/** How a "lut" result was made (in its `request`). */
+export interface LutInfo { name: string; title?: string | null; intensity: number }
 
 export type JobStatus = "queued" | "starting_backend" | "preparing" | "running" | "saving" | "done" | "failed" | "cancelled";
 export type BackendStage = "preparing" | "encoding_images" | "encoding_prompt" | "generating" | "upscaling" | "refining" | "decoding" | "finishing";

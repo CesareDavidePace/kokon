@@ -1,6 +1,6 @@
 // Pure UI logic (unit-tested in logic.test.ts).
 
-import type { Advanced, GenerationRecord, GenerationRequest, InpaintAction, InputRecord, InstallItem, JobView, Mode, OutpaintSpec, Plan, Quality, ResolutionMode, Size } from "./types";
+import type { Advanced, GenerationRecord, GenerationRequest, InpaintAction, InputRecord, InstallItem, JobView, LutInfo, Mode, OutpaintSpec, Plan, Quality, ResolutionMode, Size } from "./types";
 
 export interface Ref {
   key: string;
@@ -163,7 +163,7 @@ export function composerFromRecord(g: GenerationRecord, base: Composer): Compose
     inpaintAction: req?.inpaint_action ?? "edit",
     outpaint: g.outpaint ? { ...g.outpaint, units: "pixels" } : null,
     // Upscales are started from the image toolbar, not the composer.
-    mode: req?.mode && req.mode !== "upscale" ? req.mode : "auto",
+    mode: req?.mode && req.mode !== "upscale" && g.mode !== "lut" ? req.mode : "auto",
     quality: normalizeQuality(g.quality, base.quality),
     resolution: req?.resolution ?? base.resolution,
     aspect: req?.aspect_ratio ?? "auto",
@@ -183,7 +183,7 @@ export function variationRequest(g: GenerationRecord): GenerationRequest | null 
   return { ...g.request, seed: null, client: "ui", parent_id: g.id };
 }
 
-export const MODE_LABEL: Record<Mode, string> = {
+export const MODE_LABEL: Record<Mode | "lut", string> = {
   auto: "Auto",
   generate: "Create",
   edit: "Edit",
@@ -191,7 +191,13 @@ export const MODE_LABEL: Record<Mode, string> = {
   outpaint: "Expand",
   multi_reference: "Combine",
   upscale: "Upscale",
+  lut: "LUT",
 };
+
+/** The LUT a "lut" result was made with. */
+export function lutInfo(g: GenerationRecord): LutInfo | null {
+  return g.mode === "lut" ? ((g.request as unknown as { lut?: LutInfo } | null)?.lut ?? null) : null;
+}
 
 /** Short names within a project. Every image that starts something new (a new image, a new
  * seed of one, an import) gets the next number: "1", "2"… Everything made from it (edits,
@@ -637,7 +643,7 @@ export interface CompareBase {
 export function compareBase(g: GenerationRecord): CompareBase | null {
   const r = g.references[0];
   // A new image or a combination of several has no single "before".
-  if (!r || !["edit", "inpaint", "outpaint", "upscale"].includes(g.mode)) return null;
+  if (!r || !["edit", "inpaint", "outpaint", "upscale", "lut"].includes(g.mode)) return null;
   const o = g.outpaint;
   if (g.mode === "outpaint" && o) {
     // Expansion is in source pixels; the result is the source plus the expansion.

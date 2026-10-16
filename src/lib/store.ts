@@ -822,6 +822,17 @@ export async function submitRequest(req: GenerationRequest) {
   }
 }
 
+/** A version the service made right away (a LUT applied): added after the others and
+ * selected; editing carries on from it when the prompt was editing its source. */
+export function addResult(g: GenerationRecord) {
+  setState((s) => {
+    const item: SessionItem = { key: newKey(), kind: "gen", gen: g };
+    const src = g.request?.images?.[0];
+    const composer = src && s.composer.refs[0]?.source === src ? { ...s.composer, refs: [refFromGen(g), ...s.composer.refs.slice(1)], mask: null, outpaint: null } : s.composer;
+    return { session: [...s.session, item], selected: item.key, composer, redo: [] };
+  });
+}
+
 export async function submitComposer() {
   const s = getState();
   const target = s.composer.refs[0]?.source;

@@ -13,7 +13,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, Method, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response, Sse, sse::Event as SseEvent},
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use futures_util::stream::Stream;
 use qls_core::{
@@ -102,6 +102,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/gallery/{id}/original", get(gallery_original))
         .route("/gallery/{id}/export", post(gallery_export))
         .route("/image-info", post(image_info))
+        .route("/luts", get(luts_list))
+        .route("/luts/import", post(luts_import))
+        .route("/luts/{name}", delete(luts_remove))
+        .route("/luts/{name}/preview", get(luts_preview))
+        .route("/luts/{name}/apply", post(luts_apply))
         .route("/examples", post(install_examples))
         .route("/session/heartbeat", post(heartbeat))
         .route("/session/release", post(release))
@@ -865,6 +870,65 @@ async fn serve_file(path: &Path, content_type: Option<&str>) -> ApiResult<Respon
         .header(header::CACHE_CONTROL, "private, max-age=31536000, immutable")
         .body(Body::from(bytes))
         .unwrap())
+}
+
+async fn luts_list(State(s): St) -> Json<Value> {
+    let lib = s.engine.luts();
+    Json(json!({ "items": tokio::task::spawn_blocking(move || lib.list()).await.unwrap_or_default() }))
+}
+
+/// Adds a .cube file the user picked to the LUT list (copied into the data folder).
+async fn luts_import(State(s): St, Json(b): Json<PathBody>) -> ApiResult<Json<Value>> {
+    let p = PathBuf::from(&b.path);
+    if !p.is_absolute() || !p.extension().is_some_and(|e| e.eq_ignore_ascii_case("cube")) {
+        return Err(AppError::new(ErrorCode::InvalidInput, "Choose a .cube LUT file.").into());
+    }
+    let lib = s.engine.luts();
+    let entry = tokio::task::spawn_blocking(move || lib.import(&p)).await.map_err(AppError::internal)??;
+    Ok(Json(serde_json::to_value(entry).unwrap()))
+}
+
+async fn luts_remove(State(s): St, AxPath(name): AxPath<String>) -> ApiResult<Json<Value>> {
+    s.engine.luts().remove(&name)?;
+    Ok(Json(json!({ "removed": name })))
+}
+
+#[derive(Deserialize)]
+struct LutPreviewQ {
+    source: String,
+    #[serde(default = "default_preview_side")]
+    max: u32,
+}
+
+fn default_preview_side() -> u32 {
+    2048
+}
+
+/// The LUT on an image, reduced, for the live preview.
+async fn luts_preview(State(s): St, AxPath(name): AxPath<String>, Query(q): Query<LutPreviewQ>) -> ApiResult<Response> {
+    let engine = s.engine.clone();
+    let (bytes, ct) = tokio::task::spawn_blocking(move || engine.lut_preview(&q.source, &name, q.max)).await.map_err(AppError::internal)??;
+    Ok(Response::builder().header(header::CONTENT_TYPE, ct).header(header::CACHE_CONTROL, "no-store").body(Body::from(bytes)).unwrap())
+}
+
+#[derive(Deserialize)]
+struct LutApplyBody {
+    source: String,
+    #[serde(default = "default_intensity")]
+    intensity: f32,
+    #[serde(default)]
+    private: bool,
+}
+
+fn default_intensity() -> f32 {
+    1.0
+}
+
+/// Saves the image with the LUT applied as a new version (the source is kept).
+async fn luts_apply(State(s): St, AxPath(name): AxPath<String>, Json(b): Json<LutApplyBody>) -> ApiResult<Json<Value>> {
+    let engine = s.engine.clone();
+    let rec = tokio::task::spawn_blocking(move || engine.apply_lut(&b.source, &name, b.intensity, b.private)).await.map_err(AppError::internal)??;
+    Ok(Json(serde_json::to_value(rec).unwrap()))
 }
 
 async fn input_image(State(s): St, AxPath(id): AxPath<String>) -> ApiResult<Response> {

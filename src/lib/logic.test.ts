@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  activeOverrides, buildRequest, compareBase, diffPixels, emptyComposer, expansionPixels, expansionPreset, jobFraction, jobLabel, moveRef, needsPrompt, normalizeQuality, persistentAdvanced, pipelineSummary,
+  activeOverrides, buildRequest, compareBase, diffPixels, emptyComposer, expansionPixels, expansionPreset, jobFraction, jobLabel, lutInfo, moveRef, needsPrompt, normalizeQuality, persistentAdvanced, pipelineSummary,
   planPipeline, remainingSeconds, sizeForWidth, timeAgo, upscaleRequest, upscaleTargets, versionLabels, type Ref,
   neighbourAfterRemoval, previewIndex, starPromptDue, STAR_PROMPT_AFTER, formatBytes, formatDuration, installItemShort, installItemText, installProgress, installStep, installTimeLeft, timelineLinks, undoTarget, aspectLabel, parseRatio, sizeForRatio, expandToRatio, expandToSize, arcLayout,
 } from "./logic";
@@ -182,13 +182,19 @@ describe("before / after comparison", () => {
   const rec = (mode: string, extra: Partial<GenerationRecord> = {}) =>
     ({ mode, references: [{ index: 0, input_id: "in1", width: 1000, height: 500 }], outpaint: null, ...extra }) as unknown as GenerationRecord;
 
-  it("edits, inpaints and upscales compare against the whole source", () => {
-    for (const m of ["edit", "inpaint", "upscale"]) expect(compareBase(rec(m))).toEqual({ inputId: "in1", rect: { x: 0, y: 0, w: 1, h: 1 } });
+  it("edits, inpaints, upscales and LUT results compare against the whole source", () => {
+    for (const m of ["edit", "inpaint", "upscale", "lut"]) expect(compareBase(rec(m))).toEqual({ inputId: "in1", rect: { x: 0, y: 0, w: 1, h: 1 } });
   });
 
   it("an expanded image places the source inside the larger result", () => {
     const b = compareBase(rec("outpaint", { outpaint: { left: 500, right: 500, top: 0, bottom: 500 } }))!;
     expect(b.rect).toEqual({ x: 0.25, y: 0, w: 0.5, h: 0.5 });
+  });
+
+  it("a LUT result says which LUT and how strong", () => {
+    const lut = { name: "Warm Film", title: null, intensity: 0.8 };
+    expect(lutInfo(rec("lut", { request: { mode: "lut", images: ["gen:a"], lut } as unknown as GenerationRecord["request"] }))).toEqual(lut);
+    expect(lutInfo(rec("edit", { request: null }))).toBeNull();
   });
 
   it("new images and multi-reference results have no before", () => {

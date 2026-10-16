@@ -10,6 +10,7 @@ pub mod hdr;
 pub mod heif;
 pub mod imaging;
 pub mod installer;
+pub mod lut;
 pub mod modelfile;
 pub mod paths;
 pub mod pipeline;

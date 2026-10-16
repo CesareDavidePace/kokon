@@ -1,23 +1,24 @@
 import {
-  Brush, ClipboardPaste, Combine, Copy, Download, Ellipsis, Expand, FolderOpen, Heart, ImageUpscale, Info, Loader2, MousePointerClick, Pencil, RefreshCw, RotateCcw, SlidersHorizontal, Square, TextCursorInput, Trash2, Wand2, X,
+  Brush, ClipboardPaste, Combine, Copy, Download, Ellipsis, Expand, FolderOpen, Heart, ImageUpscale, Info, Loader2, MousePointerClick, Palette, Pencil, RefreshCw, RotateCcw, SlidersHorizontal, Square, TextCursorInput, Trash2, Wand2, X,
 } from "lucide-react";
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, urls } from "../lib/api";
 import {
-  compareBase, composerFromRecord, formatDuration, jobFraction, jobLabel, MAX_UPSCALE_AREA, MAX_UPSCALE_SIDE, MODE_LABEL, pipelineSummary, remainingSeconds, sizeForWidth, upscaleRequest, arcLayout,
+  compareBase, composerFromRecord, formatDuration, jobFraction, jobLabel, lutInfo, MAX_UPSCALE_AREA, MAX_UPSCALE_SIDE, MODE_LABEL, pipelineSummary, remainingSeconds, sizeForWidth, upscaleRequest, arcLayout,
   upscalerLabel, upscaleTargets, variationRequest, imageName, type LinkKind, type TimelineLink,
 } from "../lib/logic";
 import { native } from "../lib/native";
 import {
-  addAsReference, cancelJob, focusPrompt, getState, itemSource, removeSessionItem, reusePrompt, selectedItem, selectItem, sessionLabels, sessionLinks, setState, submitRequest, toastError, toastInfo, useStore, type SessionItem,
+  addAsReference, addResult, cancelJob, focusPrompt, getState, itemSource, removeSessionItem, reusePrompt, selectedItem, selectItem, sessionLabels, sessionLinks, setState, submitRequest, toastError, toastInfo, useStore, type SessionItem,
 } from "../lib/store";
 import type { GenerationRecord, JobView, Mode, Size } from "../lib/types";
 import { CompareFrame, CompareFullscreen } from "./Compare";
+import { LutBar, LutButton, LutOverlay } from "./Lut";
 import { IconButton, Popover, useFit } from "./ui";
 import { Fullscreen, FullscreenButton, isTyping, ZoomImage, type ViewerNav } from "./Viewer";
 import { fileManager, shortcut } from "../lib/platform";
 
-export const MODE_ICON: Record<Mode, React.ReactNode> = {
+export const MODE_ICON: Record<Mode | "lut", React.ReactNode> = {
   auto: <Wand2 size={11} />,
   generate: <Wand2 size={11} />,
   edit: <Pencil size={11} />,
@@ -25,6 +26,7 @@ export const MODE_ICON: Record<Mode, React.ReactNode> = {
   inpaint: <Brush size={11} />,
   outpaint: <Expand size={11} />,
   upscale: <ImageUpscale size={11} />,
+  lut: <Palette size={11} />,
 };
 
 const MODE_DOING: Record<Mode, string> = {
@@ -132,7 +134,14 @@ function Failed({ job, item }: { job: JobView; item: SessionItem }) {
 
 function InfoPanel({ g }: { g: GenerationRecord }) {
   const pipeline = pipelineSummary(g);
-  const rows: [string, string][] = [
+  const lut = lutInfo(g);
+  const rows: [string, string][] = lut ? [
+    ["Mode", MODE_LABEL[g.mode]],
+    ["Size", `${g.width}×${g.height}`],
+    ["LUT", lut.title && lut.title !== lut.name ? `${lut.name} (${lut.title})` : lut.name],
+    ["Intensity", `${Math.round(lut.intensity * 100)} %`],
+    ["Created", new Date(g.created_at).toLocaleString()],
+  ] : [
     ["Mode", MODE_LABEL[g.mode]],
     ["Size", `${g.width}×${g.height}${g.working_width !== g.width || g.working_height !== g.height ? ` (worked at ${g.working_width}×${g.working_height})` : ""}`],
     ...(pipeline ? ([["Pipeline", pipeline]] as [string, string][]) : []),
@@ -242,7 +251,7 @@ function MoreMenu({ item, path }: { item: SessionItem; path: string | null }) {
     >
       {(close) => (
         <>
-          {g && (
+          {g && g.mode !== "lut" && (
             <button
               className="opt"
               onClick={() => {
@@ -278,10 +287,10 @@ function MoreMenu({ item, path }: { item: SessionItem; path: string | null }) {
   );
 }
 
-function GenActions({ item, g, showOriginal }: { item: SessionItem; g: GenerationRecord; showOriginal: boolean }) {
+function GenActions({ item, g, showOriginal, onLut }: { item: SessionItem; g: GenerationRecord; showOriginal: boolean; onLut: (name: string) => void }) {
   // Save, copy and "show in folder" act on the image on screen: the result or its pre-upscale original.
   const shownPath = (showOriginal && g.pipeline?.original_path) || g.file_path;
-  const original = g.references[0] && g.mode !== "generate" && g.mode !== "upscale" ? { width: g.references[0].width, height: g.references[0].height } : null;
+  const original = g.references[0] && g.mode !== "generate" && g.mode !== "upscale" && g.mode !== "lut" ? { width: g.references[0].width, height: g.references[0].height } : null;
   const [fav, setFav] = useState(g.favorite);
   return (
     <div className="actions">
@@ -293,7 +302,7 @@ function GenActions({ item, g, showOriginal }: { item: SessionItem; g: Generatio
           onClick={() => reusePrompt(g)}
         />
       )}
-      {g.request && g.mode !== "upscale" && (
+      {g.request && g.mode !== "upscale" && g.mode !== "lut" && (
         <ActionButton
           title="Regenerate: same prompt and settings, new seed"
           icon={<RefreshCw size={16} />}
@@ -305,6 +314,7 @@ function GenActions({ item, g, showOriginal }: { item: SessionItem; g: Generatio
         />
       )}
       <UpscaleButton source={`gen:${g.id}`} size={{ width: g.width, height: g.height }} original={original} parentId={g.id} />
+      <LutButton onPick={onLut} />
       <span className="sep" />
       <IconButton
         title={fav ? "Remove from favorites" : "Favorite"}
@@ -364,11 +374,12 @@ function GenActions({ item, g, showOriginal }: { item: SessionItem; g: Generatio
   );
 }
 
-function InputActions({ item }: { item: SessionItem }) {
+function InputActions({ item, onLut }: { item: SessionItem; onLut: (name: string) => void }) {
   const input = item.input!;
   return (
     <div className="actions">
       <UpscaleButton source={`input:${input.id}`} size={{ width: input.width, height: input.height }} />
+      <LutButton onPick={onLut} />
       <span className="sep" />
       <MoreMenu item={item} path={input.original_path ?? input.path} />
     </div>
@@ -377,7 +388,7 @@ function InputActions({ item }: { item: SessionItem }) {
 
 /** A result or input fitted to the stage (never enlarged past its own size), with the
  * full-screen button in its top-right corner. */
-function PlainFrame({ src, alt, w, h, maskSrc, onFullscreen }: { src: string; alt: string; w: number; h: number; maskSrc?: string; onFullscreen: () => void }) {
+function PlainFrame({ src, alt, w, h, maskSrc, overlay, onFullscreen }: { src: string; alt: string; w: number; h: number; maskSrc?: string; overlay?: React.ReactNode; onFullscreen: () => void }) {
   const { ref, box } = useFit(w / h);
   const bw = Math.min(box.w, w);
   return (
@@ -385,6 +396,7 @@ function PlainFrame({ src, alt, w, h, maskSrc, onFullscreen }: { src: string; al
       <div className="image-box" style={{ width: bw, height: bw * (h / w) }}>
         <img className="stage-img fill" src={src} alt={alt} draggable={false} />
         {maskSrc && <img className="stage-mask" src={maskSrc} alt="" draggable={false} />}
+        {overlay}
         <FullscreenButton onOpen={onFullscreen} />
       </div>
     </div>
@@ -392,8 +404,10 @@ function PlainFrame({ src, alt, w, h, maskSrc, onFullscreen }: { src: string; al
 }
 
 /** Under the image: which image this is and what made it, then what you can do with it. */
-function StageBar({ item, label, showOriginal, setShowOriginal }: { item: SessionItem; label: string; showOriginal: boolean; setShowOriginal: (on: boolean) => void }) {
+function StageBar(props: { item: SessionItem; label: string; showOriginal: boolean; setShowOriginal: (on: boolean) => void; lutBar: React.ReactNode; onLut: (name: string) => void }) {
+  const { item, label, showOriginal, setShowOriginal } = props;
   const g = item.gen;
+  const lut = g && lutInfo(g);
   const w = g?.width ?? item.input!.width;
   const h = g?.height ?? item.input!.height;
   const from = g?.pipeline?.original_path ? g.pipeline.enlarged_from : null;
@@ -404,9 +418,9 @@ function StageBar({ item, label, showOriginal, setShowOriginal }: { item: Sessio
         <span className="ver">{imageName(label)}</span>
         {g && <span className="mode">{MODE_LABEL[g.mode]}</span>}
         <span className="stage-prompt" title={g?.prompt ?? name}>
-          {g ? g.prompt || (g.mode === "upscale" ? `${g.references[0]?.width ?? "?"}×${g.references[0]?.height ?? "?"} → ${w}×${h}` : "") : name}
+          {g ? g.prompt || (g.mode === "upscale" ? `${g.references[0]?.width ?? "?"}×${g.references[0]?.height ?? "?"} → ${w}×${h}` : lut ? `${lut.name} · ${Math.round(lut.intensity * 100)} %` : "") : name}
         </span>
-        {from ? (
+        {from && !props.lutBar ? (
           <span className="seg dims-seg" role="radiogroup" aria-label="Which image to show">
             <button className={showOriginal ? "" : "on"} role="radio" aria-checked={!showOriginal} onClick={() => setShowOriginal(false)} title={`The result, enlarged by ${upscalerLabel(g!.pipeline!.enlarged_with)}`}>
               Upscaled {w}×{h}
@@ -421,7 +435,7 @@ function StageBar({ item, label, showOriginal, setShowOriginal }: { item: Sessio
           </span>
         )}
       </div>
-      {g ? <GenActions key={`actions-${g.id}`} item={item} g={g} showOriginal={showOriginal} /> : <InputActions item={item} />}
+      {props.lutBar ?? (g ? <GenActions key={`actions-${g.id}`} item={item} g={g} showOriginal={showOriginal} onLut={props.onLut} /> : <InputActions item={item} onLut={props.onLut} />)}
     </div>
   );
 }
@@ -555,7 +569,7 @@ function Timeline({ labels }: { labels: Record<string, string> }) {
           const pending = it.kind === "job";
           const failed = pending && job && ["failed", "cancelled"].includes(job.status);
           const frac = pending && job ? jobFraction(job) : null;
-          const mode: Mode | undefined = it.gen?.mode ?? job?.plan?.mode;
+          const mode: Mode | "lut" | undefined = it.gen?.mode ?? job?.plan?.mode;
           const link = links[it.key];
           const pendingSrc = pending && it.request?.mode !== "generate" ? it.request?.images?.[0] : undefined;
           const prompt = it.gen?.prompt || it.request?.prompt || "";
@@ -685,6 +699,9 @@ function StageFullscreen({ item, session, showOriginal, onClose }: { item: Sessi
   );
 }
 
+/** The LUT intensity last saved, the starting point of the next preview. */
+let lastIntensity = 1;
+
 export function Stage() {
   const item = useStore(selectedItem);
   const session = useStore((s) => s.session);
@@ -694,6 +711,11 @@ export function Stage() {
   const [originalOf, setOriginalOf] = useState<string | null>(null);
   const [full, setFull] = useState(false);
   const canFull = !!item && viewable(item);
+  // A LUT being previewed on the selected version (intensity 0-1), before saving it as a new one.
+  const [lut, setLut] = useState<{ itemKey: string; source: string; name: string; intensity: number } | null>(null);
+  const [before, setBefore] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const lutActive = lut && item && lut.itemKey === item.key ? lut : null;
   // The area painted for the next edit, shown on the image it belongs to (the prompt's first image).
   const mask = useStore((s) => s.composer.mask);
   const ref0 = useStore((s) => s.composer.refs[0]);
@@ -710,6 +732,28 @@ export function Stage() {
     window.addEventListener("keydown", down);
     return () => window.removeEventListener("keydown", down);
   }, [full, canFull]);
+
+  // Another version selected: the preview ends.
+  useEffect(() => {
+    if (lut && lut.itemKey !== item?.key) setLut(null);
+  }, [item?.key, lut]);
+
+  // While previewing a LUT: Esc cancels, holding B shows the image without it.
+  useEffect(() => {
+    if (!lutActive || full) return;
+    const down = (e: KeyboardEvent) => {
+      if (isTyping(e.target) || getState().overlay) return;
+      if (e.key === "Escape") setLut(null);
+      else if (e.key.toLowerCase() === "b" && !e.ctrlKey && !e.metaKey) setBefore(true);
+    };
+    const up = (e: KeyboardEvent) => e.key.toLowerCase() === "b" && setBefore(false);
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+    };
+  }, [!!lutActive, full]);
 
   // Nothing to show any more (the version was removed, or a new one is being made): leave full screen.
   useEffect(() => {
@@ -748,17 +792,57 @@ export function Stage() {
     const base = item.gen ? compareBase(item.gen) : null;
     const g = item.gen;
     const from = g?.pipeline?.original_path ? g.pipeline.enlarged_from : null;
-    const showOriginal = !!(g && from && originalOf === g.id);
+    const showOriginal = !!(g && from && originalOf === g.id) && !lutActive;
+    const source = g ? `gen:${g.id}` : `input:${item.input!.id}`;
+    const startLut = (name: string) => setLut((l) => ({ itemKey: item.key, source, name, intensity: l?.intensity ?? lastIntensity }));
+    const saveLut = async () => {
+      if (!lutActive) return;
+      setSaving(true);
+      try {
+        lastIntensity = lutActive.intensity;
+        const rec = await api.applyLut(lutActive.name, lutActive.source, lutActive.intensity, getState().privateMode);
+        setLut(null);
+        addResult(rec);
+      } catch (e) {
+        toastError(e);
+      } finally {
+        setSaving(false);
+      }
+    };
+    // The preview is made for the screen: the image's own size at most.
+    const previewMax = Math.min(Math.max(w, h), Math.round(1600 * Math.min(2, window.devicePixelRatio || 1)), 4096);
+    const lutBar = lutActive && (
+      <LutBar
+        name={lutActive.name}
+        intensity={lutActive.intensity}
+        saving={saving}
+        onPick={startLut}
+        onIntensity={(v) => setLut({ ...lutActive, intensity: v })}
+        onBefore={setBefore}
+        onCancel={() => setLut(null)}
+        onSave={saveLut}
+      />
+    );
     view = (
       <>
-        {g && from && showOriginal ? (
+        {lutActive ? (
+          <PlainFrame
+            key={src}
+            src={src}
+            alt={g?.prompt ?? item.input?.original_name ?? ""}
+            w={w}
+            h={h}
+            overlay={<LutOverlay src={urls.lutPreview(lutActive.name, lutActive.source, previewMax)} opacity={before ? 0 : lutActive.intensity} />}
+            onFullscreen={openFull}
+          />
+        ) : g && from && showOriginal ? (
           <PlainFrame key={`original-${g.id}`} src={urls.genOriginal(g.id)} alt={`${g.prompt} (before upscaling)`} w={from.width} h={from.height} onFullscreen={openFull} />
         ) : item.gen && base ? (
           <CompareFrame key={`compare-${item.gen.id}`} g={item.gen} base={base} maskSrc={maskSrc} onFullscreen={openFull} />
         ) : (
           <PlainFrame key={src} src={src} alt={item.gen?.prompt ?? item.input?.original_name ?? ""} w={w} h={h} maskSrc={maskSrc} onFullscreen={openFull} />
         )}
-        <StageBar item={item} label={labels[item.key]} showOriginal={showOriginal} setShowOriginal={(on) => setOriginalOf(on && g ? g.id : null)} />
+        <StageBar item={item} label={labels[item.key]} showOriginal={showOriginal} setShowOriginal={(on) => setOriginalOf(on && g ? g.id : null)} lutBar={lutBar} onLut={startLut} />
       </>
     );
   }

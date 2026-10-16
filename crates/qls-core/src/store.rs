@@ -89,6 +89,11 @@ pub struct GenerationRecord {
 impl GenerationRecord {
     /// AUTOMATIC1111-style "parameters" text understood by many image tools.
     pub fn parameters_text(&self) -> String {
+        if self.mode == "lut" {
+            let lut = &self.request["lut"];
+            let pct = (lut["intensity"].as_f64().unwrap_or(1.0) * 100.0).round();
+            return format!("Colour LUT: {}, Intensity: {pct}%, Size: {}x{}, Version: Kokon {}", lut["name"].as_str().unwrap_or("?"), self.width, self.height, self.app_version);
+        }
         let mut s = self.prompt.clone();
         if !self.negative_prompt.is_empty() {
             s.push_str(&format!("\nNegative prompt: {}", self.negative_prompt));

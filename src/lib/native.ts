@@ -24,8 +24,8 @@ export const native = {
     if (!r) return [];
     return Array.isArray(r) ? r : [r];
   },
-  pickFile: async (extensions: string[], defaultPath?: string): Promise<string | null> => {
-    const r = await open({ multiple: false, directory: false, defaultPath, filters: [{ name: "Model", extensions }] });
+  pickFile: async (extensions: string[], defaultPath?: string, kind = "Model"): Promise<string | null> => {
+    const r = await open({ multiple: false, directory: false, defaultPath, filters: [{ name: kind, extensions }] });
     return typeof r === "string" ? r : null;
   },
   pickFolder: async (defaultPath?: string): Promise<string | null> => {

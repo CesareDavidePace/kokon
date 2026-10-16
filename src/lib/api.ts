@@ -3,7 +3,7 @@
 
 import type {
   GpuBackend,
-  AppConfig, AppErrorBody, GenerationRecord, GenerationRequest, HardwareReport, InputRecord, InstallStatus, JobView, ModelFileInfo, ModelScan, ModelSlot, ModelsStatus, Plan,
+  AppConfig, AppErrorBody, GenerationRecord, GenerationRequest, HardwareReport, InputRecord, InstallStatus, JobView, LutEntry, ModelFileInfo, ModelScan, ModelSlot, ModelsStatus, Plan,
   ServiceEvent, SetupReport, StatusResponse, UpscalerItem,
 } from "./types";
 
@@ -118,6 +118,13 @@ export const api = {
   deleteGeneration: (id: string) => call<{ deleted: string }>(`/gallery/${id}`, { method: "DELETE" }),
   /** Adds the bundled example projects to the gallery (idempotent) and lists them. */
   installExamples: () => call<{ projects: { title: string; generations: string[] }[] }>("/examples", { method: "POST" }),
+  luts: () => call<{ items: LutEntry[] }>("/luts"),
+  /** Adds a .cube file to the list (copied into Kokon's data folder). */
+  importLut: (path: string) => call<LutEntry>("/luts/import", { method: "POST", body: json({ path }) }),
+  removeLut: (name: string) => call<{ removed: string }>(`/luts/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  /** Saves `source` with the LUT applied as a new version; `intensity` 0-1. */
+  applyLut: (name: string, source: string, intensity: number, isPrivate: boolean) =>
+    call<GenerationRecord>(`/luts/${encodeURIComponent(name)}/apply`, { method: "POST", body: json({ source, intensity, private: isPrivate }) }),
   exportGeneration: (id: string, path: string, original = false) => call<{ path: string }>(`/gallery/${id}/export`, { method: "POST", body: json({ path, overwrite: true, original }) }),
 };
 
@@ -130,6 +137,8 @@ export const urls = {
   genOriginal: (id: string) => `${base}/gallery/${id}/original?token=${token}`,
   /** Full image for a "gen:<id>" / "input:<id>" source. */
   source: (s: string) => (s.startsWith("gen:") ? urls.gen(s.slice(4)) : urls.input(s.slice(6))),
+  /** A LUT on a "gen:"/"input:" source at full strength, at most `max` px on its long side. */
+  lutPreview: (name: string, source: string, max: number) => `${base}/luts/${encodeURIComponent(name)}/preview?source=${encodeURIComponent(source)}&max=${max}&token=${token}`,
   sourceThumb: (s: string) => (s.startsWith("gen:") ? urls.genThumb(s.slice(4)) : urls.inputThumb(s.slice(6))),
 };
 

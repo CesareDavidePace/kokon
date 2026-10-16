@@ -93,6 +93,7 @@ pub struct Engine {
     pub private_store: Arc<Store>,
     /// Measured speed of this machine, for time estimates.
     speed: crate::speed::SpeedBook,
+    data_dir: PathBuf,
     private_dir: PathBuf,
     jobs: Mutex<HashMap<String, Job>>,
     order: Mutex<VecDeque<String>>,
@@ -167,6 +168,7 @@ impl Engine {
             store,
             private_store,
             speed: if cfg!(test) { crate::speed::SpeedBook::in_memory() } else { crate::speed::SpeedBook::open(data_dir) },
+            data_dir: data_dir.to_path_buf(),
             private_dir,
             jobs: Mutex::new(HashMap::new()),
             order: Mutex::new(VecDeque::new()),
@@ -577,7 +579,16 @@ impl Engine {
     /// Loads one image source: "input:<id>", "gen:<id>" or an absolute path. A private job
     /// keeps its copy of the input in the private store.
     pub fn resolve_source(&self, src: &str, workspace: Option<&Path>, private: bool) -> AppResult<(LoadedImage, InputRecord)> {
-        let (bytes, original_path, name) = if let Some(id) = src.strip_prefix("input:") {
+        let (bytes, original_path, name) = self.read_source(src, workspace)?;
+        let store = if private { &self.private_store } else { &self.store };
+        let rec = store.put_input(&bytes, name.as_deref(), original_path.as_deref())?;
+        let img = imaging::decode_image(&bytes)?;
+        Ok((img, rec))
+    }
+
+    /// The bytes of an image source, with its original path and file name.
+    fn read_source(&self, src: &str, workspace: Option<&Path>) -> AppResult<(Vec<u8>, Option<String>, Option<String>)> {
+        Ok(if let Some(id) = src.strip_prefix("input:") {
             let rec = self.input_store(id).get_input(id)?;
             let b = std::fs::read(&rec.path).map_err(|e| AppError::io("read the stored image", Path::new(&rec.path), e))?;
             (b, rec.original_path.clone(), rec.original_name.clone())
@@ -590,11 +601,117 @@ impl Engine {
             let p = paths::validate_input_image(src, workspace, &[])?;
             let b = std::fs::read(&p).map_err(|e| AppError::io("read the image", &p, e))?;
             (b, Some(p.to_string_lossy().into_owned()), p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        })
+    }
+
+    /// The colour LUTs the user has opened (`<data>/luts`).
+    pub fn luts(&self) -> crate::lut::LutLibrary {
+        crate::lut::LutLibrary::new(self.data_dir.join("luts"))
+    }
+
+    /// A library LUT on a "gen:"/"input:" source at full strength, reduced to `max_side`, for
+    /// the live preview (the UI shows the intensity as its opacity over the image). JPEG, or
+    /// PNG when the image has transparency or a colour profile to keep. Returns the content type.
+    pub fn lut_preview(&self, src: &str, name: &str, max_side: u32) -> AppResult<(Vec<u8>, &'static str)> {
+        if !src.starts_with("gen:") && !src.starts_with("input:") {
+            return Err(AppError::new(ErrorCode::InvalidInput, "LUTs apply to results and imported images."));
+        }
+        let lut = self.luts().load(name)?;
+        let img = imaging::decode_image(&self.read_source(src, None)?.0)?;
+        let small = lut.apply(&imaging::thumbnail(&img.pixels, max_side.clamp(256, 4096)), 1.0);
+        if img.has_transparency || img.icc_profile.is_some() {
+            Ok((imaging::encode_png(&small, &[], img.icc_profile.as_deref(), true)?, "image/png"))
+        } else {
+            Ok((imaging::encode_jpeg(&small, 92)?, "image/jpeg"))
+        }
+    }
+
+    /// Applies a library LUT to a "gen:"/"input:" source at `intensity` (0-1) and saves the
+    /// result as a new version made from it (mode "lut"; the source stays as it is). Private
+    /// when asked or when the source itself is private. Same file format as a source result.
+    pub fn apply_lut(&self, src: &str, name: &str, intensity: f32, private: bool) -> AppResult<GenerationRecord> {
+        let started = Instant::now();
+        let library = self.luts();
+        let lut = library.load(name)?;
+        let parent = match src.strip_prefix("gen:") {
+            Some(id) => Some(self.gen_store(id).get_generation(id)?),
+            None if src.starts_with("input:") => None,
+            None => return Err(AppError::new(ErrorCode::InvalidInput, "LUTs apply to results and imported images.")),
         };
+        let source_private = match (&parent, src.strip_prefix("input:")) {
+            (Some(p), _) => Arc::ptr_eq(self.gen_store(&p.id), &self.private_store),
+            (None, Some(id)) => Arc::ptr_eq(self.input_store(id), &self.private_store),
+            _ => false,
+        };
+        let private = private || source_private;
+        let (img, input) = self.resolve_source(src, None, private)?;
+        let intensity = if intensity.is_finite() { intensity.clamp(0.0, 1.0) } else { 1.0 };
+        let out = lut.apply(&img.pixels, intensity);
+        library.touch(name);
+
+        let cfg = self.config();
+        let id = new_id();
+        let now = chrono::Local::now();
         let store = if private { &self.private_store } else { &self.store };
-        let rec = store.put_input(&bytes, name.as_deref(), original_path.as_deref())?;
-        let img = imaging::decode_image(&bytes)?;
-        Ok((img, rec))
+        let dir = if private { self.private_dir.join("out") } else { cfg.output_dir.join(now.format("%Y-%m-%d").to_string()) };
+        std::fs::create_dir_all(&dir).map_err(|e| AppError::io("create the output folder", &dir, e))?;
+        let format = match parent.as_ref().and_then(|p| Path::new(&p.file_path).extension()).map(|e| e.to_string_lossy().to_ascii_lowercase()).as_deref() {
+            Some("jpg" | "jpeg") => OutputFormat::Jpeg,
+            Some("webp") => OutputFormat::Webp,
+            _ => OutputFormat::Png,
+        };
+        let file = paths::unique_path(dir.join(format!("{}-lut-{}.{}", now.format("%H%M%S"), paths::sanitize_file_stem(name), format.ext())), &[]);
+        let pct = (intensity * 100.0).round();
+        let mut rec = GenerationRecord {
+            id: id.clone(),
+            created_at: now_rfc3339(),
+            mode: "lut".into(),
+            prompt: String::new(),
+            negative_prompt: String::new(),
+            seed: parent.as_ref().map(|p| p.seed).unwrap_or(0),
+            width: out.width(),
+            height: out.height(),
+            working_width: out.width(),
+            working_height: out.height(),
+            model: String::new(),
+            sampler: String::new(),
+            scheduler: None,
+            steps: 0,
+            cfg: 0.0,
+            strength: None,
+            quality: String::new(),
+            resolution: String::new(),
+            references: vec![ReferenceRecord { index: 0, input_id: input.id.clone(), original_path: input.original_path.clone(), width: input.width, height: input.height }],
+            mask_input_id: None,
+            outpaint: None,
+            file_path: file.to_string_lossy().into_owned(),
+            extra_paths: vec![],
+            favorite: false,
+            parent_id: parent.as_ref().map(|p| p.id.clone()),
+            duration_ms: 0,
+            notes: vec![format!("Colour LUT \"{name}\" at {pct} %.")],
+            app_version: APP_VERSION.into(),
+            backend_version: None,
+            client: None,
+            request: serde_json::json!({
+                "mode": "lut",
+                "images": [src],
+                "parent_id": parent.as_ref().map(|p| p.id.clone()),
+                "lut": { "name": name, "title": lut.title, "intensity": intensity },
+                "private": private,
+            }),
+            pipeline: None,
+        };
+        rec.duration_ms = started.elapsed().as_millis() as u64;
+        write_atomic(&file, &encode_output(&out, format, &rec, img.icc_profile.as_deref())?)?;
+        if let Ok(j) = imaging::encode_jpeg(&imaging::thumbnail(&out, 512), 85) {
+            let _ = std::fs::write(store.thumb_path(&id), j);
+        }
+        store.insert_generation(&rec)?;
+        if !private {
+            let _ = self.events.send(Event::Gallery { id: id.clone(), change: "added" });
+        }
+        Ok(rec)
     }
 
     /// How this machine's measured speed compares with the time model (None: not measured).
@@ -1364,6 +1481,52 @@ mod tests {
         assert!(!dir.path().join("private").join("out").join("left.png").exists());
         let req: GenerationRequest = serde_json::from_str(r#"{"prompt":"x"}"#).unwrap();
         assert!(!req.private, "off unless asked");
+    }
+
+    #[test]
+    fn lut_results_are_new_versions_of_their_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = AppConfig { output_dir: dir.path().join("out"), ..Default::default() };
+        let e = Engine::new(cfg, dir.path()).unwrap();
+        let cube = dir.path().join("Invert.cube");
+        let mut text = String::from("LUT_3D_SIZE 2
+");
+        for b in 0..2 {
+            for g in 0..2 {
+                for r in 0..2 {
+                    text.push_str(&format!("{} {} {}
+", 1 - r, 1 - g, 1 - b));
+                }
+            }
+        }
+        std::fs::write(&cube, text).unwrap();
+        let lut = e.luts().import(&cube).unwrap();
+        let png = imaging::encode_png(&image::RgbaImage::from_pixel(16, 8, image::Rgba([200, 10, 40, 255])), &[], None, false).unwrap();
+        let input = e.store.put_input(&png, Some("photo.png"), None).unwrap();
+        let src = format!("input:{}", input.id);
+        let preview = e.lut_preview(&src, &lut.name, 1024).unwrap();
+        assert_eq!(preview.1, "image/jpeg");
+
+        let rec = e.apply_lut(&src, &lut.name, 0.5, false).unwrap();
+        assert_eq!((rec.mode.as_str(), rec.width, rec.height), ("lut", 16, 8));
+        assert_eq!(rec.request["images"][0], src.as_str(), "made from the source (timeline link)");
+        assert_eq!(rec.request["lut"]["intensity"], 0.5);
+        assert!(Path::new(&rec.file_path).starts_with(dir.path().join("out")) && rec.file_path.ends_with(".png"));
+        let px = *imaging::load_image(Path::new(&rec.file_path)).unwrap().pixels.get_pixel(0, 0);
+        assert!(px[0].abs_diff(128) <= 1 && px[1].abs_diff(128) <= 1, "half way to the inverse: {px:?}");
+        assert!(imaging::read_png_text(&std::fs::read(&rec.file_path).unwrap()).iter().any(|(k, v)| k == "parameters" && v.starts_with("Colour LUT: Invert")));
+        assert!(e.store.get_generation(&rec.id).is_ok());
+
+        // A result of a result keeps its format and parent; private sources stay private.
+        let again = e.apply_lut(&format!("gen:{}", rec.id), &lut.name, 1.0, false).unwrap();
+        assert_eq!(again.parent_id.as_deref(), Some(rec.id.as_str()));
+        let other = imaging::encode_png(&image::RgbaImage::from_pixel(4, 4, image::Rgba([1, 2, 3, 255])), &[], None, false).unwrap();
+        let secret = e.private_store.put_input(&other, Some("secret.png"), None).unwrap();
+        let p = e.apply_lut(&format!("input:{}", secret.id), &lut.name, 1.0, false).unwrap();
+        assert!(e.store.get_generation(&p.id).is_err() && e.private_store.get_generation(&p.id).is_ok());
+        assert!(Path::new(&p.file_path).starts_with(dir.path().join("private")));
+        assert!(e.apply_lut("C:/x.png", &lut.name, 1.0, false).is_err());
+        assert!(e.apply_lut(&src, "missing", 1.0, false).is_err());
     }
 
     #[test]

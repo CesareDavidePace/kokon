@@ -43,7 +43,11 @@ upstream's own flags and CUDA architectures (`61;70;75;80;86;89;90;100;120`, CUD
 - `engine.json` (engine updates without an app release) lists upstream's Windows/Mac builds only, so
   **Linux ignores it** (`apply_engine_release` returns early). Linux engines change with app releases
   until the manifest gets Linux entries (to do, below).
-- First build: run 38885751650 (2026-10-16); Vulkan finished in 12 min, CUDA takes over an hour.
+- First build: run 38885751650 (2026-10-16): Vulkan 12 min, CUDA 1 h 32 min. Its CUDA smoke test was
+  wrong (sd-server links libcuda.so.1, which only the NVIDIA driver provides, so it can't start in CI);
+  the release was published by hand from that run's artifacts after a real check in WSL (RTX 5070 Ti
+  found, CUDA backend loads). The workflow now only checks libraries for CUDA and never replaces a
+  published release (rebuilds aren't byte-identical and the app pins SHA-256).
 
 ## Engine upkeep: check at every release (and when engine.json moves)
 
@@ -79,7 +83,8 @@ direct-convolution fix and FLUX.3 Klein). When Windows/Mac move to a newer engin
 ## Status (2026-10-16)
 
 Done
-- ✅ Fork workflow + first engine build (Vulkan OK: loads in WSL, glibc ≤ 2.34; CUDA building).
+- ✅ Fork workflow + first engine build; prerelease `kokon-linux-1d0a58a` published (Vulkan loads on
+  Ubuntu 22.04/24.04, Debian 12, Fedora 40/42; CUDA finds the RTX 5070 Ti in WSL).
 - ✅ Kokon branch `linux` (commit 9d8ed7f, local): Linux engines in the catalog, manifest ignored on
   Linux, AMD GPU detection from /sys/class/drm + pci.ids names, deb/rpm config, bundled resources in
   /usr/lib/Kokon, logs-folder path, kokon-mcp Linux build, updater manifest Linux entries,
@@ -88,8 +93,7 @@ Done
   install folder ~/.local/share/KokonData/sdcpp.
 
 To do for "0.9.3 for Linux"
-- [ ] CUDA build finished → fill `LINUX_CUDA_*` / `LINUX_CUDART_*` (Vulkan values already in), commit
-      with the script's cargo check fix.
+- ✅ Engine sizes and SHA-256 pinned in catalog.rs (from GitHub's asset digests).
 - [ ] Full test in WSL: Install → CUDA engine download → one image + one edit on the 5070 Ti.
 - [ ] `build-release-linux.sh` end to end (tests, kokon-mcp, deb + rpm, signatures). Install the .deb in
       a clean WSL distro; ideally also Fedora (`wsl --install -d FedoraLinux-42`) and Debian.

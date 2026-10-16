@@ -223,15 +223,15 @@ pub const ENGINE_VULKAN: Download = Download {
     engine_tag: Some(ENGINE_TAG),
 };
 
-// FILL FROM THE kokon-linux-1d0a58a RELEASE (SHA256SUMS.txt).
+// From the kokon-linux-1d0a58a release (GitHub asset digests, 2026-10-16).
 #[cfg(target_os = "linux")]
-const LINUX_CUDA_SIZE: u64 = 0;
+const LINUX_CUDA_SIZE: u64 = 346_387_087;
 #[cfg(target_os = "linux")]
-const LINUX_CUDA_SHA256: &str = "";
+const LINUX_CUDA_SHA256: &str = "cda5ea4c6b2ef9fcee5dc73923e9f0bba3680f3aaf72b77e076fedd900b6d6fb";
 #[cfg(target_os = "linux")]
-const LINUX_CUDART_SIZE: u64 = 0;
+const LINUX_CUDART_SIZE: u64 = 593_744_419;
 #[cfg(target_os = "linux")]
-const LINUX_CUDART_SHA256: &str = "";
+const LINUX_CUDART_SHA256: &str = "5b05f377ed203691ad22b471697efccd5c304ee0c6cc6f06c1acabcaa121f097";
 #[cfg(target_os = "linux")]
 const LINUX_VULKAN_SIZE: u64 = 38_456_278;
 #[cfg(target_os = "linux")]

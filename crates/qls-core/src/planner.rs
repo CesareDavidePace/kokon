@@ -991,8 +991,12 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
                 ((bbox.width as f64 * sx).ceil() as u32).max(1),
                 ((bbox.height as f64 * sy).ceil() as u32).max(1),
             );
-            // References: the region itself, plus a smaller copy with the area marked.
-            let area = cap_for_refs(tier_area.unwrap_or(src.area()), 1.0 + INPAINT_GUIDE_AREA, &mut notes);
+            // References: the region itself (at most the reference cap, as in edits), plus a
+            // smaller copy with the area marked. Full: both at the output's area (the server's
+            // own resize), as before 0.9.4.
+            let wanted = tier_area.unwrap_or(src.area());
+            let image1_share = if wanted > ref_cap.saturating_add(ref_cap / 10) { ref_cap as f64 / wanted as f64 } else { 1.0 };
+            let area = cap_for_refs(wanted, image1_share + INPAINT_GUIDE_AREA, &mut notes);
             // At least the working size of context around the mask, so the model sees the scene.
             let min_ctx = (area as f64).sqrt() as u32;
             let region = geometry::inpaint_region(src, bbox, min_ctx, 0.55);
@@ -1003,7 +1007,9 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
             }
             inpaint_region = Some(region);
             output = src;
-            references.push(RefPlan { index: 0, source: region.size(), canvas: working });
+            // The image being painted stays at the working size; only the model's view of it shrinks.
+            let image1 = if working.canvas.area() <= ref_cap.saturating_add(ref_cap / 10) { working } else { ref_canvas(region.size(), ref_cap, rec) };
+            references.push(RefPlan { index: 0, source: region.size(), canvas: image1 });
             let guide_area = (working.canvas.area() as f64 * INPAINT_GUIDE_AREA) as u64;
             references.push(RefPlan { index: 0, source: region.size(), canvas: ref_canvas(region.size(), guide_area, rec) });
             strength = Some(adv.strength.unwrap_or(1.0).clamp(0.05, 1.0));
@@ -1108,7 +1114,7 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
         upscale,
         custom_sigmas: if quick_upscale { Vec::new() } else { TURBO_SIGMAS.to_vec() },
         vae_tile,
-        reference_detail: matches!(mode, ResolvedMode::Edit | ResolvedMode::MultiReference).then(|| adv.reference_detail.unwrap_or_default()),
+        reference_detail: matches!(mode, ResolvedMode::Edit | ResolvedMode::MultiReference | ResolvedMode::Inpaint).then(|| adv.reference_detail.unwrap_or_default()),
     })
 }
 

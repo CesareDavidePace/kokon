@@ -194,6 +194,11 @@ export const MODE_LABEL: Record<Mode | "lut", string> = {
   lut: "LUT",
 };
 
+/** How a LUT is shown: a preset ("kokon:<key>") by its title, a user's LUT by its file name. */
+export function lutLabel(l: { name: string; title?: string | null }): string {
+  return l.name.startsWith("kokon:") ? l.title || l.name.slice(6) : l.name;
+}
+
 /** The LUT a "lut" result was made with. */
 export function lutInfo(g: GenerationRecord): LutInfo | null {
   return g.mode === "lut" ? ((g.request as unknown as { lut?: LutInfo } | null)?.lut ?? null) : null;

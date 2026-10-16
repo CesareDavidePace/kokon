@@ -1,6 +1,7 @@
 import { Eye, FolderOpen, Loader2, Palette, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { lutLabel } from "../lib/logic";
 import { native } from "../lib/native";
 import { toastError } from "../lib/store";
 import type { LutEntry } from "../lib/types";
@@ -18,26 +19,31 @@ async function openCubeFile(): Promise<LutEntry | null> {
   }
 }
 
-function LutList({ current, onPick, close }: { current?: string; onPick: (name: string) => void; close: () => void }) {
+function LutList({ current, onPick, close }: { current?: string; onPick: (lut: LutEntry) => void; close: () => void }) {
   const [items, setItems] = useState<LutEntry[] | null>(null);
   useEffect(() => {
     api.luts().then((r) => setItems(r.items), toastError);
   }, []);
-  const pick = (name: string) => {
+  const pick = (e: LutEntry) => {
     close();
-    onPick(name);
+    onPick(e);
   };
+  const own = items?.filter((e) => !e.builtin) ?? [];
+  const presets = items?.filter((e) => e.builtin) ?? [];
+  const row = (e: LutEntry) => (
+    <button className="opt" onClick={() => pick(e)} title={!e.builtin && e.title && e.title !== e.name ? e.title : undefined}>
+      <span className="check">{e.name === current ? <Palette size={15} /> : null}</span>
+      <span className="lut-name">{lutLabel(e)}</span>
+      {!e.builtin && <span className="sub">{e.kind === "3d" ? `${e.size}³` : "1D"}</span>}
+    </button>
+  );
   return (
     <div className="lut-list">
-      <span className="muted lut-list-title">Colour LUTs (.cube)</span>
       {items === null && <Loader2 className="spin" size={16} style={{ margin: 10 }} />}
-      {items?.map((e) => (
+      {own.length > 0 && <span className="muted lut-list-title">Your LUTs</span>}
+      {own.map((e) => (
         <div key={e.name} className="lut-row">
-          <button className="opt" onClick={() => pick(e.name)} title={e.title && e.title !== e.name ? e.title : undefined}>
-            <span className="check">{e.name === current ? <Palette size={15} /> : null}</span>
-            <span className="lut-name">{e.name}</span>
-            <span className="sub">{e.kind === "3d" ? `${e.size}³` : "1D"}</span>
-          </button>
+          {row(e)}
           <button
             className="icon-btn sm"
             title="Remove from the list"
@@ -48,12 +54,18 @@ function LutList({ current, onPick, close }: { current?: string; onPick: (name: 
           </button>
         </div>
       ))}
+      {presets.length > 0 && <span className="muted lut-list-title">Kokon presets</span>}
+      {presets.map((e) => (
+        <div key={e.name} className="lut-row">
+          {row(e)}
+        </div>
+      ))}
       <button
         className="opt"
         onClick={async () => {
           close();
           const e = await openCubeFile();
-          if (e) onPick(e.name);
+          if (e) onPick(e);
         }}
       >
         <span className="check">
@@ -65,9 +77,9 @@ function LutList({ current, onPick, close }: { current?: string; onPick: (name: 
   );
 }
 
-/** "LUT" under the image: the LUTs opened before, or a .cube file (straight to the file
- * picker while the list is empty). `current` shows the LUT being previewed as its label. */
-export function LutButton({ current, onPick }: { current?: string; onPick: (name: string) => void }) {
+/** "LUT" under the image: Kokon's presets, the LUTs opened before, or a .cube file.
+ * `current` (the LUT being previewed) is shown as its label. */
+export function LutButton({ current, onPick }: { current?: LutEntry; onPick: (lut: LutEntry) => void }) {
   return (
     <Popover
       placement="top-end"
@@ -76,20 +88,14 @@ export function LutButton({ current, onPick }: { current?: string; onPick: (name
           className={`act ${open ? "active" : ""}`}
           title={current ? "Choose another LUT" : "LUT: apply a colour look from a .cube file (preview first, the original is kept)"}
           aria-label="LUT"
-          onClick={async () => {
-            if (open || current) return toggle();
-            const { items } = await api.luts().catch(() => ({ items: [] as LutEntry[] }));
-            if (items.length) return toggle();
-            const e = await openCubeFile();
-            if (e) onPick(e.name);
-          }}
+          onClick={toggle}
         >
           <Palette size={16} />
-          <span className={current ? "lut-current" : "act-label"}>{current ?? "LUT"}</span>
+          <span className={current ? "lut-current" : "act-label"}>{current ? lutLabel(current) : "LUT"}</span>
         </button>
       )}
     >
-      {(close) => <LutList current={current} onPick={onPick} close={close} />}
+      {(close) => <LutList current={current?.name} onPick={onPick} close={close} />}
     </Popover>
   );
 }
@@ -120,10 +126,10 @@ export function LutOverlay({ src, opacity }: { src: string; opacity: number }) {
 
 /** Replaces the actions while a LUT is previewed: which LUT, how strong, before/after, save. */
 export function LutBar(props: {
-  name: string;
+  lut: LutEntry;
   intensity: number;
   saving: boolean;
-  onPick: (name: string) => void;
+  onPick: (lut: LutEntry) => void;
   onIntensity: (v: number) => void;
   onBefore: (on: boolean) => void;
   onCancel: () => void;
@@ -132,7 +138,7 @@ export function LutBar(props: {
   const pct = Math.round(props.intensity * 100);
   return (
     <div className="actions lut-bar">
-      <LutButton current={props.name} onPick={props.onPick} />
+      <LutButton current={props.lut} onPick={props.onPick} />
       <label className="lut-intensity" title="Intensity">
         <input type="range" min={0} max={100} value={pct} aria-label="Intensity" onChange={(e) => props.onIntensity(Number(e.target.value) / 100)} />
         <span>{pct} %</span>

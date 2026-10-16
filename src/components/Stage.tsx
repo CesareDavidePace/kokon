@@ -4,14 +4,14 @@ import {
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, urls } from "../lib/api";
 import {
-  compareBase, composerFromRecord, formatDuration, jobFraction, jobLabel, lutInfo, MAX_UPSCALE_AREA, MAX_UPSCALE_SIDE, MODE_LABEL, pipelineSummary, remainingSeconds, sizeForWidth, upscaleRequest, arcLayout,
+  compareBase, composerFromRecord, formatDuration, jobFraction, jobLabel, lutInfo, lutLabel, MAX_UPSCALE_AREA, MAX_UPSCALE_SIDE, MODE_LABEL, pipelineSummary, remainingSeconds, sizeForWidth, upscaleRequest, arcLayout,
   upscalerLabel, upscaleTargets, variationRequest, imageName, type LinkKind, type TimelineLink,
 } from "../lib/logic";
 import { native } from "../lib/native";
 import {
   addAsReference, addResult, cancelJob, focusPrompt, getState, itemSource, removeSessionItem, reusePrompt, selectedItem, selectItem, sessionLabels, sessionLinks, setState, submitRequest, toastError, toastInfo, useStore, type SessionItem,
 } from "../lib/store";
-import type { GenerationRecord, JobView, Mode, Size } from "../lib/types";
+import type { GenerationRecord, JobView, LutEntry, Mode, Size } from "../lib/types";
 import { CompareFrame, CompareFullscreen } from "./Compare";
 import { LutBar, LutButton, LutOverlay } from "./Lut";
 import { IconButton, Popover, useFit } from "./ui";
@@ -138,7 +138,7 @@ function InfoPanel({ g }: { g: GenerationRecord }) {
   const rows: [string, string][] = lut ? [
     ["Mode", MODE_LABEL[g.mode]],
     ["Size", `${g.width}×${g.height}`],
-    ["LUT", lut.title && lut.title !== lut.name ? `${lut.name} (${lut.title})` : lut.name],
+    ["LUT", !lut.name.startsWith("kokon:") && lut.title && lut.title !== lut.name ? `${lut.name} (${lut.title})` : lutLabel(lut)],
     ["Intensity", `${Math.round(lut.intensity * 100)} %`],
     ["Created", new Date(g.created_at).toLocaleString()],
   ] : [
@@ -287,7 +287,7 @@ function MoreMenu({ item, path }: { item: SessionItem; path: string | null }) {
   );
 }
 
-function GenActions({ item, g, showOriginal, onLut }: { item: SessionItem; g: GenerationRecord; showOriginal: boolean; onLut: (name: string) => void }) {
+function GenActions({ item, g, showOriginal, onLut }: { item: SessionItem; g: GenerationRecord; showOriginal: boolean; onLut: (lut: LutEntry) => void }) {
   // Save, copy and "show in folder" act on the image on screen: the result or its pre-upscale original.
   const shownPath = (showOriginal && g.pipeline?.original_path) || g.file_path;
   const original = g.references[0] && g.mode !== "generate" && g.mode !== "upscale" && g.mode !== "lut" ? { width: g.references[0].width, height: g.references[0].height } : null;
@@ -374,7 +374,7 @@ function GenActions({ item, g, showOriginal, onLut }: { item: SessionItem; g: Ge
   );
 }
 
-function InputActions({ item, onLut }: { item: SessionItem; onLut: (name: string) => void }) {
+function InputActions({ item, onLut }: { item: SessionItem; onLut: (lut: LutEntry) => void }) {
   const input = item.input!;
   return (
     <div className="actions">
@@ -404,7 +404,7 @@ function PlainFrame({ src, alt, w, h, maskSrc, overlay, onFullscreen }: { src: s
 }
 
 /** Under the image: which image this is and what made it, then what you can do with it. */
-function StageBar(props: { item: SessionItem; label: string; showOriginal: boolean; setShowOriginal: (on: boolean) => void; lutBar: React.ReactNode; onLut: (name: string) => void }) {
+function StageBar(props: { item: SessionItem; label: string; showOriginal: boolean; setShowOriginal: (on: boolean) => void; lutBar: React.ReactNode; onLut: (lut: LutEntry) => void }) {
   const { item, label, showOriginal, setShowOriginal } = props;
   const g = item.gen;
   const lut = g && lutInfo(g);
@@ -418,7 +418,7 @@ function StageBar(props: { item: SessionItem; label: string; showOriginal: boole
         <span className="ver">{imageName(label)}</span>
         {g && <span className="mode">{MODE_LABEL[g.mode]}</span>}
         <span className="stage-prompt" title={g?.prompt ?? name}>
-          {g ? g.prompt || (g.mode === "upscale" ? `${g.references[0]?.width ?? "?"}×${g.references[0]?.height ?? "?"} → ${w}×${h}` : lut ? `${lut.name} · ${Math.round(lut.intensity * 100)} %` : "") : name}
+          {g ? g.prompt || (g.mode === "upscale" ? `${g.references[0]?.width ?? "?"}×${g.references[0]?.height ?? "?"} → ${w}×${h}` : lut ? `${lutLabel(lut)} · ${Math.round(lut.intensity * 100)} %` : "") : name}
         </span>
         {from && !props.lutBar ? (
           <span className="seg dims-seg" role="radiogroup" aria-label="Which image to show">
@@ -712,7 +712,7 @@ export function Stage() {
   const [full, setFull] = useState(false);
   const canFull = !!item && viewable(item);
   // A LUT being previewed on the selected version (intensity 0-1), before saving it as a new one.
-  const [lut, setLut] = useState<{ itemKey: string; source: string; name: string; intensity: number } | null>(null);
+  const [lut, setLut] = useState<{ itemKey: string; source: string; lut: LutEntry; intensity: number } | null>(null);
   const [before, setBefore] = useState(false);
   const [saving, setSaving] = useState(false);
   const lutActive = lut && item && lut.itemKey === item.key ? lut : null;
@@ -794,13 +794,13 @@ export function Stage() {
     const from = g?.pipeline?.original_path ? g.pipeline.enlarged_from : null;
     const showOriginal = !!(g && from && originalOf === g.id) && !lutActive;
     const source = g ? `gen:${g.id}` : `input:${item.input!.id}`;
-    const startLut = (name: string) => setLut((l) => ({ itemKey: item.key, source, name, intensity: l?.intensity ?? lastIntensity }));
+    const startLut = (e: LutEntry) => setLut((l) => ({ itemKey: item.key, source, lut: e, intensity: l?.intensity ?? lastIntensity }));
     const saveLut = async () => {
       if (!lutActive) return;
       setSaving(true);
       try {
         lastIntensity = lutActive.intensity;
-        const rec = await api.applyLut(lutActive.name, lutActive.source, lutActive.intensity, getState().privateMode);
+        const rec = await api.applyLut(lutActive.lut.name, lutActive.source, lutActive.intensity, getState().privateMode);
         setLut(null);
         addResult(rec);
       } catch (e) {
@@ -813,7 +813,7 @@ export function Stage() {
     const previewMax = Math.min(Math.max(w, h), Math.round(1600 * Math.min(2, window.devicePixelRatio || 1)), 4096);
     const lutBar = lutActive && (
       <LutBar
-        name={lutActive.name}
+        lut={lutActive.lut}
         intensity={lutActive.intensity}
         saving={saving}
         onPick={startLut}
@@ -832,7 +832,7 @@ export function Stage() {
             alt={g?.prompt ?? item.input?.original_name ?? ""}
             w={w}
             h={h}
-            overlay={<LutOverlay src={urls.lutPreview(lutActive.name, lutActive.source, previewMax)} opacity={before ? 0 : lutActive.intensity} />}
+            overlay={<LutOverlay src={urls.lutPreview(lutActive.lut.name, lutActive.source, previewMax)} opacity={before ? 0 : lutActive.intensity} />}
             onFullscreen={openFull}
           />
         ) : g && from && showOriginal ? (

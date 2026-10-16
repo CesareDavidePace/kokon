@@ -143,8 +143,8 @@ export interface GenerationRecord {
   pipeline?: PipelineRecord | null;
 }
 
-/** A .cube LUT in Kokon's list (most recently used first). */
-export interface LutEntry { name: string; title: string | null; kind: "1d" | "3d"; size: number }
+/** A .cube LUT in Kokon's list (the user's, most recently used first, then Kokon's presets). */
+export interface LutEntry { name: string; title: string | null; kind: "1d" | "3d"; size: number; builtin: boolean }
 /** How a "lut" result was made (in its `request`). */
 export interface LutInfo { name: string; title?: string | null; intensity: number }
 

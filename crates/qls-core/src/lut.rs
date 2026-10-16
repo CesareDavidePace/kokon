@@ -1,6 +1,9 @@
 //! Colour LUTs in the `.cube` format (Adobe / DaVinci Resolve): parsing, applying one to an
 //! image at an intensity, and the folder of LUTs the user has opened (most recent first).
 //!
+//! Kokon also ships a few looks of its own ([`PRESETS`]), built from simple colour math (no
+//! third-party LUT files), listed with ids `kokon:<key>`.
+//!
 //! 3D tables use tetrahedral interpolation (what Resolve and most graders use), 1D tables
 //! linear interpolation per channel. Values are display-referred: the image's 8-bit sRGB
 //! values go in as 0-1 (through `DOMAIN_MIN`/`DOMAIN_MAX`), like every grading tool does.
@@ -45,6 +48,20 @@ fn floats<const N: usize>(rest: &str, line: usize) -> Result<[f32; N], String> {
 }
 
 impl Lut {
+    /// A 3D table of `size` entries per axis computed from a colour function (components 0-1).
+    pub fn from_fn(title: &str, size: usize, f: impl Fn([f32; 3]) -> [f32; 3]) -> Lut {
+        let top = (size - 1) as f32;
+        let mut table = Vec::with_capacity(size * size * size);
+        for b in 0..size {
+            for g in 0..size {
+                for r in 0..size {
+                    table.push(f([r as f32 / top, g as f32 / top, b as f32 / top]).map(|v| v.clamp(0.0, 1.0)));
+                }
+            }
+        }
+        Lut { title: Some(title.into()), kind: LutKind::ThreeD, size, domain_min: [0.0; 3], domain_max: [1.0; 3], table }
+    }
+
     /// Parses a `.cube` file. Errors are short, user-facing reasons.
     pub fn parse(text: &str) -> Result<Lut, String> {
         let mut title = None;
@@ -178,11 +195,80 @@ impl Lut {
 /// A LUT in the library, for the picker.
 #[derive(Debug, Clone, Serialize)]
 pub struct LutEntry {
-    /// File name without `.cube`; the LUT's id in the API.
+    /// The LUT's id in the API: the file name without `.cube`, or `kokon:<key>` for a preset.
     pub name: String,
+    /// The `.cube` file's TITLE; a preset's display name.
     pub title: Option<String>,
     pub kind: LutKind,
     pub size: usize,
+    /// One of Kokon's presets (always listed, can't be removed).
+    pub builtin: bool,
+}
+
+/// One of the looks Kokon ships.
+pub struct Preset {
+    pub key: &'static str,
+    pub title: &'static str,
+    look: fn([f32; 3]) -> [f32; 3],
+}
+
+const PRESET_PREFIX: &str = "kokon:";
+const PRESET_SIZE: usize = 33;
+
+fn luma([r, g, b]: [f32; 3]) -> f32 {
+    0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+/// Per-channel gains, then the original luminance restored: a colour shift that keeps brightness.
+fn tint(c: [f32; 3], gains: [f32; 3]) -> [f32; 3] {
+    let t = [c[0] * gains[0], c[1] * gains[1], c[2] * gains[2]];
+    let (l0, l1) = (luma(c), luma(t));
+    if l1 <= 1e-6 { t } else { t.map(|v| v * l0 / l1) }
+}
+
+fn saturate(c: [f32; 3], s: f32) -> [f32; 3] {
+    let l = luma(c);
+    c.map(|v| l + (v - l) * s)
+}
+
+/// S-curve contrast around mid grey (`k` 0 = none, 1 = a full smoothstep).
+fn contrast(c: [f32; 3], k: f32) -> [f32; 3] {
+    c.map(|v| {
+        let v = v.clamp(0.0, 1.0);
+        v + k * (v * v * (3.0 - 2.0 * v) - v)
+    })
+}
+
+/// Lifts the blacks to `lift` and lowers the whites to `1 - roll`.
+fn fade(c: [f32; 3], lift: f32, roll: f32) -> [f32; 3] {
+    c.map(|v| lift + v * (1.0 - lift - roll))
+}
+
+/// Kokon's presets, in the order the picker shows them.
+pub const PRESETS: &[Preset] = &[
+    // Qwen-Image tends to a warm, yellowish cast: pull it back towards neutral.
+    Preset { key: "neutral", title: "Neutral (less yellow)", look: |c| tint(c, [0.97, 0.985, 1.08]) },
+    Preset { key: "warm", title: "Warm", look: |c| tint(c, [1.06, 1.0, 0.9]) },
+    Preset { key: "cool", title: "Cool", look: |c| tint(c, [0.93, 0.995, 1.09]) },
+    Preset {
+        key: "teal-orange",
+        title: "Teal & Orange",
+        look: |c| {
+            let l = luma(c);
+            let (sh, hi) = ((1.0 - l) * (1.0 - l), l * l);
+            let t = [c[0] - 0.05 * sh + 0.05 * hi, c[1] + 0.01 * sh + 0.01 * hi, c[2] + 0.06 * sh - 0.06 * hi];
+            contrast(saturate(t, 1.08), 0.12)
+        },
+    },
+    Preset { key: "vivid", title: "Vivid", look: |c| contrast(saturate(c, 1.3), 0.2) },
+    Preset { key: "soft-film", title: "Soft Film", look: |c| tint(fade(saturate(contrast(c, 0.15), 0.9), 0.04, 0.03), [1.02, 1.0, 0.97]) },
+    Preset { key: "matte", title: "Matte", look: |c| fade(saturate(c, 0.85), 0.08, 0.04) },
+    Preset { key: "black-white", title: "Black & White", look: |c| contrast([luma(c); 3], 0.2) },
+];
+
+fn preset(name: &str) -> Option<&'static Preset> {
+    let key = name.strip_prefix(PRESET_PREFIX)?;
+    PRESETS.iter().find(|p| p.key == key)
 }
 
 /// The LUTs the user has opened, copied into the app's data folder so they stay available
@@ -234,16 +320,16 @@ impl LutLibrary {
         v
     }
 
-    /// The library, most recently used first (files that no longer parse are skipped).
+    /// The user's LUTs, most recently used first (files that no longer parse are skipped),
+    /// then Kokon's presets.
     pub fn list(&self) -> Vec<LutEntry> {
-        self.files()
-            .into_iter()
-            .filter_map(|(p, _)| {
-                let name = p.file_stem()?.to_string_lossy().into_owned();
-                let lut = Lut::parse(&std::fs::read_to_string(&p).ok()?).ok()?;
-                Some(LutEntry { name, title: lut.title, kind: lut.kind, size: lut.size })
-            })
-            .collect()
+        let own = self.files().into_iter().filter_map(|(p, _)| {
+            let name = p.file_stem()?.to_string_lossy().into_owned();
+            let lut = Lut::parse(&std::fs::read_to_string(&p).ok()?).ok()?;
+            Some(LutEntry { name, title: lut.title, kind: lut.kind, size: lut.size, builtin: false })
+        });
+        let presets = PRESETS.iter().map(|p| LutEntry { name: format!("{PRESET_PREFIX}{}", p.key), title: Some(p.title.into()), kind: LutKind::ThreeD, size: PRESET_SIZE, builtin: true });
+        own.chain(presets).collect()
     }
 
     /// Copies a `.cube` file into the library (the same file opened again is not duplicated).
@@ -272,10 +358,13 @@ impl LutLibrary {
         }
         self.touch(&name);
         self.prune();
-        Ok(LutEntry { name, title: lut.title, kind: lut.kind, size: lut.size })
+        Ok(LutEntry { name, title: lut.title, kind: lut.kind, size: lut.size, builtin: false })
     }
 
     pub fn load(&self, name: &str) -> AppResult<Lut> {
+        if let Some(p) = preset(name) {
+            return Ok(Lut::from_fn(p.title, PRESET_SIZE, p.look));
+        }
         let p = self.path(name)?;
         let text = std::fs::read_to_string(&p).map_err(|_| AppError::new(ErrorCode::NotFound, format!("The LUT \"{name}\" is no longer in Kokon's LUT list.")))?;
         Lut::parse(&text).map_err(|why| invalid(format!("This LUT can't be used: {why}.")))
@@ -291,6 +380,9 @@ impl LutLibrary {
     }
 
     pub fn remove(&self, name: &str) -> AppResult<()> {
+        if preset(name).is_some() {
+            return Err(invalid("Kokon's own LUTs can't be removed."));
+        }
         let p = self.path(name)?;
         match std::fs::remove_file(&p) {
             Ok(()) => Ok(()),
@@ -386,6 +478,43 @@ mod tests {
     }
 
     #[test]
+    fn presets_are_listed_after_the_users_luts_and_behave() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = LutLibrary::new(dir.path().join("luts"));
+        let list = lib.list();
+        assert_eq!(list.len(), PRESETS.len(), "presets even with no LUT folder yet");
+        assert!(list.iter().all(|e| e.builtin && e.name.starts_with("kokon:") && e.title.is_some()));
+        let grey = [0.5, 0.5, 0.5];
+        let get = |k: &str| lib.load(&format!("kokon:{k}")).unwrap();
+        let n = get("neutral").map([0.8, 0.75, 0.55]);
+        assert!(n[2] > 0.55 && n[0] < 0.8, "less yellow: {n:?}");
+        let w = get("warm").map(grey);
+        assert!(w[0] > w[2]);
+        let c = get("cool").map(grey);
+        assert!(c[2] > c[0]);
+        let bw = get("black-white").map([0.9, 0.2, 0.4]);
+        assert!((bw[0] - bw[1]).abs() < 1e-4 && (bw[1] - bw[2]).abs() < 1e-4);
+        assert!(get("matte").map([0.0; 3])[0] > 0.05, "lifted blacks");
+        for p in PRESETS {
+            let lut = get(p.key);
+            for v in [[0.0; 3], [1.0; 3], [0.2, 0.6, 0.9], grey] {
+                assert!(lut.map(v).iter().all(|x| (0.0..=1.0).contains(x)), "{}", p.key);
+            }
+            // Mid grey stays roughly mid grey: looks, not exposure changes.
+            assert!((luma(lut.map(grey)) - 0.5).abs() < 0.06, "{} {:?}", p.key, lut.map(grey));
+        }
+        assert!(lib.remove("kokon:warm").is_err());
+        assert!(lib.load("kokon:nope").is_err());
+        // A user's own file comes first.
+        let src = dir.path().join("Mine.cube");
+        std::fs::write(&src, cube3(2, |c| c)).unwrap();
+        lib.import(&src).unwrap();
+        let list = lib.list();
+        assert_eq!((list[0].name.as_str(), list[0].builtin), ("Mine", false));
+        assert_eq!(list.len(), PRESETS.len() + 1);
+    }
+
+    #[test]
     fn library_imports_lists_recent_first_and_removes() {
         let dir = tempfile::tempdir().unwrap();
         let lib = LutLibrary::new(dir.path().join("luts"));
@@ -402,11 +531,11 @@ mod tests {
         assert_eq!(b.name, "Warm Film-2");
         std::thread::sleep(std::time::Duration::from_millis(20));
         lib.touch("Warm Film");
-        let names: Vec<_> = lib.list().into_iter().map(|e| e.name).collect();
+        let names: Vec<_> = lib.list().into_iter().filter(|e| !e.builtin).map(|e| e.name).collect();
         assert_eq!(names, ["Warm Film", "Warm Film-2"]);
         assert_eq!(lib.load("Warm Film-2").unwrap().size, 3);
         lib.remove("Warm Film").unwrap();
-        assert_eq!(lib.list().len(), 1);
+        assert_eq!(lib.list().iter().filter(|e| !e.builtin).count(), 1);
         assert!(lib.load("../secret").is_err());
         assert_eq!(display_name(" a:b?.cube. "), "a-b-.cube");
         let bad = dir.path().join("bad.cube");

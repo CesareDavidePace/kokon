@@ -563,25 +563,30 @@ pub fn planning_token_budget(vram_total_mib: Option<u64>, unified_memory: bool) 
     }
 }
 
-/// Untiled-decode budget for an unknown GPU: an untiled 1 MP decode leaves margin on a
-/// 16 GB card with the DiT resident, larger ones tile.
+/// Largest VAE decode tile on discrete GPUs of 15 GiB and up: an untiled decode of ~1.5 MP
+/// already fills a 16 GB card with the DiT resident, so 1 MP leaves margin. sd.cpp retries a
+/// decode that runs out of memory with smaller tiles itself, so too large only costs time.
 pub const LARGE_GPU_VAE_TILE_AREA: u64 = 1024 * 1024;
+/// Discrete GPUs this large plan untiled decodes from their memory instead of the fixed
+/// 16 GB thresholds (RTX 4090, 5090, …). Smaller cards were measured against tiling and
+/// keep today's behavior, and Macs use the unified-memory budget.
+const UNTILED_VAE_MIN_VRAM_MIB: u64 = 23 * 1024;
 /// Weights and overhead that stay resident while the VAE decodes (DiT ~4.5 GB + VAE
 /// ~0.65 GB + CUDA context and fragmentation).
 const VAE_DECODE_RESIDENT_MIB: u64 = 7 * 1024;
-/// Activation bytes per pixel of an untiled decode, between the two measurements in
-/// docs/engineering-notes.md (untiled 2K needs ~18 GB end to end → ~2.6 kB/px; the "~1.5
-/// MP fills a 16 GB card" anchor implies more) — chosen so both hold with margin.
+/// Activation bytes per pixel of an untiled decode, between the measured anchors in
+/// docs/engineering-notes.md. An untiled 2K t2i measured ~26 GB peak on an RTX 5090, so the
+/// 85 % share of 32 GB still fits it, while a 24 GB card's budget does not (it keeps tiling
+/// 2K). sd.cpp retries a decode that runs out of memory with smaller tiles itself.
 const VAE_DECODE_BYTES_PER_PIXEL: f64 = 3500.0;
 /// Share of the planning VRAM a decode may use; the rest is headroom.
 const VAE_DECODE_VRAM_SHARE: f64 = 0.85;
 
-/// Largest decode area (pixels) that may run untiled on a GPU with `vram_total_mib` of
-/// planning VRAM: `resident + area * bytes_per_pixel <= share * vram`. Scales with the
-/// card instead of assuming the smallest one: a 16 GB card keeps tiled 1.5K and 2K
-/// decodes, a 32 GB card decodes every size the planner can budget untiled. sd.cpp
-/// retries a decode that runs out of memory with smaller tiles itself, so an estimate
-/// that is slightly too large only costs the retry.
+/// Largest decode area (pixels) that may run untiled on a discrete GPU of
+/// [`UNTILED_VAE_MIN_VRAM_MIB`] and up: `resident + area * bytes_per_pixel <= share * vram`.
+/// A 32 GB card decodes every size the planner can budget untiled; smaller cards keep the
+/// fixed thresholds in [`plan`]. sd.cpp retries a decode that runs out of memory with
+/// smaller tiles itself, so an estimate that is slightly too large only costs the retry.
 pub fn max_untiled_vae_area(vram_total_mib: Option<u64>) -> u64 {
     match vram_total_mib {
         None => LARGE_GPU_VAE_TILE_AREA,
@@ -1076,16 +1081,25 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
     }
     let max_ref_area = references.iter().map(|r| r.canvas.canvas.area()).max().unwrap_or(0);
     let total_area = working.canvas.area();
-    // Untiled decodes while `resident + area * bytes/pixel` fits in this GPU's share of
-    // memory (`max_untiled_vae_area`): a 16 GB card still tiles 1.5K and 2K (untiled 2K
-    // needs ~18 GB), a 32 GB card decodes everything the planner can budget. Encoding the
-    // references and decoding the result are sequential phases, so each is judged against
-    // the budget on its own rather than added together.
-    let untiled_area = max_untiled_vae_area(inputs.vram_total_mib);
-    let auto_tiling = total_area > untiled_area || max_ref_area > untiled_area;
-    // The server's `--vae-tiling` is no longer a reason to tile: a decode within the
+    // Untiled decodes are only planned from the card's memory on discrete GPUs of 23 GiB
+    // and up. 12/16 GB cards and Macs keep the measured fixed thresholds and the server's
+    // --vae-tiling, unchanged.
+    let untile_from_memory = !inputs.unified_memory
+        && inputs.vram_total_mib.is_some_and(|mib| mib >= UNTILED_VAE_MIN_VRAM_MIB);
+    let (auto_tiling, server_tiling) = if untile_from_memory {
+        // `resident + area * bytes/pixel` must fit in this GPU's share of memory
+        // (`max_untiled_vae_area`); 32 GB decodes everything the planner can budget.
+        // Encoding the references and decoding the result are sequential phases, so each
+        // is judged against the budget on its own rather than added together.
+        let untiled_area = max_untiled_vae_area(inputs.vram_total_mib);
+        (total_area > untiled_area || max_ref_area > untiled_area, false)
+    } else {
+        let ref_tokens: u64 = references.iter().map(|r| r.canvas.canvas.area() / PIXELS_PER_TOKEN).sum();
+        (total_area > 1_600_000 || (ref_tokens * PIXELS_PER_TOKEN + total_area) > 6_000_000, inputs.server_vae_tiling)
+    };
+    // The server's `--vae-tiling` is only a fallback on large GPUs: a decode within the
     // budget is sent with tiling turned off (only an explicit choice overrides).
-    let vae_tiling = adv.vae_tiling.unwrap_or(auto_tiling);
+    let vae_tiling = adv.vae_tiling.unwrap_or(server_tiling || auto_tiling);
     if vae_tiling && adv.vae_tiling.is_none() && !inputs.server_vae_tiling && !quick_upscale {
         optimized = true;
         notes.push("Memory optimization enabled for this size.".into());
@@ -1093,8 +1107,8 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
     // Large discrete GPUs: decode tiles shaped to the image (fewer, larger tiles); others keep
     // the server's square tiles.
     let large_gpu = !inputs.unified_memory && inputs.vram_total_mib.map(|m| m as f64 / 1024.0 >= 15.0).unwrap_or(false);
-    let vae_tile = (vae_tiling && large_gpu && !quick_upscale && total_area > untiled_area)
-        .then(|| vae_decode_tile(working.canvas, untiled_area));
+    let vae_tile = (vae_tiling && large_gpu && !quick_upscale && total_area > LARGE_GPU_VAE_TILE_AREA)
+        .then(|| vae_decode_tile(working.canvas, LARGE_GPU_VAE_TILE_AREA));
     if (working.content.area() as f64) < output.area() as f64 * 0.98 && matches!(mode, ResolvedMode::Generate | ResolvedMode::Edit | ResolvedMode::MultiReference) {
         notes.push(format!(
             "Rendered at {}×{}, then enlarged to {}×{} with {}.",
@@ -1554,48 +1568,68 @@ mod tests {
     fn server_vae_tiling_is_reflected_in_the_plan() {
         let i = PlanInputs { server_vae_tiling: true, ..inputs(&[]) };
         let p = plan(&req("a fox"), &i, &rec()).unwrap();
-        assert!(p.vae_tiling, "Balanced 1.5K is above a 16 GB card's untiled budget");
+        assert!(p.vae_tiling, "16 GB keeps the server's tiling");
         assert!(!p.notes.iter().any(|n| n.contains("Memory optimization")), "nothing to announce");
         let mut r = req("a fox");
         r.advanced.vae_tiling = Some(false);
         assert!(!plan(&r, &i, &rec()).unwrap().vae_tiling, "explicit off wins");
-        // The server's --vae-tiling is only a fallback: a decode within the budget runs
-        // untiled (the request then turns tiling off, see pipeline::vae_tiling_params).
         let mut r = req("a fox");
         r.quality = Quality::Fast;
-        assert!(!plan(&r, &i, &rec()).unwrap().vae_tiling, "1 MP fits: untiled even though the server tiles");
+        assert!(plan(&r, &i, &rec()).unwrap().vae_tiling, "16 GB: the server still tiles the 1 MP decode");
+        // On 23 GiB and up, --vae-tiling is only a fallback: a decode within the budget
+        // runs untiled (the request then turns tiling off, see pipeline::vae_tiling_params).
+        let big = PlanInputs { vram_total_mib: Some(32_607), ..i };
+        assert!(!plan(&r, &big, &rec()).unwrap().vae_tiling, "1 MP fits: untiled even though the server tiles");
     }
 
     #[test]
     fn vae_tiling_follows_the_gpus_memory() {
-        let at = |vram: Option<u64>, quality: Quality| {
+        // The launch default is --vae-tiling, so today every decode tiles unless the
+        // planner turns it off.
+        let at = |vram: Option<u64>, unified_memory: bool, quality: Quality| {
             let mut r = req("a lighthouse at dusk");
             r.quality = quality;
-            let i = PlanInputs { vram_total_mib: vram, ..inputs(&[]) };
+            let i = PlanInputs { vram_total_mib: vram, unified_memory, server_vae_tiling: true, ..inputs(&[]) };
             plan(&r, &i, &rec()).unwrap().vae_tiling
         };
         // 32 GB (RTX 5090): every tier the planner can budget decodes untiled, 2K included.
-        assert!(!at(Some(32_607), Quality::Fast), "32 GB: 1 MP");
-        assert!(!at(Some(32_607), Quality::Balanced), "32 GB: 1.5K");
-        assert!(!at(Some(32_607), Quality::Quality), "32 GB: 2K");
-        // 16 GB (RTX 5070 Ti): 1 MP untiled, 1.5K and 2K stay tiled (untiled 2K ~18 GB).
-        assert!(!at(Some(16_303), Quality::Fast), "16 GB: 1 MP leaves margin");
-        assert!(at(Some(16_303), Quality::Balanced), "16 GB: 1.5K");
-        assert!(at(Some(16_303), Quality::Quality), "16 GB: 2K");
-        // 12 GB cards keep today's behavior: even 1 MP tiles (their planning budget is
-        // too tight for the model's estimate to be trusted).
-        assert!(at(Some(12_282), Quality::Fast), "12 GB: 1 MP");
-        assert!(at(None, Quality::Balanced), "unknown GPU: the conservative threshold");
+        assert!(!at(Some(32_607), false, Quality::Fast), "32 GB: 1 MP");
+        assert!(!at(Some(32_607), false, Quality::Balanced), "32 GB: 1.5K");
+        assert!(!at(Some(32_607), false, Quality::Quality), "32 GB: 2K");
+        // 24 GB (RTX 4090) untiles Fast/Balanced, but 2K measured ~26 GB on the 5090, so it
+        // keeps tiling 2K. Below the 23 GiB gate (22 GiB) nothing changes.
+        assert!(!at(Some(24_564), false, Quality::Balanced), "24 GB: 1.5K");
+        assert!(at(Some(24_564), false, Quality::Quality), "24 GB: 2K still tiles");
+        assert!(at(Some(22 * 1024), false, Quality::Quality), "22 GiB: below the gate");
+        // 16 GB (RTX 5070 Ti) and 12 GB keep today's behavior exactly.
+        for vram in [16_303, 12_282] {
+            for q in [Quality::Fast, Quality::Balanced, Quality::Quality] {
+                assert!(at(Some(vram), false, q), "{vram} MiB: {q:?} unchanged");
+            }
+        }
+        // Macs (unified memory) and unknown GPUs keep today's behavior too.
+        assert!(at(Some(46_080), true, Quality::Fast), "Mac: unchanged");
+        assert!(at(None, false, Quality::Balanced), "unknown GPU: unchanged");
+        // Without the server's tiling the 16 GB thresholds are the measured fixed ones.
+        let auto = |quality: Quality| {
+            let mut r = req("a lighthouse at dusk");
+            r.quality = quality;
+            let i = PlanInputs { vram_total_mib: Some(16_303), ..inputs(&[]) };
+            plan(&r, &i, &rec()).unwrap().vae_tiling
+        };
+        assert!(!auto(Quality::Fast), "16 GB: 1 MP untiles with no server tiling");
+        assert!(auto(Quality::Balanced), "16 GB: 1.5K");
+        assert!(auto(Quality::Quality), "16 GB: 2K");
     }
 
     #[test]
     fn untiled_decode_budget_scales_with_vram() {
         assert_eq!(max_untiled_vae_area(None), LARGE_GPU_VAE_TILE_AREA, "unknown GPU");
-        // Between the two documented anchors: 16 GB gets past 1 MP (margin on the "~1.5 MP
-        // fills the card" point), 32 GB gets more than the largest planned size (2K = 4.2 MP).
-        let m16 = max_untiled_vae_area(Some(16_303));
-        assert!((1_048_576..2_300_000).contains(&m16), "{m16}");
-        assert!(max_untiled_vae_area(Some(32_607)) > 2048 * 2048);
+        // A 23 GiB card untiles 1.5K but not 2K (the 5090's untiled 2K peaks at ~26 GB);
+        // 32 GB covers every 2K bucket.
+        let m23 = max_untiled_vae_area(Some(23 * 1024));
+        assert!((1_600_000..2752 * 1536).contains(&m23), "{m23}");
+        assert!(max_untiled_vae_area(Some(32_607)) > 2752 * 1536);
         assert_eq!(max_untiled_vae_area(Some(4_608)), 0, "a 16 GB Mac's planning budget: nothing untiled");
     }
 

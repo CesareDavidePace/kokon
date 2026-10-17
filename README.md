@@ -143,7 +143,9 @@ seeds and times are in [marketing/showcase/PROMPTS.md](marketing/showcase/PROMPT
   ```
 
   For NVIDIA cards you need the proprietary driver (the CUDA runtime comes with Kokon). AMD and
-  Intel cards use Mesa's Vulkan driver, installed on most desktops already.
+  Intel cards use Mesa's Vulkan driver, installed on most desktops already. If apt prints
+  "Download is performed unsandboxed as root", that's harmless (apt can't read your home
+  folder); copy the .deb to `/tmp` first to avoid it.
 
 **2. Set up models.** On first launch Kokon shows your graphics card (or your Mac's chip and
 memory), recommends a preset and downloads everything it needs. The download resumes if it is

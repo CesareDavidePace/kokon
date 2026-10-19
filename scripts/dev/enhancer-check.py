@@ -16,6 +16,11 @@ real 8 GB card does not have with vram-ballast.py:
     cargo build -p qls-service
     python scripts\\dev\\enhancer-check.py --card-mib 8188
 
+On a slow Mac, 2 images instead of 6 (no enhancer-off runs; the enhancer's own time
+comes from the service log):
+
+    python3 scripts/dev/enhancer-check.py --quick
+
 Fallback check (engine without the prompt enhancer, e.g. an official sd-server started by hand
 on Kokon's port before opening Kokon): a job with enhance on must still finish, with a note:
 
@@ -354,6 +359,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--card-mib", type=int, help="emulate a card with this much VRAM (8 GB: 8188); NVIDIA, Kokon closed")
     ap.add_argument("--expect-no-enhancer", action="store_true", help="fallback check on an engine without text generation")
+    ap.add_argument("--quick", action="store_true", help="2 images only (text-to-image and edit, enhancer on): for slow Macs")
     ap.add_argument("--quality", default="fast", choices=["fast", "balanced", "quality"])
     ap.add_argument("--timeout", type=int, default=1800, help="seconds per job (Macs are slow)")
     ap.add_argument("--out", help="results folder (default: Desktop or home / kokon-enhancer-check / <timestamp>)")
@@ -418,6 +424,13 @@ def main():
             check("job finished", r["status"] == "done", r["status"])
             check("note says the engine has no enhancer", any("no prompt enhancer" in n for n in r["notes"]), "; ".join(r["notes"]))
             check("record keeps the user's prompt, no original_prompt", r["record_prompt"] == T2I_PROMPT and not r["record_original_prompt"])
+        elif a.quick:
+            on = run_job(api, sampler, log, "t2i on", dict(t2i, seed=102, enhance=True), a.timeout)
+            edit = {"prompt": EDIT_PROMPT, "mode": "edit", "quality": q, "images": ["gen:%s" % on["record_id"]]}
+            eon = run_job(api, sampler, log, "edit on", dict(edit, seed=7, enhance=True), a.timeout)
+            results += [on, eon]
+            print("\n4. Checks")
+            enhancer_checks(check, results, (on, eon))
         else:
             results.append(run_job(api, sampler, log, "warm-up (not counted)", dict(t2i, seed=100), a.timeout))
             results.append(run_job(api, sampler, log, "t2i enhance first use", dict(t2i, seed=101, enhance=True), a.timeout))
@@ -431,16 +444,7 @@ def main():
             results += [eoff, eon]
 
             print("\n4. Checks")
-            for r in results:
-                check("%s finished" % r["name"], r["status"] == "done", r["status"])
-            for r in (results[1], on, eon):
-                n = r["name"]
-                check("%s: enhancing_prompt stage seen" % n, "enhancing_prompt" in r["statuses"], "->".join(r["statuses"]))
-                check("%s: live text (>= 3 partial updates)" % n, r["live_updates"] >= 3, "%d updates" % r["live_updates"])
-                check("%s: record has original + expanded prompt" % n,
-                      r["record_original_prompt"] == (EDIT_PROMPT if n.startswith("edit") else T2I_PROMPT)
-                      and r["record_prompt"] and r["record_prompt"] != r["record_original_prompt"])
-                check("%s: no enhancer failure note" % n, not any("enhancer" in x for x in r["notes"]), "; ".join(r["notes"]))
+            enhancer_checks(check, results, (results[1], on, eon))
             for r in (off, eoff):
                 check("%s: no original_prompt (enhancer off)" % r["name"], not r["record_original_prompt"])
 
@@ -462,6 +466,19 @@ def main():
                 subprocess.run(["pkill", "-x", "sd-server"], capture_output=True)
 
 
+def enhancer_checks(check, results, enhanced):
+    for r in results:
+        check("%s finished" % r["name"], r["status"] == "done", r["status"])
+    for r in enhanced:
+        n = r["name"]
+        check("%s: enhancing_prompt stage seen" % n, "enhancing_prompt" in r["statuses"], "->".join(r["statuses"]))
+        check("%s: live text (>= 3 partial updates)" % n, r["live_updates"] >= 3, "%d updates" % r["live_updates"])
+        check("%s: record has original + expanded prompt" % n,
+              r["record_original_prompt"] == (EDIT_PROMPT if n.startswith("edit") else T2I_PROMPT)
+              and r["record_prompt"] and r["record_prompt"] != r["record_original_prompt"])
+        check("%s: no enhancer failure note" % n, not any("enhancer" in x for x in r["notes"]), "; ".join(r["notes"]))
+
+
 def write_report(out, a, sysinfo, release, markers, srv, checks, results):
     L = ["# Prompt enhancer check %s" % out.name, ""]
     L += ["- System: %s" % ", ".join("%s %s" % (k, v) for k, v in sysinfo.items())]
@@ -480,7 +497,7 @@ def write_report(out, a, sysinfo, release, markers, srv, checks, results):
             r["name"], r["status"], r["wall_s"], r["duration_s"] or "", r["enhancer_tokens"] or "", r["enhancer_s"] or "",
             tps, r["live_updates"], r["gpu_peak_mib"] or "", r["proc_peak_mib"] or "", r["size"] or ""))
     by = {r["name"]: r for r in results}
-    if "t2i on" in by:
+    if "t2i off" in by:
         L += ["", "Added by the enhancer (same seed, wall time): text-to-image %+.1f s, edit %+.1f s." % (
             by["t2i on"]["wall_s"] - by["t2i off"]["wall_s"], by["edit on"]["wall_s"] - by["edit off"]["wall_s"])]
     L += ["", "## Prompts", ""]

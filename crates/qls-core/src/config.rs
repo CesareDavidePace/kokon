@@ -21,7 +21,8 @@ pub const DEFAULT_SERVICE_PORT: u16 = 39151;
 /// and ESRGAN tile sizes reset to automatic.
 /// Schema 9 (2026-10-16, #14): profiles record their model and source; model paths edited by
 /// hand on the official profile move to a profile of the user's own files.
-const SCHEMA_VERSION: u32 = 9;
+/// Schema 10 (2026-10-19): the 8 GB preset's VRAM reserve 1 -> 1.5 GiB (unless set by hand).
+const SCHEMA_VERSION: u32 = 10;
 /// `upscaler_model` value for a plain Lanczos resize (no model).
 pub const LANCZOS: &str = "lanczos";
 /// Upscalers offered in Settings: (file stem, label). Superscale-SP is a setup download, MoSR is
@@ -506,6 +507,9 @@ impl AppConfig {
                         }
                         c.keep_hand_edited_paths();
                     }
+                    if c.schema_version < 10 && c.hardware_preset == "8gb" && c.vram_reserve_gib == 1.0 {
+                        c.vram_reserve_gib = c.preset().vram_reserve_gib;
+                    }
                     // The official weights are always available as a profile, built for the
                     // configured folder and preset; the active one stays as it is.
                     c.normalize();
@@ -694,6 +698,7 @@ impl AppConfig {
     pub fn apply_preset(&mut self, preset: &crate::catalog::Preset) {
         self.hardware_preset = preset.id.into();
         self.text_encoder_placement = preset.text_encoder_placement;
+        self.vram_reserve_gib = preset.vram_reserve_gib;
         self.normalize();
     }
 
@@ -1116,6 +1121,25 @@ mod tests {
         // Older config files without the new fields keep loading with defaults.
         let old: AppConfig = serde_json::from_str(r#"{"serverPort": 41000, "vaeTileSize": 512}"#).unwrap();
         assert_eq!(old.profile().recommended_settings.area_quality, 2048 * 2048);
+    }
+
+    #[test]
+    fn eight_gb_preset_reserves_more_vram() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let load = |json: &str| {
+            std::fs::write(&path, json).unwrap();
+            AppConfig::load_from(&path).vram_reserve_gib
+        };
+        assert_eq!(load(r#"{"schemaVersion": 9, "hardwarePreset": "8gb", "vramReserveGib": 1.0}"#), 1.5);
+        assert_eq!(load(r#"{"schemaVersion": 9, "hardwarePreset": "8gb", "vramReserveGib": 2.0}"#), 2.0, "set by hand");
+        assert_eq!(load(r#"{"schemaVersion": 9, "hardwarePreset": "16gb", "vramReserveGib": 1.0}"#), 1.0);
+        assert_eq!(load(r#"{"schemaVersion": 10, "hardwarePreset": "8gb", "vramReserveGib": 1.0}"#), 1.0, "chosen after the migration");
+        let mut c = AppConfig::default();
+        c.apply_preset(crate::catalog::preset("8gb").unwrap());
+        assert_eq!(c.vram_reserve_gib, 1.5);
+        c.apply_preset(crate::catalog::preset("12gb").unwrap());
+        assert_eq!(c.vram_reserve_gib, 1.0);
     }
 
     #[test]

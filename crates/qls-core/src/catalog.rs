@@ -583,6 +583,11 @@ pub struct Preset {
     pub diffusion: Download,
     pub text_encoder: Download,
     pub text_encoder_placement: TextEncoderPlacement,
+    /// Free VRAM sd-server leaves out of its budget (`--max-vram -N`). CUDA loads a kernel's code
+    /// on first use, outside that budget: on an emulated 8 GB card 1 GiB left too little and the
+    /// first job after every start crashed ("shared object initialization failed"); 1.5 GiB ran
+    /// clean with the prompt enhancer still fully on the GPU (2026-10-19).
+    pub vram_reserve_gib: f32,
     /// Measured on real hardware of this class (otherwise only derived).
     pub verified: bool,
     pub summary: &'static str,
@@ -604,6 +609,7 @@ pub const PRESETS: &[Preset] = &[
         diffusion: TURBO_Q4_K,
         text_encoder: TEXT_ENCODER_Q4_K_M,
         text_encoder_placement: TextEncoderPlacement::Ram,
+        vram_reserve_gib: 1.5,
         verified: false,
         summary: "4-bit model; text encoder in system RAM; images of about 1 megapixel",
     },
@@ -616,6 +622,7 @@ pub const PRESETS: &[Preset] = &[
         diffusion: TURBO_Q4_K,
         text_encoder: TEXT_ENCODER_Q4_K_M,
         text_encoder_placement: TextEncoderPlacement::Ram,
+        vram_reserve_gib: 1.0,
         verified: true,
         summary: "4-bit model; text encoder in system RAM; smaller working sizes",
     },
@@ -628,6 +635,7 @@ pub const PRESETS: &[Preset] = &[
         diffusion: TURBO_Q4_K,
         text_encoder: TEXT_ENCODER_Q4_K_M,
         text_encoder_placement: TextEncoderPlacement::Ram,
+        vram_reserve_gib: 1.0,
         verified: true,
         summary: "4-bit model; text encoder in system RAM; native 2K for Quality",
     },
@@ -640,6 +648,7 @@ pub const PRESETS: &[Preset] = &[
         diffusion: TURBO_Q4_K,
         text_encoder: TEXT_ENCODER_Q4_K_M,
         text_encoder_placement: TextEncoderPlacement::Ram,
+        vram_reserve_gib: 1.0,
         verified: false,
         summary: "4-bit model; text encoder in system RAM; larger edits fit",
     },
@@ -652,6 +661,7 @@ pub const PRESETS: &[Preset] = &[
         diffusion: TURBO_Q4_K,
         text_encoder: TEXT_ENCODER_Q8_0,
         text_encoder_placement: TextEncoderPlacement::Ram,
+        vram_reserve_gib: 1.0,
         verified: false,
         summary: "4-bit model and 8-bit text encoder",
     },

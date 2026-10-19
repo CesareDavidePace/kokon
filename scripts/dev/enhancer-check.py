@@ -285,7 +285,7 @@ def any_sd_server_running():
     return subprocess.run(["pgrep", "-x", "sd-server"], capture_output=True).returncode == 0
 
 
-def start_isolated(card_mib, out):
+def start_isolated(card_mib, out, reserve_gib=1.0, cuda_eager=False):
     if any_sd_server_running():
         raise SystemExit("sd-server is running. Close Kokon (and any sd-server) first: the GPU must be free.")
     exe = ROOT / "target" / "debug" / ("kokon-service.exe" if sys.platform == "win32" else "kokon-service")
@@ -316,15 +316,18 @@ def start_isolated(card_mib, out):
     # 16 GiB free beside it), so its automatic budget (--max-vram -1) would overcommit and spill.
     # Give it what a real card of this size detects: free VRAM now minus the same 1 GiB reserve.
     free = int(re.search(r"(\d+) MiB free now", held).group(1))
-    budget_gib = round((free - 1024) / 1024, 2)
+    budget_gib = round((free - reserve_gib * 1024) / 1024, 2)
     cfg = dict(real)
     cfg.update({"servicePort": svc_port, "serverPort": srv_port, "outputDir": str(odir), "sdcppDir": sdcpp,
                 "hardwarePreset": "8gb", "vramOverrideMib": card_mib, "setupComplete": True,
                 "vramReserveGib": 0, "extraServerArgs": list(real.get("extraServerArgs") or []) + ["--max-vram", str(budget_gib)]})
     (cdir / "config.json").write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-    print("sd-server budget: --max-vram %s GiB (%d MiB free with the ballast, minus 1 GiB)" % (budget_gib, free))
+    print("sd-server budget: --max-vram %s GiB (%d MiB free with the ballast, minus %s GiB)" % (budget_gib, free, reserve_gib))
 
     env = dict(os.environ, QLS_DATA_DIR=str(ddir), QLS_CONFIG_DIR=str(cdir))
+    if cuda_eager:
+        # Experiment: load every CUDA kernel at start instead of on first use (sd-server inherits it).
+        env["CUDA_MODULE_LOADING"] = "EAGER"
     svc = subprocess.Popen([str(exe), "--port", str(svc_port), "--persistent"], env=env,
                            stdout=open(iso / "service.out", "w"), stderr=subprocess.STDOUT)
     procs.append(svc)
@@ -364,6 +367,8 @@ def engine_markers(sdcpp):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--card-mib", type=int, help="emulate a card with this much VRAM (8 GB: 8188); NVIDIA, Kokon closed")
+    ap.add_argument("--reserve-gib", type=float, default=1.0, help="with --card-mib: VRAM left out of sd-server's budget (sd-server's own default: 1)")
+    ap.add_argument("--cuda-eager", action="store_true", help="with --card-mib: CUDA_MODULE_LOADING=EAGER for sd-server (experiment)")
     ap.add_argument("--expect-no-enhancer", action="store_true", help="fallback check on an engine without text generation")
     ap.add_argument("--quick", action="store_true", help="2 images only (text-to-image and edit, enhancer on): for slow Macs")
     ap.add_argument("--quality", default="fast", choices=["fast", "balanced", "quality"])
@@ -380,7 +385,7 @@ def main():
     procs = []
     try:
         if a.card_mib:
-            procs, ddir = start_isolated(a.card_mib, out)
+            procs, ddir = start_isolated(a.card_mib, out, a.reserve_gib, a.cuda_eager)
             api = connect(ddir, wait_s=30)
         else:
             ddir = data_dir()
@@ -489,7 +494,7 @@ def write_report(out, a, sysinfo, release, markers, srv, checks, results):
     L = ["# Prompt enhancer check %s" % out.name, ""]
     L += ["- System: %s" % ", ".join("%s %s" % (k, v) for k, v in sysinfo.items())]
     if a.card_mib:
-        L += ["- Emulated card: %d MiB (VRAM ballast + 8gb preset + explicit --max-vram, isolated service)" % a.card_mib]
+        L += ["- Emulated card: %d MiB (VRAM ballast + 8gb preset + --max-vram = free - %s GiB%s, isolated service)" % (a.card_mib, a.reserve_gib, ", CUDA_MODULE_LOADING=EAGER" if a.cuda_eager else "")]
     L += ["- Engine: %s; markers: %s" % (release, "; ".join(markers) or "none"),
           "- Server: model %s, text_generation %s" % (srv.get("model"), srv.get("text_generation")),
           "- Quality: %s" % a.quality, ""]

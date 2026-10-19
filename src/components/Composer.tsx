@@ -1,10 +1,10 @@
-import { ArrowUp, Brush, ChevronDown, Expand, FolderOpen, Gauge, ImagePlus, Lightbulb, Maximize, Pencil, SlidersHorizontal, Sparkles, X } from "lucide-react";
+import { ArrowUp, Brush, ChevronDown, Expand, FolderOpen, Gauge, ImagePlus, Lightbulb, Maximize, Pencil, SlidersHorizontal, Sparkles, WandSparkles, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, urls } from "../lib/api";
-import { activeOverrides, aspectLabel, buildRequest, expansionPixels, formatDuration, hasOutpaint, imageName, moveRef, needsPrompt, parseRatio, type Ref } from "../lib/logic";
+import { activeOverrides, aspectLabel, buildRequest, enhancerApplies, expansionPixels, formatDuration, hasOutpaint, imageName, moveRef, needsPrompt, parseRatio, type Ref } from "../lib/logic";
 import { native } from "../lib/native";
 import {
-  addAsReference, addInputs, editShownImage, getState, itemSource, selectedItem, sessionLabels, setState, startNewImage, submitComposer, toastError, updateComposer, useStore, type SessionItem,
+  addAsReference, addInputs, editShownImage, enhancerAvailable, getState, itemSource, selectedItem, sessionLabels, setState, startNewImage, submitComposer, toastError, updateComposer, useStore, type SessionItem,
 } from "../lib/store";
 import type { InpaintAction, Plan, Quality } from "../lib/types";
 import { AdvancedPanel } from "./Advanced";
@@ -289,6 +289,7 @@ export function Composer() {
   const taRef = useRef<HTMLTextAreaElement>(null);
   const hasImages = c.refs.length > 0;
   const overrides = activeOverrides(c.advanced);
+  const canEnhance = useStore(enhancerAvailable) && enhancerApplies(c);
 
   useEffect(() => {
     const ta = taRef.current;
@@ -440,6 +441,23 @@ export function Composer() {
           >
             {() => <AdvancedPanel plan={plan} />}
           </Popover>
+
+          {canEnhance && (
+            <button
+              className={`pill enhance ${c.enhance ? "on" : ""}`}
+              role="switch"
+              aria-checked={c.enhance}
+              onClick={() => updateComposer({ enhance: !c.enhance })}
+              title={
+                c.enhance
+                  ? "Prompt enhancer on: before making the image, the model rewrites your prompt as a detailed English description (looking at your image for edits). You see it being written; the result keeps both. Click to turn off."
+                  : "Prompt enhancer: let the model rewrite a short prompt, in any language, as a detailed English description before making the image. Adds a few seconds."
+              }
+            >
+              <WandSparkles size={15} />
+              Enhance
+            </button>
+          )}
 
           <button className="icon-btn" onClick={() => setState({ overlay: "prompt-tips" })} title="Prompt tips" aria-label="Prompt tips">
             <Lightbulb size={17} />

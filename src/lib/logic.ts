@@ -29,6 +29,8 @@ export interface Composer {
   customHeight: number;
   seed: number | null;
   advanced: Advanced;
+  /** Prompt enhancer on (remembered; used only where `enhancerApplies`). */
+  enhance: boolean;
 }
 
 /** A preset name from any version: older ones also had "turbo" (now Fast) and "ultra" (now Quality). */
@@ -53,6 +55,7 @@ export const emptyComposer = (prefs?: Partial<Composer>): Composer => ({
   customHeight: prefs?.customHeight ?? 1024,
   seed: null,
   advanced: newChatAdvanced(prefs?.advanced),
+  enhance: prefs?.enhance === true,
 });
 
 /** Advanced settings a new chat starts with: everything kept except Reference detail, which
@@ -112,7 +115,15 @@ export function buildRequest(c: Composer, parentId?: string | null): GenerationR
     advanced: cleanAdvanced(c.advanced),
     client: "ui",
     parent_id: parentId ?? null,
+    ...(c.enhance && enhancerApplies(c) ? { enhance: true } : {}),
   };
+}
+
+/** The prompt enhancer works on new images, edits and combines; a painted area or an expansion
+ * wraps the prompt in its own instruction. */
+export function enhancerApplies(c: Composer): boolean {
+  const maskValid = c.mask && c.refs[0] && c.mask.refKey === c.refs[0].key;
+  return !maskValid && !hasOutpaint(c.outpaint);
 }
 
 /** False only for a removal in a painted area, which needs no description. */
@@ -157,7 +168,9 @@ export function composerFromRecord(g: GenerationRecord, base: Composer): Compose
   const refs: Ref[] = g.references.map((r) => ({ key: newKey(), source: `input:${r.input_id}`, width: r.width, height: r.height, name: `Image ${r.index + 1}` }));
   const c: Composer = {
     ...base,
-    prompt: g.prompt,
+    // An enhanced result is the user's prompt with the enhancer on (Reuse prompt takes its text).
+    prompt: g.original_prompt ?? g.prompt,
+    enhance: !!g.original_prompt,
     refs,
     mask: g.mask_input_id && refs[0] ? { inputId: g.mask_input_id, refKey: refs[0].key } : null,
     inpaintAction: req?.inpaint_action ?? "edit",
@@ -317,6 +330,8 @@ export function jobLabel(j: JobView): string {
       return "Loading model";
     case "preparing":
       return "Preparing";
+    case "enhancing_prompt":
+      return "Writing the prompt";
     case "saving":
       return "Saving";
     case "done":
@@ -357,6 +372,49 @@ export function jobFraction(j: JobView): number | null {
   if (j.stage === "generating" && j.step) return j.step[0] / Math.max(1, j.step[1]);
   if (j.stage === "decoding" || j.stage === "finishing") return 1;
   return null;
+}
+
+/** Completion (0..100) for the progress card. `runningS`: seconds since the job started running;
+ * `stepS`: seconds since the last reported step. The steps when the server reports them (moving
+ * on within a step at the measured pace), else time against the plan's estimate (an external
+ * server gives no steps). Short of 100 until the job is done. */
+export function jobPercent(j: JobView, runningS: number, stepS: number): number {
+  switch (j.status) {
+    case "queued":
+    case "failed":
+    case "cancelled":
+      return 0;
+    case "starting_backend":
+      return 2;
+    case "preparing":
+      return 4;
+    case "enhancing_prompt":
+      return 5;
+    case "saving":
+      return 99;
+    case "done":
+      return 100;
+  }
+  switch (j.stage) {
+    case "preparing":
+      return 6;
+    case "encoding_images":
+    case "encoding_prompt":
+      return 8;
+    case "decoding":
+      return 93;
+    case "upscaling":
+      return 95;
+    case "finishing":
+      return 97;
+  }
+  if (j.step && j.step[1] > 0) {
+    const within = j.seconds_per_step ? Math.min(0.95, stepS / j.seconds_per_step) : 0;
+    return 10 + (80 * Math.min(j.step[1], j.step[0] + within)) / j.step[1];
+  }
+  const est = j.plan?.estimated_seconds ?? 0;
+  const share = est > 0 ? Math.min(1, runningS / est) : 1 - Math.exp(-runningS / 15);
+  return Math.min(95, 8 + 87 * share);
 }
 
 export function remainingSeconds(j: JobView): number | null {

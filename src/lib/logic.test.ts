@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  activeOverrides, buildRequest, compareBase, diffPixels, emptyComposer, expansionPixels, expansionPreset, jobFraction, jobLabel, lutInfo, moveRef, needsPrompt, normalizeQuality, persistentAdvanced, pipelineSummary,
+  activeOverrides, buildRequest, jobPercent, compareBase, composerFromRecord, enhancerApplies, diffPixels, emptyComposer, expansionPixels, expansionPreset, jobFraction, jobLabel, lutInfo, moveRef, needsPrompt, normalizeQuality, persistentAdvanced, pipelineSummary,
   planPipeline, remainingSeconds, sizeForWidth, timeAgo, upscaleRequest, upscaleTargets, versionLabels, type Ref,
   neighbourAfterRemoval, previewIndex, starPromptDue, STAR_PROMPT_AFTER, formatBytes, formatDuration, installItemShort, installItemText, installProgress, installStep, installTimeLeft, timelineLinks, undoTarget, aspectLabel, parseRatio, sizeForRatio, expandToRatio, expandToSize, arcLayout,
 } from "./logic";
@@ -96,6 +96,27 @@ describe("buildRequest", () => {
     const c = { ...emptyComposer(), prompt: "x", refs: [ref(1)], mode: "generate" as const };
     expect(buildRequest(c).images).toEqual([]);
   });
+  it("prompt enhancer: off by default, remembered, only for new images, edits and combines", () => {
+    expect(emptyComposer().enhance).toBe(false);
+    expect(emptyComposer({ enhance: true }).enhance).toBe(true);
+    const off = { ...emptyComposer(), prompt: "un gatto" };
+    expect("enhance" in buildRequest(off)).toBe(false);
+    const on = { ...off, enhance: true };
+    expect(buildRequest(on).enhance).toBe(true);
+    expect(buildRequest({ ...on, refs: [ref(1), ref(2)] }).enhance).toBe(true);
+    const masked = { ...on, refs: [ref(1)], mask: { inputId: "m", refKey: "k1" } };
+    expect(enhancerApplies(masked)).toBe(false);
+    expect("enhance" in buildRequest(masked)).toBe(false);
+    const expanded = { ...on, refs: [ref(1)], outpaint: { left: 10, right: 0, top: 0, bottom: 0, units: "percent" as const } };
+    expect("enhance" in buildRequest(expanded)).toBe(false);
+  });
+  it("reusing an enhanced result's settings gives the user's prompt with the enhancer on", () => {
+    const g = { prompt: "A tabby cat sleeping on a sunlit windowsill.", original_prompt: "un gatto", references: [], mask_input_id: null, outpaint: null, quality: "fast", request: null } as unknown as GenerationRecord;
+    const c = composerFromRecord(g, emptyComposer());
+    expect([c.prompt, c.enhance]).toEqual(["un gatto", true]);
+    const plain = composerFromRecord({ ...g, original_prompt: null }, { ...emptyComposer(), enhance: true });
+    expect([plain.prompt, plain.enhance]).toEqual(["A tabby cat sleeping on a sunlit windowsill.", false]);
+  });
 });
 
 describe("expansion", () => {
@@ -124,6 +145,20 @@ describe("job labels are truthful", () => {
     expect(jobLabel(noDetail)).toBe("Generating");
     expect(jobFraction(noDetail)).toBeNull();
     expect(jobLabel({ ...base, status: "queued", queue_position: 3 })).toBe("Queued · 3");
+    expect(jobLabel({ ...base, status: "enhancing_prompt", stage: null, step: null })).toBe("Writing the prompt");
+    // Percent: steps (moving on within a step), else time against the estimate; 100 only when done.
+    expect(jobPercent(base, 0, 0)).toBeCloseTo(10 + 80 * (12 / 30));
+    expect(jobPercent(base, 0, 1)).toBeCloseTo(10 + 80 * (12.5 / 30));
+    expect(jobPercent(base, 0, 99)).toBeLessThan(10 + 80 * (13 / 30));
+    const noSteps = { ...base, step: null, plan: { estimated_seconds: 20 } as Plan };
+    expect(jobPercent(noSteps, 10, 0)).toBeCloseTo(8 + 87 * 0.5);
+    expect(jobPercent(noSteps, 60, 0)).toBe(95);
+    expect(jobPercent({ ...noSteps, plan: null }, 600, 0)).toBeLessThanOrEqual(95);
+    expect(jobPercent({ ...base, stage: "decoding" }, 0, 0)).toBe(93);
+    expect(jobPercent({ ...base, status: "saving" }, 0, 0)).toBe(99);
+    expect(jobPercent({ ...base, status: "done" }, 0, 0)).toBe(100);
+    expect(jobPercent({ ...base, status: "enhancing_prompt" }, 0, 0)).toBe(5);
+    expect(jobFraction({ ...base, status: "enhancing_prompt" })).toBeNull();
   });
 
   it("one pass fills the bar; enlarging is indeterminate", () => {

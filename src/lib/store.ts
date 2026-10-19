@@ -6,6 +6,7 @@
 // opened again.
 
 import { useSyncExternalStore } from "react";
+import { markFresh } from "../components/Cocoon";
 import { api, ApiError, setPrivateInputs, subscribe } from "./api";
 import { buildRequest, emptyComposer, needsPrompt, newKey, persistentAdvanced, refFromGen, refFromInput, starPromptDue, timelineLinks, undoTarget, versionLabels, type CompareMode, type Composer, type Ref } from "./logic";
 import type { AppErrorBody, GenerationRecord, GenerationRequest, InputRecord, JobView, ServerState, StatusResponse } from "./types";
@@ -105,9 +106,9 @@ function loadPrefs(): Partial<Composer> {
 
 function savePrefs(c: Composer) {
   try {
-    const { quality, resolution, aspect, customWidth, customHeight } = c;
+    const { quality, resolution, aspect, customWidth, customHeight, enhance } = c;
     const advanced = persistentAdvanced(c.advanced);
-    localStorage.setItem(PREFS_KEY, JSON.stringify({ quality, resolution, aspect, customWidth, customHeight, advanced }));
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ quality, resolution, aspect, customWidth, customHeight, advanced, enhance }));
   } catch {
     /* storage unavailable */
   }
@@ -179,7 +180,7 @@ const toStored = (i: SessionItem): StoredItem => ({
 
 function titleOf(items: SessionItem[]): string | null {
   for (const i of items) {
-    const p = i.gen?.prompt || i.request?.prompt;
+    const p = i.gen?.original_prompt || i.gen?.prompt || i.request?.prompt;
     if (p) return p;
     if (i.input) return i.input.original_name ? safeDecode(i.input.original_name) : "Imported image";
   }
@@ -369,6 +370,15 @@ let unsub: (() => void) | null = null;
 export async function refreshStatus() {
   try {
     const st = await api.status();
+    const tg = st.server.text_generation;
+    if (typeof tg === "boolean" && tg !== knownTextGeneration) {
+      knownTextGeneration = tg;
+      try {
+        localStorage.setItem(TEXT_GEN_KEY, tg ? "1" : "0");
+      } catch {
+        /* storage unavailable */
+      }
+    }
     setState({ status: st, server: { state: st.server.state, owned: st.server.owned, error: st.server.error } });
     return st;
   } catch {
@@ -376,12 +386,32 @@ export async function refreshStatus() {
   }
 }
 
+const TEXT_GEN_KEY = "kokon.textGeneration";
+let knownTextGeneration = (() => {
+  try {
+    return localStorage.getItem(TEXT_GEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+})();
+
+/** The engine can write prompts (prompt enhancer): as the loaded model reports, else as it did
+ * last time, so the switch is there before the model loads. */
+export function enhancerAvailable(s: State): boolean {
+  return s.status?.server.text_generation ?? knownTextGeneration;
+}
+
 export function startEvents() {
   unsub?.();
   unsub = subscribe(
     (ev) => {
       if (ev.type === "job") onJob(ev.job);
-      else if (ev.type === "server") setState({ server: { state: ev.state, owned: ev.owned, error: ev.error } });
+      else if (ev.type === "server") {
+        const loaded = ev.state === "ready" && getState().server.state !== "ready";
+        setState({ server: { state: ev.state, owned: ev.owned, error: ev.error } });
+        // What the newly loaded engine can do (the prompt enhancer).
+        if (loaded) refreshStatus();
+      }
       else if (ev.type === "gallery") setState((s) => ({ galleryVersion: s.galleryVersion + 1 }));
     },
     (ok) => {
@@ -401,6 +431,11 @@ function onJob(job: JobView) {
   const prev = getState().jobs[job.id];
   if (job.status === "failed" && prev?.status !== "failed" && isMissingModel(job.error) && job.finished_at && Date.now() - Date.parse(job.finished_at) < 60_000) {
     openModelSetup();
+  }
+  // Results replacing a version in progress of the open project hatch out of the cocoon when
+  // first shown (marked before the state change renders them).
+  if (job.status === "done" && prev?.status !== "done" && getState().session.some((i) => i.jobId === job.id && i.kind === "job")) {
+    markFresh(job.results.map((g) => g.id));
   }
   // Made with this app (it had a pending version), not by another client such as MCP.
   let made = false;
@@ -749,6 +784,8 @@ export function reusePrompt(g: GenerationRecord) {
       composer: {
         ...c,
         prompt: g.prompt,
+        // The enhancer's text is a full prompt already: rewriting it again would drift.
+        enhance: g.original_prompt ? false : c.enhance,
         refs,
         mask,
         inpaintAction: mask ? g.request?.inpaint_action ?? "edit" : c.inpaintAction,

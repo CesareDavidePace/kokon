@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { api } from "../lib/api";
 import { native } from "../lib/native";
-import { getState, openModelSetup, refreshStatus, setState, startTour, toastError, toastInfo } from "../lib/store";
+import { getState, openModelSetup, refreshStatus, setState, startTour, toastError, toastInfo, useStore } from "../lib/store";
 import { formatBytes } from "../lib/logic";
 import { setThemeChoice, themeChoice, type ThemeChoice } from "../lib/theme";
 import { UpscalerControls } from "./Upscalers";
@@ -31,6 +31,33 @@ function PathField(props: { label: string; value: string; onChange: (v: string) 
         </button>
       </div>
     </label>
+  );
+}
+
+/** One of the prompt enhancer's instructions: the user's text, or the built-in one ("" saved). */
+function EnhancerPrompt(props: { label: string; help: string; value: string; builtin: string | null; max: number; onChange: (v: string) => void }) {
+  const custom = props.value.trim() !== "" && props.value.trim() !== props.builtin?.trim();
+  return (
+    <div className="field">
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ flex: 1 }}>
+          {props.label} <span className="muted">· {custom ? "your instructions" : "built-in"}</span>
+        </span>
+        <button className="btn" disabled={!custom} onClick={() => props.onChange("")} title="Go back to Kokon's built-in instructions">
+          <RotateCcw size={13} /> Restore default
+        </button>
+      </div>
+      <textarea
+        className="input"
+        rows={9}
+        spellCheck={false}
+        maxLength={props.max}
+        value={props.value || props.builtin || ""}
+        placeholder={props.builtin === null ? "Loading…" : ""}
+        onChange={(e) => props.onChange(e.target.value.trim() === props.builtin?.trim() ? "" : e.target.value)}
+      />
+      <span className="muted">{props.help}</span>
+    </div>
   );
 }
 
@@ -96,9 +123,12 @@ export function Settings() {
   const [legacy, setLegacy] = useState<{ files: string[]; bytes: number } | null>(null);
   const [dirty, setDirty] = useState(false);
   const [theme, setTheme] = useState(themeChoice);
+  const [enhancerDefaults, setEnhancerDefaults] = useState<{ t2i: string; edit: string; max_chars: number } | null>(null);
+  const textGeneration = useStore((s) => s.status?.server.text_generation);
 
   useEffect(() => {
     api.config().then(setCfg, toastError);
+    api.enhancerDefaults().then(setEnhancerDefaults, () => {});
     api.setup().then(
       (r: SetupReport) => {
         setDevices(r.devices);
@@ -280,6 +310,35 @@ export function Settings() {
                   Start
                 </button>
               </div>
+
+              <h4 style={{ margin: "14px 0 0", fontSize: 14, fontWeight: 600 }}>Prompt enhancer</h4>
+              <span className="muted" style={{ marginTop: -8 }}>
+                With Enhance on (next to the prompt), the model's own language model rewrites your prompt before making the image, following these instructions. It
+                always writes in English.
+                {textGeneration === false && " The inference engine in use cannot write prompts: Enhance appears with an engine that can."}
+              </span>
+              <div className="setting-card" style={{ alignItems: "flex-start" }}>
+                <span className="muted">
+                  Kokon was tested only with its built-in instructions. Your own can make results worse, or make the model answer with something that is not a prompt; Restore
+                  default brings the built-in ones back.
+                </span>
+              </div>
+              <EnhancerPrompt
+                label="New images"
+                help="Used when creating an image from the prompt alone."
+                value={cfg.enhancerT2iPrompt ?? ""}
+                builtin={enhancerDefaults?.t2i ?? null}
+                max={enhancerDefaults?.max_chars ?? 20000}
+                onChange={(v) => set({ enhancerT2iPrompt: v })}
+              />
+              <EnhancerPrompt
+                label="Edits"
+                help="Used when editing or combining images; the model sees the images."
+                value={cfg.enhancerEditPrompt ?? ""}
+                builtin={enhancerDefaults?.edit ?? null}
+                max={enhancerDefaults?.max_chars ?? 20000}
+                onChange={(v) => set({ enhancerEditPrompt: v })}
+              />
             </>
           )}
 

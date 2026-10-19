@@ -13,6 +13,7 @@ use tokio::sync::{Notify, broadcast};
 
 use crate::config::AppConfig;
 use crate::diagnostics::{GpuInfo, query_gpus};
+use crate::enhancer;
 use crate::error::{AppError, AppResult, ErrorCode, translate_generation_failure};
 use crate::geometry::Size;
 use crate::imaging::{self, LoadedImage};
@@ -20,7 +21,7 @@ use crate::paths;
 use crate::pipeline;
 use crate::planner::{self, GenerationRequest, Mode, OutputFormat, Plan, PlanInputs, ResolutionMode, ResolvedMode};
 use crate::process::{BackendProgress, BackendStage, ProgressParser, ServerManager, ServerState};
-use crate::sdcpp::{BackendJobStatus, CancelOutcome, SdcppClient, UpscaleRequest};
+use crate::sdcpp::{BackendJobStatus, CancelOutcome, Capabilities, SdcppClient, UpscaleRequest};
 use crate::store::{GenerationRecord, InputRecord, PipelineRecord, ReferenceRecord, Store, new_id, now_rfc3339};
 
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -31,6 +32,8 @@ pub enum JobStatus {
     Queued,
     StartingBackend,
     Preparing,
+    /// The prompt enhancer is writing the prompt (`JobView::enhanced_prompt` grows).
+    EnhancingPrompt,
     Running,
     Saving,
     Done,
@@ -58,6 +61,9 @@ pub struct JobView {
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
     pub prompt: String,
+    /// The prompt enhancer's text: partial while `EnhancingPrompt`, then the prompt the image
+    /// is made from (`prompt` stays the user's). None when the enhancer did not run or failed.
+    pub enhanced_prompt: Option<String>,
     pub client: Option<String>,
     pub plan: Option<Plan>,
     pub seed: Option<i64>,
@@ -74,6 +80,8 @@ struct Job {
     cancel: bool,
     retried_oom: bool,
     workspace: Option<PathBuf>,
+    /// The prompt enhancer's finished text, kept for a retry (out of memory).
+    enhanced: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -473,6 +481,7 @@ impl Engine {
             started_at: None,
             finished_at: None,
             prompt: if upscale && request.prompt.trim().is_empty() { "Upscale".into() } else { request.prompt.clone() },
+            enhanced_prompt: None,
             client: request.client.clone(),
             plan: None,
             seed: request.seed,
@@ -483,7 +492,7 @@ impl Engine {
         };
         {
             let mut jobs = self.jobs.lock().unwrap();
-            jobs.insert(id.clone(), Job { view, request, cancel: false, retried_oom: false, workspace });
+            jobs.insert(id.clone(), Job { view, request, cancel: false, retried_oom: false, workspace, enhanced: None });
             let mut order = self.order.lock().unwrap();
             order.push_back(id.clone());
             // Keep memory bounded: drop the oldest finished jobs.
@@ -667,6 +676,7 @@ impl Engine {
             created_at: now_rfc3339(),
             mode: "lut".into(),
             prompt: String::new(),
+            original_prompt: None,
             negative_prompt: String::new(),
             seed: parent.as_ref().map(|p| p.seed).unwrap_or(0),
             width: out.width(),
@@ -828,6 +838,7 @@ impl Engine {
         }
         let quick_upscale = plan.upscale.is_some();
         let icc = images.first().and_then(|i| i.icc_profile.clone());
+        let mut enhanced: Option<String> = None;
 
         let (contents, post) = if quick_upscale {
             // No diffusion: the source itself is enlarged.
@@ -852,7 +863,16 @@ impl Engine {
             let prepared = tokio::task::spawn_blocking(move || pipeline::prepare(&plan2, &prompt, seed, &images, mask_img.as_ref(), &opts))
                 .await
                 .map_err(AppError::internal)??;
-            let pipeline::PreparedJob { request: sd_req, post } = prepared;
+            let pipeline::PreparedJob { request: mut sd_req, post } = prepared;
+
+            // 4b. Prompt enhancer: rewrites the user's prompt, looking at the references
+            // exactly as the image model gets them.
+            if request.enhance && enhancer::applies(plan.mode) {
+                enhanced = self.enhance_prompt(id, &client, &caps, &cfg, plan.mode, &request.prompt, &sd_req.ref_images, seed).await?;
+                if let Some(text) = &enhanced {
+                    sd_req.prompt = pipeline::enhanced_prompt(&request.prompt, text);
+                }
+            }
 
             // 5. Submit and follow.
             let mut lines = self.server.subscribe_lines();
@@ -987,12 +1007,12 @@ impl Engine {
             if let Some(j) = self.job(id) {
                 plan3.notes = j.notes;
             }
-            let (p, req3, inputs3, mask3, icc3, ws) = (post.clone(), request.clone(), inputs_meta.clone(), mask_rec.clone(), icc.clone(), workspace.clone());
+            let (p, req3, inputs3, mask3, icc3, ws, enh3) = (post.clone(), request.clone(), inputs_meta.clone(), mask_rec.clone(), icc.clone(), workspace.clone(), enhanced.clone());
             let rec = blocking(move || {
                 let final_img = pipeline::finish(content, &p)?;
                 let duration_ms = duration_start.elapsed().as_millis() as u64;
                 let pipeline = (pipeline_rec != PipelineRecord::default()).then_some(pipeline_rec);
-                this.save_result(&final_img, &req3, &plan3, seed + i as i64, &inputs3, mask3.as_ref(), icc3.as_deref(), duration_ms, ws.as_deref(), i, pipeline, original.as_ref())
+                this.save_result(&final_img, &req3, &plan3, seed + i as i64, &inputs3, mask3.as_ref(), icc3.as_deref(), duration_ms, ws.as_deref(), i, pipeline, original.as_ref(), enh3)
             })
             .await?;
             if !request.private {
@@ -1007,6 +1027,75 @@ impl Engine {
             j.view.stage = None;
         });
         Ok(())
+    }
+
+    /// Runs the prompt enhancer for job `id` and streams its text into the job. Returns the
+    /// new prompt, or None when the job keeps the user's prompt: the engine cannot write text,
+    /// or the enhancer failed (both noted on the job). Errors only for a cancel or a crash.
+    #[allow(clippy::too_many_arguments)]
+    async fn enhance_prompt(&self, id: &str, client: &SdcppClient, caps: &Capabilities, cfg: &AppConfig, mode: ResolvedMode, prompt: &str, images: &[String], seed: i64) -> AppResult<Option<String>> {
+        // A retry after running out of memory keeps the first prompt.
+        if let Some(done) = self.jobs.lock().unwrap().get(id).and_then(|j| j.enhanced.clone()) {
+            return Ok(Some(done));
+        }
+        if !caps.text_generation {
+            self.update(id, |j| j.view.notes.push("This inference engine has no prompt enhancer (update it in Setup); your prompt was used as written.".into()));
+            return Ok(None);
+        }
+        self.update(id, |j| {
+            j.view.status = JobStatus::EnhancingPrompt;
+            j.view.stage = None;
+            j.view.enhanced_prompt = Some(String::new());
+        });
+        let req = enhancer::request(cfg, mode, prompt, images.to_vec(), seed);
+        let started = Instant::now();
+        let mut text = String::new();
+        let mut last_emit = Instant::now();
+        let on_delta = |d: &str| {
+            text.push_str(d);
+            // The UI follows the text at ~10 updates a second.
+            if last_emit.elapsed() >= Duration::from_millis(100) {
+                last_emit = Instant::now();
+                let partial = text.clone();
+                self.update(id, |j| j.view.enhanced_prompt = Some(partial));
+            }
+        };
+        let r = client.text_gen(&req, Duration::from_secs(300), on_delta, || self.is_cancelled(id)).await;
+        let failure = match r {
+            Ok(done) => match enhancer::clean(&done.text) {
+                Some(t) => {
+                    tracing::info!("prompt enhancer: {} tokens in {:.1} s ({}, seed {})", done.usage.completion_tokens, started.elapsed().as_secs_f32(), done.finish_reason, done.seed);
+                    let cut = done.finish_reason == "length";
+                    self.update(id, |j| {
+                        j.view.enhanced_prompt = Some(t.clone());
+                        j.enhanced = Some(t.clone());
+                        if cut {
+                            j.view.notes.push("The prompt enhancer reached its length limit; its prompt may end abruptly.".into());
+                        }
+                    });
+                    return Ok(Some(t));
+                }
+                None => "it wrote nothing".to_string(),
+            },
+            Err(e) if e.code == ErrorCode::Cancelled => return Err(e),
+            Err(e) => {
+                if self.server.owned_alive() == Some(false) {
+                    let tail = self.server.log.tail(30).join("\n");
+                    self.server.mark_lost(AppError::new(ErrorCode::ServerCrashed, "The inference server stopped unexpectedly."));
+                    self.emit_server();
+                    return Err(AppError::new(ErrorCode::ServerCrashed, "The inference server stopped while writing the prompt.")
+                        .suggest("It will restart automatically on the next job. Turn the prompt enhancer off if it happens again.")
+                        .detail(tail));
+                }
+                tracing::warn!("prompt enhancer failed: {} {:?}", e.message, e.detail);
+                e.detail.clone().map(|d| format!("{} {d}", e.message)).unwrap_or(e.message)
+            }
+        };
+        self.update(id, |j| {
+            j.view.enhanced_prompt = None;
+            j.view.notes.push(format!("The prompt enhancer failed ({}); your prompt was used as written.", failure.trim_end_matches('.')));
+        });
+        Ok(None)
     }
 
     /// Label of an upscale request that has no prompt: the source's own prompt, if any.
@@ -1163,6 +1252,7 @@ impl Engine {
         index: usize,
         mut pipeline: Option<PipelineRecord>,
         original: Option<&image::RgbaImage>,
+        enhanced_prompt: Option<String>,
     ) -> AppResult<GenerationRecord> {
         let cfg = self.config();
         let id = new_id();
@@ -1204,7 +1294,9 @@ impl Engine {
             id: id.clone(),
             created_at: now_rfc3339(),
             mode: mode.into(),
-            prompt: req.prompt.clone(),
+            // An enhanced job records the prompt the image was made from, and the user's.
+            original_prompt: enhanced_prompt.is_some().then(|| req.prompt.clone()),
+            prompt: enhanced_prompt.unwrap_or_else(|| req.prompt.clone()),
             negative_prompt: plan.negative_prompt.clone(),
             seed,
             width: img.width(),
@@ -1455,6 +1547,85 @@ mod tests {
         assert_eq!(e.cancel_client_jobs("ui"), 1);
         assert_eq!(e.job(&ui.id).unwrap().status, JobStatus::Cancelled);
         assert_eq!(e.job(&mcp.id).unwrap().status, JobStatus::Queued);
+    }
+
+    #[tokio::test]
+    async fn prompt_enhancer_streams_falls_back_and_is_kept_for_retries() {
+        use crate::sdcpp::{fake_server, sse_answer};
+        let dir = tempfile::tempdir().unwrap();
+        // SAFETY: test-only env override, single-threaded setup.
+        unsafe { std::env::set_var("QLS_CONFIG_DIR", dir.path().join("cfg")) };
+        let mut cfg = AppConfig::default();
+        cfg.sdcpp_dir = dir.path().join("sdcpp");
+        cfg.normalize();
+        std::fs::create_dir_all(cfg.engine_dir()).unwrap();
+        std::fs::write(cfg.server_exe(), b"").unwrap();
+        for (_, p, _) in cfg.profile().files() {
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, b"").unwrap();
+        }
+        let e = Engine::new(cfg.clone(), dir.path()).unwrap();
+        let caps = Capabilities { text_generation: true, ..Default::default() };
+        let submit = || e.submit(GenerationRequest { prompt: "rendi il gatto nero".into(), enhance: true, ..Default::default() }, None).unwrap().id;
+        let images = vec!["PNG1".to_string()];
+
+        // Streams into the job (~10 updates a second) and keeps the finished text.
+        let id = submit();
+        let mut events = e.events.subscribe();
+        let (port, body) = fake_server(200, "text/event-stream", sse_answer(&["Change the cat's", " fur to black."], "stop"), Duration::from_millis(150)).await;
+        let out = e.enhance_prompt(&id, &SdcppClient::new(port), &caps, &cfg, ResolvedMode::Edit, "rendi il gatto nero", &images, 42).await.unwrap();
+        assert_eq!(out.as_deref(), Some("Change the cat's fur to black."));
+        let mut partial = false;
+        while let Ok(ev) = events.try_recv() {
+            if let Event::Job { job } = ev {
+                partial |= job.status == JobStatus::EnhancingPrompt && job.enhanced_prompt.as_deref() == Some("Change the cat's");
+            }
+        }
+        assert!(partial, "the job shows the text while it is written");
+        let v = e.job(&id).unwrap();
+        assert_eq!((v.enhanced_prompt.as_deref(), v.prompt.as_str()), (Some("Change the cat's fur to black."), "rendi il gatto nero"));
+        let sent: serde_json::Value = serde_json::from_str(&body.await.unwrap()).unwrap();
+        assert_eq!((sent["images"][0].as_str(), sent["sampling"]["seed"].as_i64()), (Some("PNG1"), Some(42)), "the references and the job's seed");
+        assert_eq!(sent["system_prompt"], enhancer::EDIT_SYSTEM_PROMPT);
+        // A retry (out of memory) keeps that prompt without asking the server again.
+        let again = e.enhance_prompt(&id, &SdcppClient::new(1), &caps, &cfg, ResolvedMode::Edit, "rendi il gatto nero", &images, 43).await.unwrap();
+        assert_eq!(again, out);
+
+        // A failure keeps the user's prompt, with a note.
+        let id = submit();
+        let chunks = vec!["event: delta\ndata: {\"text\":\"Chan\"}\n\n".into(), "event: error\ndata: {\"error\":\"out of memory\"}\n\n".into()];
+        let (port, _) = fake_server(200, "text/event-stream", chunks, Duration::from_millis(1)).await;
+        assert_eq!(e.enhance_prompt(&id, &SdcppClient::new(port), &caps, &cfg, ResolvedMode::Generate, "un gatto", &[], 1).await.unwrap(), None);
+        let v = e.job(&id).unwrap();
+        assert_eq!(v.enhanced_prompt, None);
+        assert!(v.notes.last().is_some_and(|n| n.contains("prompt enhancer failed") && n.contains("out of memory") && n.ends_with("used as written.")), "{:?}", v.notes);
+        // An empty answer too.
+        let id = submit();
+        let (port, _) = fake_server(200, "text/event-stream", sse_answer(&["  "], "stop"), Duration::ZERO).await;
+        assert_eq!(e.enhance_prompt(&id, &SdcppClient::new(port), &caps, &cfg, ResolvedMode::Generate, "un gatto", &[], 1).await.unwrap(), None);
+        assert!(e.job(&id).unwrap().notes.last().unwrap().contains("wrote nothing"));
+        // A cut-off answer is used, with a note.
+        let id = submit();
+        let (port, _) = fake_server(200, "text/event-stream", sse_answer(&["A cat on a"], "length"), Duration::ZERO).await;
+        assert_eq!(e.enhance_prompt(&id, &SdcppClient::new(port), &caps, &cfg, ResolvedMode::Generate, "un gatto", &[], 1).await.unwrap().as_deref(), Some("A cat on a"));
+        assert!(e.job(&id).unwrap().notes.last().unwrap().contains("length limit"));
+
+        // An engine without text generation (official builds): note, no request.
+        let id = submit();
+        assert_eq!(e.enhance_prompt(&id, &SdcppClient::new(1), &Capabilities::default(), &cfg, ResolvedMode::Generate, "un gatto", &[], 1).await.unwrap(), None);
+        assert!(e.job(&id).unwrap().notes.last().unwrap().contains("no prompt enhancer"));
+        assert_eq!(e.job(&id).unwrap().status, JobStatus::Queued, "status untouched");
+
+        // Cancel while the enhancer is writing: the job stops.
+        let id = submit();
+        let (port, _) = fake_server(200, "text/event-stream", sse_answer(&["slow"], "stop"), Duration::from_secs(30)).await;
+        let (e2, id2) = (e.clone(), id.clone());
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            e2.cancel(&id2).unwrap();
+        });
+        let err = e.enhance_prompt(&id, &SdcppClient::new(port), &caps, &cfg, ResolvedMode::Generate, "un gatto", &[], 1).await.unwrap_err();
+        assert_eq!(err.code, ErrorCode::Cancelled);
     }
 
     #[test]

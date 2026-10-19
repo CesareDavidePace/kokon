@@ -2,6 +2,7 @@ pub mod catalog;
 pub mod config;
 pub mod diagnostics;
 pub mod engine;
+pub mod enhancer;
 pub mod engine_manifest;
 pub mod error;
 pub mod examples;

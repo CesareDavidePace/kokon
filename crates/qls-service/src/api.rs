@@ -74,6 +74,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/upscalers", get(list_upscalers))
         .route("/upscalers/{name}/download", post(download_upscaler))
         .route("/config", get(get_config).put(put_config))
+        .route("/enhancer/defaults", get(enhancer_defaults))
         .route("/backend/start", post(backend_start))
         .route("/backend/stop", post(backend_stop))
         .route("/backend/restart", post(backend_restart))
@@ -209,6 +210,7 @@ async fn status(State(s): St) -> Json<Value> {
             "samplers": srv.capabilities.as_ref().map(|c| c.samplers.clone()).unwrap_or_default(),
             "schedulers": srv.capabilities.as_ref().map(|c| c.schedulers.clone()).unwrap_or_default(),
             "upscale": srv.capabilities.as_ref().map(|c| c.upscale),
+            "text_generation": srv.capabilities.as_ref().map(|c| c.text_generation),
         },
         "upscaler": { "model": cfg.upscaler().map(|u| u.0).unwrap_or_else(|| cfg.upscaler_model.clone()), "available": cfg.upscaler_file().is_some() },
         "engine": { "release": catalog::engine_tag(), "update_needed": engine_update },
@@ -467,6 +469,12 @@ async fn install_cancel(State(s): St) -> Json<Value> {
 
 async fn get_config(State(s): St) -> Json<AppConfig> {
     Json(s.engine.config())
+}
+
+/// The prompt enhancer's built-in system prompts (Settings shows them for "" and restores them).
+async fn enhancer_defaults() -> Json<Value> {
+    use qls_core::enhancer;
+    Json(json!({ "t2i": enhancer::T2I_SYSTEM_PROMPT, "edit": enhancer::EDIT_SYSTEM_PROMPT, "max_chars": enhancer::MAX_SYSTEM_PROMPT_CHARS }))
 }
 
 async fn put_config(State(s): St, Json(cfg): Json<AppConfig>) -> ApiResult<Json<Value>> {

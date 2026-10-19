@@ -271,6 +271,10 @@ pub struct GenerationRequest {
     /// output folder) that is deleted when private mode ends or the service exits.
     #[serde(default)]
     pub private: bool,
+    /// Prompt enhancer: the text encoder's LLM rewrites `prompt` into a full prompt before
+    /// generating (text-to-image, edits, combines; engines with text generation only).
+    #[serde(default)]
+    pub enhance: bool,
 }
 
 // ---------------------------------------------------------------------------------------

@@ -51,7 +51,11 @@ pub struct GenerationRecord {
     pub id: String,
     pub created_at: String,
     pub mode: String,
+    /// The prompt the image was made from (the prompt enhancer's when it ran).
     pub prompt: String,
+    /// The user's own prompt, when the prompt enhancer rewrote it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_prompt: Option<String>,
     pub negative_prompt: String,
     pub seed: i64,
     pub width: u32,
@@ -436,6 +440,7 @@ mod tests {
             id: id.into(),
             created_at: created.into(),
             mode: "generate".into(),
+            original_prompt: None,
             prompt: prompt.into(),
             negative_prompt: "blurry".into(),
             seed: 1234,

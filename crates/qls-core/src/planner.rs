@@ -564,35 +564,41 @@ pub fn planning_token_budget(vram_total_mib: Option<u64>, unified_memory: bool) 
 }
 
 /// Largest VAE decode tile on discrete GPUs of 15 GiB and up: an untiled decode of ~1.5 MP
-/// already fills a 16 GB card with the DiT resident, so 1 MP leaves margin. sd.cpp retries a
-/// decode that runs out of memory with smaller tiles itself, so too large only costs time.
+/// already fills a 16 GB card with the DiT resident, so 1 MP leaves margin. sd.cpp retries
+/// with smaller tiles only when allocating the decode fails (`GGML_STATUS_ALLOC_FAILED`); a
+/// CUDA out-of-memory during execution aborts sd-server.
 pub const LARGE_GPU_VAE_TILE_AREA: u64 = 1024 * 1024;
 /// Discrete GPUs this large plan untiled decodes from their memory instead of the fixed
 /// 16 GB thresholds (RTX 4090, 5090, …). Smaller cards were measured against tiling and
 /// keep today's behavior, and Macs use the unified-memory budget.
 const UNTILED_VAE_MIN_VRAM_MIB: u64 = 23 * 1024;
-/// Weights and overhead that stay resident while the VAE decodes (DiT ~4.5 GB + VAE
-/// ~0.65 GB + CUDA context and fragmentation).
-const VAE_DECODE_RESIDENT_MIB: u64 = 7 * 1024;
-/// Activation bytes per pixel of an untiled decode, between the measured anchors in
-/// docs/engineering-notes.md. An untiled 2K t2i measured ~26 GB peak on an RTX 5090, so the
-/// 85 % share of 32 GB still fits it, while a 24 GB card's budget does not (it keeps tiling
-/// 2K). sd.cpp retries a decode that runs out of memory with smaller tiles itself.
-const VAE_DECODE_BYTES_PER_PIXEL: f64 = 3500.0;
-/// Share of the planning VRAM a decode may use; the rest is headroom.
-const VAE_DECODE_VRAM_SHARE: f64 = 0.85;
+/// Largest decode that runs untiled on any GPU: about 1.5K (1536² plus the Balanced
+/// tolerance). Untiled 2K saved only ~0.6 s (3 %) on an RTX 5090 for ~13 GB more VRAM and
+/// crashed sd-server with ~4.6 GB held by another process, while Fast and 1.5K save ~15 %.
+const UNTILED_VAE_MAX_AREA: u64 = 1536 * 1536 * 102 / 100;
+/// sd-server's VRAM at a cold untiled decode besides the per-pixel activations: weights
+/// (DiT ~3.9 GB + VAE ~0.65 GB), CUDA context and the decode's fixed overhead.
+const VAE_DECODE_RESIDENT_MIB: u64 = 8 * 1024;
+/// Activation bytes per pixel of an untiled decode. Measured on an RTX 5090 (cold decode,
+/// sd-server alone): 1 MP peaks at ~11.7 GiB and 1536² at ~16.5 GiB, ~3.9 kB/px apart.
+const VAE_DECODE_BYTES_PER_PIXEL: f64 = 4100.0;
+/// VRAM left to the desktop and other apps (a browser, a local LLM holding 4–5 GB) plus a
+/// margin. A 24 GB card with ~7.3 GB used elsewhere ran out of memory decoding 1536²
+/// untiled, so 24 GB cards untile Fast only.
+const VAE_DECODE_OTHER_APPS_MIB: u64 = 8 * 1024;
 
 /// Largest decode area (pixels) that may run untiled on a discrete GPU of
-/// [`UNTILED_VAE_MIN_VRAM_MIB`] and up: `resident + area * bytes_per_pixel <= share * vram`.
-/// A 32 GB card decodes every size the planner can budget untiled; smaller cards keep the
-/// fixed thresholds in [`plan`]. sd.cpp retries a decode that runs out of memory with
-/// smaller tiles itself, so an estimate that is slightly too large only costs the retry.
+/// [`UNTILED_VAE_MIN_VRAM_MIB`] and up:
+/// `other apps + resident + area * bytes_per_pixel <= vram`, capped at
+/// [`UNTILED_VAE_MAX_AREA`]. Smaller cards keep the fixed thresholds in [`plan`].
+/// sd.cpp only retries a decode whose allocation fails; a CUDA out-of-memory during the
+/// decode aborts sd-server, so the estimate must not be too small.
 pub fn max_untiled_vae_area(vram_total_mib: Option<u64>) -> u64 {
     match vram_total_mib {
         None => LARGE_GPU_VAE_TILE_AREA,
         Some(mib) => {
-            let budget_mib = mib as f64 * VAE_DECODE_VRAM_SHARE - VAE_DECODE_RESIDENT_MIB as f64;
-            (budget_mib.max(0.0) * 1024.0 * 1024.0 / VAE_DECODE_BYTES_PER_PIXEL) as u64
+            let budget_mib = mib as f64 - (VAE_DECODE_OTHER_APPS_MIB + VAE_DECODE_RESIDENT_MIB) as f64;
+            ((budget_mib.max(0.0) * 1024.0 * 1024.0 / VAE_DECODE_BYTES_PER_PIXEL) as u64).min(UNTILED_VAE_MAX_AREA)
         }
     }
 }
@@ -1088,7 +1094,7 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
         && inputs.vram_total_mib.is_some_and(|mib| mib >= UNTILED_VAE_MIN_VRAM_MIB);
     let (auto_tiling, server_tiling) = if untile_from_memory {
         // `resident + area * bytes/pixel` must fit in this GPU's share of memory
-        // (`max_untiled_vae_area`); 32 GB decodes everything the planner can budget.
+        // (`max_untiled_vae_area`), up to about 1.5K: 2K and larger always tile.
         // Encoding the references and decoding the result are sequential phases, so each
         // is judged against the budget on its own rather than added together.
         let untiled_area = max_untiled_vae_area(inputs.vram_total_mib);
@@ -1592,15 +1598,24 @@ mod tests {
             let i = PlanInputs { vram_total_mib: vram, unified_memory, server_vae_tiling: true, ..inputs(&[]) };
             plan(&r, &i, &rec()).unwrap().vae_tiling
         };
-        // 32 GB (RTX 5090): every tier the planner can budget decodes untiled, 2K included.
+        // 32 GB (RTX 5090) untiles up to 1.5K; 2K always tiles (it saved only ~3 % for ~13 GB
+        // more VRAM).
         assert!(!at(Some(32_607), false, Quality::Fast), "32 GB: 1 MP");
         assert!(!at(Some(32_607), false, Quality::Balanced), "32 GB: 1.5K");
-        assert!(!at(Some(32_607), false, Quality::Quality), "32 GB: 2K");
-        // 24 GB (RTX 4090) untiles Fast/Balanced, but 2K measured ~26 GB on the 5090, so it
-        // keeps tiling 2K. Below the 23 GiB gate (22 GiB) nothing changes.
-        assert!(!at(Some(24_564), false, Quality::Balanced), "24 GB: 1.5K");
-        assert!(at(Some(24_564), false, Quality::Quality), "24 GB: 2K still tiles");
-        assert!(at(Some(22 * 1024), false, Quality::Quality), "22 GiB: below the gate");
+        assert!(at(Some(32_607), false, Quality::Quality), "32 GB: 2K still tiles");
+        // 24 GB (RTX 4090) untiles Fast only: 1536² untiled ran out of memory with ~7.3 GB
+        // used elsewhere. Below the 23 GiB gate (22 GiB) nothing changes.
+        assert!(!at(Some(24_564), false, Quality::Fast), "24 GB: 1 MP");
+        assert!(at(Some(24_564), false, Quality::Balanced), "24 GB: 1.5K tiles");
+        assert!(at(Some(24_564), false, Quality::Quality), "24 GB: 2K tiles");
+        assert!(at(Some(22 * 1024), false, Quality::Fast), "22 GiB: below the gate");
+        // Custom sizes between 1.5K and 2K (~4 MP, ~25 GB untiled) tile too.
+        let mut r = req("a lighthouse at dusk");
+        r.resolution = ResolutionMode::Custom;
+        r.width = Some(2016);
+        r.height = Some(2016);
+        let i = PlanInputs { vram_total_mib: Some(32_607), server_vae_tiling: true, ..inputs(&[]) };
+        assert!(plan(&r, &i, &rec()).unwrap().vae_tiling, "32 GB: 2016×2016 tiles");
         // 16 GB (RTX 5070 Ti) and 12 GB keep today's behavior exactly.
         for vram in [16_303, 12_282] {
             for q in [Quality::Fast, Quality::Balanced, Quality::Quality] {
@@ -1625,11 +1640,18 @@ mod tests {
     #[test]
     fn untiled_decode_budget_scales_with_vram() {
         assert_eq!(max_untiled_vae_area(None), LARGE_GPU_VAE_TILE_AREA, "unknown GPU");
-        // A 23 GiB card untiles 1.5K but not 2K (the 5090's untiled 2K peaks at ~26 GB);
-        // 32 GB covers every 2K bucket.
-        let m23 = max_untiled_vae_area(Some(23 * 1024));
-        assert!((1_600_000..2752 * 1536).contains(&m23), "{m23}");
-        assert!(max_untiled_vae_area(Some(32_607)) > 2752 * 1536);
+        // 23–24 GB cards untile 1 MP but not 1.5K; 32 GB and up stop at about 1.5K, never 2K.
+        for vram in [23 * 1024, 24_564] {
+            assert!((1376 * 768..1536 * 1536).contains(&max_untiled_vae_area(Some(vram))), "{vram} MiB");
+        }
+        for vram in [32_607, 96 * 1024] {
+            assert_eq!(max_untiled_vae_area(Some(vram)), UNTILED_VAE_MAX_AREA, "{vram} MiB");
+        }
+        const { assert!(UNTILED_VAE_MAX_AREA >= 1536 * 1536 && UNTILED_VAE_MAX_AREA < 2_500_000) };
+        // The estimate covers the measured cold untiled peaks of sd-server on an RTX 5090.
+        let est_gib = |px: f64| VAE_DECODE_RESIDENT_MIB as f64 / 1024.0 + px * VAE_DECODE_BYTES_PER_PIXEL / (1u64 << 30) as f64;
+        assert!(est_gib(1024.0 * 1024.0) >= 11.7, "1 MP");
+        assert!(est_gib(1536.0 * 1536.0) >= 16.5, "1.5K");
         assert_eq!(max_untiled_vae_area(Some(4_608)), 0, "a 16 GB Mac's planning budget: nothing untiled");
     }
 
@@ -1808,7 +1830,7 @@ mod tests {
         let p = plan(&r, &big, &rec()).unwrap();
         assert!(p.vae_tile.is_some(), "16 GB card");
         let p = plan(&r, &PlanInputs { vram_total_mib: Some(32_607), ..big.clone() }, &rec()).unwrap();
-        assert!(p.vae_tile.is_none(), "32 GB card: 2K decodes untiled, no tiles needed");
+        assert_eq!(p.vae_tile, plan(&r, &big, &rec()).unwrap().vae_tile, "32 GB card: 2K uses the same tiles as 16 GB");
         let p = plan(&r, &PlanInputs { unified_memory: true, ..big.clone() }, &rec()).unwrap();
         assert!(p.vae_tile.is_none(), "Mac: the server's tiles");
         let p = plan(&r, &PlanInputs { vram_total_mib: Some(12282), ..big.clone() }, &rec()).unwrap();

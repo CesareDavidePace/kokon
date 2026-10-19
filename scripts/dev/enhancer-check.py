@@ -297,12 +297,7 @@ def start_isolated(card_mib, out):
     for d in (cdir, ddir, odir):
         d.mkdir(parents=True, exist_ok=True)
     svc_port, srv_port = free_port(), free_port()
-    cfg = dict(real)
-    cfg.update({"servicePort": svc_port, "serverPort": srv_port, "outputDir": str(odir),
-                "hardwarePreset": "8gb", "vramOverrideMib": card_mib, "setupComplete": True})
-    cfg.setdefault("sdcppDir", str(data_dir() / "sdcpp"))
-    (cdir / "config.json").write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-    sdcpp = cfg["sdcppDir"]
+    sdcpp = real.get("sdcppDir") or str(data_dir() / "sdcpp")
 
     procs = []
     blog = open(iso / "ballast.log", "w")
@@ -315,7 +310,19 @@ def start_isolated(card_mib, out):
             break
     if ballast.poll() is not None or "Holding" not in (iso / "ballast.log").read_text(errors="replace"):
         raise SystemExit("VRAM ballast failed:\n" + (iso / "ballast.log").read_text(errors="replace"))
-    print((iso / "ballast.log").read_text(errors="replace").splitlines()[0])
+    held = (iso / "ballast.log").read_text(errors="replace").splitlines()[0]
+    print(held)
+    # On Windows sd-server's own free-VRAM query does not see the ballast (it reported ~14.7 of
+    # 16 GiB free beside it), so its automatic budget (--max-vram -1) would overcommit and spill.
+    # Give it what a real card of this size detects: free VRAM now minus the same 1 GiB reserve.
+    free = int(re.search(r"(\d+) MiB free now", held).group(1))
+    budget_gib = round((free - 1024) / 1024, 2)
+    cfg = dict(real)
+    cfg.update({"servicePort": svc_port, "serverPort": srv_port, "outputDir": str(odir), "sdcppDir": sdcpp,
+                "hardwarePreset": "8gb", "vramOverrideMib": card_mib, "setupComplete": True,
+                "vramReserveGib": 0, "extraServerArgs": list(real.get("extraServerArgs") or []) + ["--max-vram", str(budget_gib)]})
+    (cdir / "config.json").write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    print("sd-server budget: --max-vram %s GiB (%d MiB free with the ballast, minus 1 GiB)" % (budget_gib, free))
 
     env = dict(os.environ, QLS_DATA_DIR=str(ddir), QLS_CONFIG_DIR=str(cdir))
     svc = subprocess.Popen([str(exe), "--port", str(svc_port), "--persistent"], env=env,
@@ -482,7 +489,7 @@ def write_report(out, a, sysinfo, release, markers, srv, checks, results):
     L = ["# Prompt enhancer check %s" % out.name, ""]
     L += ["- System: %s" % ", ".join("%s %s" % (k, v) for k, v in sysinfo.items())]
     if a.card_mib:
-        L += ["- Emulated card: %d MiB (VRAM ballast + 8gb preset, isolated service)" % a.card_mib]
+        L += ["- Emulated card: %d MiB (VRAM ballast + 8gb preset + explicit --max-vram, isolated service)" % a.card_mib]
     L += ["- Engine: %s; markers: %s" % (release, "; ".join(markers) or "none"),
           "- Server: model %s, text_generation %s" % (srv.get("model"), srv.get("text_generation")),
           "- Quality: %s" % a.quality, ""]

@@ -45,9 +45,10 @@ upstream's own flags and CUDA architectures (`61;70;75;80;86;89;90;100;120`, CUD
   `$ORIGIN`) and `SHA256SUMS.txt`.
 - The app pins these in `crates/qls-core/src/catalog.rs` (`#[cfg(target_os = "linux")]` versions of
   `ENGINE_CUDA`, `CUDA_RUNTIME`, `ENGINE_VULKAN`, plus `LINUX_*_SIZE/SHA256`).
-- `engine.json` (engine updates without an app release) lists upstream's Windows/Mac builds only, so
-  **Linux ignores it** (`apply_engine_release` returns early). Linux engines change with app releases
-  until the manifest gets Linux entries (to do, below).
+- **Since 0.10** the engines come from the single workflow `kokon.yml` on fork branch `kokon` (release
+  `kokon-<n>-<commit>`, every platform), and `engine.json` has Linux entries (`kokon.linux_cuda`,
+  `kokon.linux_vulkan`), so Linux gets engine updates without an app release. The CUDA runtime stays
+  pinned to `kokon-linux-1d0a58a`. The `kokon-linux` branch and its releases serve apps up to 0.9.4.
 - First build: run 38885751650 (2026-10-16): Vulkan 12 min, CUDA 1 h 32 min. Its CUDA smoke test was
   wrong (sd-server links libcuda.so.1, which only the NVIDIA driver provides, so it can't start in CI);
   the release was published by hand from that run's artifacts after a real check in WSL (RTX 5070 Ti
@@ -55,6 +56,9 @@ upstream's own flags and CUDA architectures (`61;70;75;80;86;89;90;100;120`, CUD
   published release (rebuilds aren't byte-identical and the app pins SHA-256).
 
 ## Engine upkeep: check at every release (and when engine.json moves)
+
+> Up to 0.9.4. From 0.10 the fork branch `kokon` (one workflow, every platform) replaces the steps
+> below: rebase it on upstream, update `UPSTREAM_BASE` in `kokon.yml`, run it with `create_release`.
 
 Upstream moves fast (2026-10-16: master-968-8cd731e, 4 commits after our 1d0a58a, including a Vulkan
 direct-convolution fix and FLUX.3 Klein). When Windows/Mac move to a newer engine, Linux must follow:
@@ -118,7 +122,7 @@ To do for 0.9.4 (Linux + fixes for every platform)
       the server mode.
 
 Later
-- [ ] engine.json Linux entries (fork URLs) so Linux gets engine updates without an app release.
+- [x] engine.json Linux entries (fork URLs) so Linux gets engine updates without an app release (0.10, `kokon` key).
 - [ ] Real-hardware reports: AMD on Linux (swingtempo R9700, alean200), a non-WSL NVIDIA machine.
 - [ ] AppImage? Not planned (large, and deb/rpm cover the main distros).
 - [ ] Steps 2 and 3 of the plan above.

@@ -30,8 +30,7 @@ Results: <Desktop or home>/kokon-enhancer-check/<timestamp>/ (report.md, results
 images are in Kokon's gallery). Paste report.md back in the chat.
 
 Start Kokon from branch prompt-enhancer first:
-  Mac:   git pull && bash scripts/dev/mac-dev.sh
-  Linux: git pull, then the quick run in docs/linux.md (npm run build && cargo build ...)
+  git pull && npx tauri dev   (Mac, Linux, Windows)
 
 In the app, by hand, after the script:
   1. At first start the engine update is offered (What's New / Setup): accept it before the script.

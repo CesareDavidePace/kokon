@@ -5,7 +5,7 @@
   "version": "0.9.4",
   "identifier": "app.kokon.desktop",
   "build": {
-    "beforeDevCommand": "npm run bundled && cargo build -p qls-service && npm run dev",
+    "beforeDevCommand": "npm run bundled && node scripts/dev/sidecars.mjs && npm run dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run bundled && npm run build",
     "frontendDist": "../dist"

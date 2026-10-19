@@ -827,7 +827,7 @@ impl Engine {
         // Whether the running server can use the upscaler (an engine older than MoSR lists the
         // file but cannot run it; an external server may lack --hires-upscalers-dir):
         // enlargements fall back to Lanczos. Fresh, because the server rescans the folder.
-        let client = SdcppClient::new(cfg.server_port);
+        let client = SdcppClient::new(self.server.port());
         let caps = client.capabilities(Duration::from_secs(5)).await.ok().or_else(|| self.server.capabilities()).unwrap_or_default();
         let esrgan = plan.upscaler.clone().filter(|n| caps.has_upscaler(n, true));
         let needs_esrgan = plan.upscale.is_some() || plan.output.area() as f64 > plan.content.area() as f64 * 1.21;

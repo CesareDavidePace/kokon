@@ -203,7 +203,7 @@ async fn status(State(s): St) -> Json<Value> {
     Json(json!({
         "service": { "version": APP_VERSION, "pid": std::process::id(), "uptime_s": s.started.elapsed().as_secs() },
         "server": {
-            "state": srv.state, "owned": srv.owned, "pid": srv.pid, "port": cfg.server_port,
+            "state": srv.state, "owned": srv.owned, "pid": srv.pid, "port": if srv.port > 0 { srv.port } else { cfg.server_port },
             "model": srv.model, "model_loaded": srv.state == qls_core::process::ServerState::Ready,
             "error": srv.error,
             "cancel_generating": srv.capabilities.as_ref().map(|c| c.img_feature("cancel_generating")),
@@ -543,7 +543,7 @@ async fn diagnostics_json(State(s): St) -> ApiResult<Json<Value>> {
             .map(|d| d.installed_tag(&cfg.sdcpp_dir).unwrap_or_else(|| "none".into()))
             .collect();
         let _ = writeln!(text, "Engine release: {} (expected {})", tags.join(", "), catalog::engine_tag());
-        let _ = writeln!(text, "State: {:?}, owned: {}, pid: {:?}, port: {}", srv.state, srv.owned, srv.pid, cfg.server_port);
+        let _ = writeln!(text, "State: {:?}, owned: {}, pid: {:?}, port: {}", srv.state, srv.owned, srv.pid, srv.port);
         if let Some(e) = &srv.error {
             let _ = writeln!(text, "Last error: {} {}", e.message, e.detail.clone().unwrap_or_default());
         }

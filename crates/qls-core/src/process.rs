@@ -418,10 +418,13 @@ impl ServerManager {
     pub async fn ensure_ready(&self, cfg: &AppConfig) -> Result<Capabilities, AppError> {
         let _guard = self.start_lock.lock().await;
         let profile = cfg.profile().clone();
-        let client = SdcppClient::new(cfg.server_port);
+        // Our server may run on a fallback port (see `launch_port`); otherwise the configured one.
+        let rec = self.read_record().filter(|r| process_alive(r.pid));
+        let port = rec.as_ref().map(|r| r.port).unwrap_or(cfg.server_port);
+        let client = SdcppClient::new(port);
 
         if let Ok(caps) = client.capabilities(Duration::from_secs(3)).await {
-            let rec = self.read_record().filter(|r| r.port == cfg.server_port && process_alive(r.pid));
+            let rec = rec.filter(|r| r.port == port);
             if caps.model_matches(&profile.diffusion_model) && caps.supports_img_gen() {
                 let owned = rec.is_some();
                 if let Some(r) = &rec
@@ -433,7 +436,7 @@ impl ServerManager {
                     g.state = ServerState::Ready;
                     g.owned = owned;
                     g.pid = rec.as_ref().map(|r| r.pid);
-                    g.port = cfg.server_port;
+                    g.port = port;
                     g.model = Some(caps.model.name.clone());
                     g.error = None;
                     g.caps = Some(caps.clone());
@@ -443,30 +446,21 @@ impl ServerManager {
                 });
                 return Ok(caps);
             }
-            // Wrong model on our port.
             if let Some(r) = rec {
                 tracing::info!("restarting owned sd-server (pid {}) for a different model", r.pid);
                 kill_pid(r.pid);
                 let _ = std::fs::remove_file(self.record_path());
                 wait_port_free(&client, Duration::from_secs(15)).await;
             } else {
-                let e = AppError::new(
-                    ErrorCode::ServerStartFailed,
-                    format!("Port {} is used by another stable-diffusion.cpp server with a different model ({}).", cfg.server_port, caps.model.name),
-                )
-                .suggest("Stop that server or choose another port in Settings.");
-                self.set_state(|g| {
-                    g.state = ServerState::Error;
-                    g.error = Some(e.clone());
-                });
-                return Err(e);
+                // Someone else's server with another model: ours starts on a free port.
+                tracing::info!("port {port} is used by another stable-diffusion.cpp server ({}); starting ours on another port", caps.model.name);
             }
         }
 
-        self.spawn_and_wait(cfg, &profile, &client).await
+        self.spawn_and_wait(cfg, &profile).await
     }
 
-    async fn spawn_and_wait(&self, cfg: &AppConfig, profile: &ModelProfile, client: &SdcppClient) -> Result<Capabilities, AppError> {
+    async fn spawn_and_wait(&self, cfg: &AppConfig, profile: &ModelProfile) -> Result<Capabilities, AppError> {
         let fail = |e: AppError| {
             self.set_state(|g| {
                 g.state = ServerState::Error;
@@ -483,14 +477,34 @@ impl ServerManager {
         if let Some(d) = log_path.parent() {
             std::fs::create_dir_all(d).map_err(|e| fail(AppError::io("create the log folder", d, e)))?;
         }
-        if log_path.exists() {
-            let _ = std::fs::rename(&log_path, log_path.with_extension("prev.log"));
+        let mut port = launch_port(cfg.server_port).ok_or_else(|| fail(port_unavailable_error(cfg.server_port)))?;
+        // sd-server exits with code 0 and no log line when it cannot listen (a port reserved
+        // between our check and its bind): one more try on another free port.
+        for attempt in 0..2 {
+            match self.launch(cfg, profile, &exe, &log_path, port).await {
+                Ok(caps) => return Ok(caps),
+                Err(Launch::Failed(e)) => return Err(fail(e)),
+                Err(Launch::NotListening) if attempt == 0 => {
+                    tracing::warn!("sd-server exited without listening on port {port}; retrying on another port");
+                    port = free_port().ok_or_else(|| fail(port_unavailable_error(port)))?;
+                }
+                Err(Launch::NotListening) => break,
+            }
         }
-        let file = std::fs::File::create(&log_path).map_err(|e| fail(AppError::io("create the server log", &log_path, e)))?;
-        let args = build_server_args(cfg, profile);
+        Err(fail(port_unavailable_error(port)))
+    }
+
+    async fn launch(&self, cfg: &AppConfig, profile: &ModelProfile, exe: &Path, log_path: &Path, port: u16) -> Result<Capabilities, Launch> {
+        let fail = Launch::Failed;
+        if log_path.exists() {
+            let _ = std::fs::rename(log_path, log_path.with_extension("prev.log"));
+        }
+        let file = std::fs::File::create(log_path).map_err(|e| fail(AppError::io("create the server log", log_path, e)))?;
+        let run_cfg = AppConfig { server_port: port, ..cfg.clone() };
+        let args = build_server_args(&run_cfg, profile);
         tracing::info!("starting {} {}", exe.display(), args.join(" "));
 
-        let mut cmd = std::process::Command::new(&exe);
+        let mut cmd = std::process::Command::new(exe);
         cmd.args(&args)
             .current_dir(&cfg.sdcpp_dir)
             .stdin(std::process::Stdio::null())
@@ -505,25 +519,30 @@ impl ServerManager {
             fail(AppError::new(ErrorCode::ServerStartFailed, "Could not launch sd-server.exe.").detail(e.to_string()))
         })?;
         let pid = child.id();
-        let rec = OwnedRecord { pid, port: cfg.server_port, model: profile.model_name(), log: log_path.clone() };
+        let rec = OwnedRecord { pid, port, model: profile.model_name(), log: log_path.to_path_buf() };
         let _ = std::fs::write(self.record_path(), serde_json::to_string(&rec).unwrap_or_default());
         self.set_state(|g| {
             g.state = ServerState::Starting;
             g.owned = true;
             g.pid = Some(pid);
-            g.port = cfg.server_port;
+            g.port = port;
             g.error = None;
             g.caps = None;
             g.started_at = Some(chrono::Utc::now());
         });
-        self.start_tail(&log_path, false);
+        self.start_tail(log_path, false);
 
+        let client = SdcppClient::new(port);
         let started = Instant::now();
         loop {
             if let Ok(Some(status)) = child.try_wait() {
                 tokio::time::sleep(Duration::from_millis(300)).await;
                 let tail = self.log.tail(40).join("\n");
                 let _ = std::fs::remove_file(self.record_path());
+                // Code 0 before answering = `svr.listen` failed (it logs "listening on" first).
+                if status.success() {
+                    return Err(Launch::NotListening);
+                }
                 return Err(fail(translate_startup_failure(&format!("{tail}\n(exit status {status})"))));
             }
             if let Ok(caps) = client.capabilities(Duration::from_secs(2)).await {
@@ -543,6 +562,11 @@ impl ServerManager {
             }
             tokio::time::sleep(Duration::from_millis(750)).await;
         }
+    }
+
+    /// The port of the server in use; it can differ from the configured one (`launch_port`).
+    pub fn port(&self) -> u16 {
+        self.inner.lock().unwrap().port
     }
 
     /// Stops the server if this app owns it. Never touches servers it did not start.
@@ -645,6 +669,36 @@ async fn wait_port_free(client: &SdcppClient, timeout: Duration) {
     while t.elapsed() < timeout && client.capabilities(Duration::from_millis(500)).await.is_ok() {
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
+}
+
+enum Launch {
+    Failed(AppError),
+    /// Exited with code 0 before answering: the port could not be opened.
+    NotListening,
+}
+
+/// The configured port when it can be opened, otherwise a free one. Windows reserves port
+/// ranges for Hyper-V, WSL and Docker (`netsh interface ipv4 show excludedportrange
+/// protocol=tcp`), different at every boot; binding a reserved port fails with "access denied".
+fn launch_port(configured: u16) -> Option<u16> {
+    match std::net::TcpListener::bind(("127.0.0.1", configured)) {
+        Ok(_) => Some(configured),
+        Err(e) => {
+            let p = free_port();
+            tracing::warn!("port {configured} cannot be opened ({e}); using {p:?}");
+            p
+        }
+    }
+}
+
+/// A port the system reports free right now.
+pub fn free_port() -> Option<u16> {
+    std::net::TcpListener::bind(("127.0.0.1", 0)).and_then(|l| l.local_addr()).map(|a| a.port()).ok()
+}
+
+fn port_unavailable_error(port: u16) -> AppError {
+    AppError::new(ErrorCode::ServerStartFailed, format!("The inference server could not open a network port on this computer (last tried: {port})."))
+        .suggest("Windows can reserve ports for Hyper-V, WSL or Docker. Restart the computer, or set another port in Settings → Performance.")
 }
 
 pub fn process_alive(pid: u32) -> bool {
@@ -922,6 +976,17 @@ mod tests {
         assert_eq!(u.step, Some((1, 20)));
         let u = p.feed("  |=====>     | 20/20 - 2.01s/it\u{1b}[K[INFO   ] image.cpp:899  - sampling completed, taking 41.67s").unwrap();
         assert_eq!(u.step, Some((20, 20)));
+    }
+
+    #[test]
+    fn launch_port_falls_back_when_the_port_cannot_be_opened() {
+        let taken = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let busy = taken.local_addr().unwrap().port();
+        let p = launch_port(busy).unwrap();
+        assert_ne!(p, busy);
+        assert!(std::net::TcpListener::bind(("127.0.0.1", p)).is_ok(), "the fallback is free");
+        let free = free_port().unwrap();
+        assert_eq!(launch_port(free), Some(free), "a free configured port is kept");
     }
 
     #[test]

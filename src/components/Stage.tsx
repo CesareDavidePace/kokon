@@ -661,9 +661,11 @@ function safeDecode(s: string) {
 }
 
 /** Arcs above the thumbnails join a version to the earlier ones it was made from: one level
- * per arc that spans another, `LANE` px apart, rounded corners of `R` px. */
+ * per arc that spans another, `LANE` px apart, rounded corners of `R` px; they stop `GAP` px
+ * above the thumbnails, clear of the ring or outline round them. */
 const LANE = 9;
 const R = 5;
+const GAP = 9;
 
 /** What joins a version to the one before it: a line when it continues from it (dashed for a
  * new seed of it), a break when it starts something new, a plain gap when it comes from
@@ -671,13 +673,8 @@ const R = 5;
 function Joint({ kind, hot }: { kind: LinkKind; hot: boolean }) {
   if (kind === "start") return <span className="joint break" aria-hidden />;
   if (kind === "branch" || kind === "combine") return <span className="joint gap" aria-hidden />;
-  // Two silk threads between the thumbnails' centres (25 px down the 50 px frame).
-  return (
-    <svg className={`joint silk ${kind === "variant" ? "dashed" : ""} ${hot ? "hot" : ""}`} viewBox="0 0 22 50" aria-hidden>
-      <path className="t1" d="M-3 25 C 5 30.5, 17 30.5, 25 25" />
-      <path className="t2" d="M-3 24 C 6 20, 15 21, 25 26" />
-    </svg>
-  );
+  // A straight line between the thumbnails, ending where a ring or outline round them sits.
+  return <span className={`joint link ${kind === "variant" ? "dashed" : ""} ${hot ? "hot" : ""}`} aria-hidden />;
 }
 
 function linkText(link: TimelineLink | undefined, labels: Record<string, string>): string {
@@ -759,9 +756,9 @@ function Timeline({ labels }: { labels: Record<string, string> }) {
     })
     .filter((a) => centers[a.from] !== undefined && centers[a.to] !== undefined);
   const places = arcLayout(arcs.map((a) => ({ a: index.get(a.from)!, b: index.get(a.to)! })));
-  const band = arcs.length ? 10 + (Math.max(...places.map((p) => p.lane)) + 1) * LANE : 0;
+  const band = arcs.length ? 10 + GAP + (Math.max(...places.map((p) => p.lane)) + 1) * LANE : 0;
   const arcPath = (x1: number, x2: number, top: number) => {
-    const y = band - 1;
+    const y = band - GAP;
     const d = x2 > x1 ? 1 : -1;
     // Up from the source, across at its level, down into the result, with an arrowhead.
     return `M ${x1} ${y} L ${x1} ${top + R} Q ${x1} ${top} ${x1 + d * R} ${top} L ${x2 - d * R} ${top} Q ${x2} ${top} ${x2} ${top + R} L ${x2} ${y} M ${x2 - 3.5} ${y - 4.5} L ${x2} ${y} L ${x2 + 3.5} ${y - 4.5}`;
@@ -777,7 +774,7 @@ function Timeline({ labels }: { labels: Record<string, string> }) {
               .map((a, i) => ({ a, p: places[i] }))
               .sort((x, y) => Number(x.a.hot) - Number(y.a.hot))
               .map(({ a, p }) => (
-                <path key={`${a.from}-${a.to}`} className={a.hot ? "hot" : ""} d={arcPath(centers[a.from] + p.dx1, centers[a.to] + p.dx2, band - 8 - (p.lane + 1) * LANE)} />
+                <path key={`${a.from}-${a.to}`} className={a.hot ? "hot" : ""} d={arcPath(centers[a.from] + p.dx1, centers[a.to] + p.dx2, band - 8 - GAP - (p.lane + 1) * LANE)} />
               ))}
           </svg>
         )}

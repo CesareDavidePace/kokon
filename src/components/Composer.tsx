@@ -131,10 +131,10 @@ function ModeSwitch({ editing }: { editing: boolean }) {
   return (
     <div className="mode-switch" role="radiogroup" aria-label="What the prompt does">
       <button className={editing ? "" : "on"} role="radio" aria-checked={!editing} onClick={() => editing && startNewImage()} title="Make a new image from the prompt alone; your images stay in the timeline">
-        <Sparkles size={14} /> New image
+        <Sparkles size={14} /> <span className="lbl">New image</span>
       </button>
       <button className={editing ? "on" : ""} role="radio" aria-checked={editing} onClick={() => !editing && editShownImage()} title={editing ? "The prompt edits this image" : `Edit ${name}, the image shown`}>
-        <Pencil size={14} /> Edit image
+        <Pencil size={14} /> <span className="lbl">Edit image</span>
       </button>
     </div>
   );
@@ -182,7 +182,7 @@ function TargetBar() {
       <span className="spacer" />
       <span className="tool-group">
         <button className={`tool ${c.mask ? "on" : ""}`} data-tour="paint" onClick={() => setState({ overlay: "inpaint" })} title="Paint the area to change; the rest stays as it is">
-          <Brush size={14} /> {c.mask ? "Area painted" : "Paint area"}
+          <Brush size={14} /> <span className="lbl">{c.mask ? "Area painted" : "Paint area"}</span>
         </button>
         {c.mask && (
           <button className="tool-x" title="Remove the painted area" onClick={() => updateComposer({ mask: null })}>
@@ -192,7 +192,7 @@ function TargetBar() {
       </span>
       <span className="tool-group">
         <button className={`tool ${outPx ? "on" : ""}`} onClick={() => setState({ overlay: "expand" })} title="Extend the image beyond its borders">
-          <Expand size={14} /> {outPx ? "Expanded" : "Expand"}
+          <Expand size={14} /> <span className="lbl">{outPx ? "Expanded" : "Expand"}</span>
         </button>
         {outPx && (
           <button className="tool-x" title="Remove the expansion" onClick={() => updateComposer({ outpaint: null })}>
@@ -306,7 +306,7 @@ function LoraBadge() {
         title={l.available ? `${title}. Click to turn ${on.length ? "off" : "on"}.` : "This LoRA's file is missing: load it again in Settings → LoRA."}
       >
         <Layers size={15} />
-        LoRA
+        <span className="lbl">LoRA</span>
       </button>
     );
   }
@@ -315,8 +315,9 @@ function LoraBadge() {
       trigger={(open, toggleOpen) => (
         <button className={`pill toggle ${on.length || open ? "on" : ""}`} onClick={toggleOpen} title={title}>
           <Layers size={15} />
-          LoRA{on.length > 0 && <span className="lora-count">{on.length}</span>}
-          <ChevronDown size={13} />
+          <span className="lbl">LoRA</span>
+          {on.length > 0 && <span className="lora-count">{on.length}</span>}
+          <ChevronDown size={13} className="chev" />
         </button>
       )}
     >
@@ -461,7 +462,7 @@ export function Composer() {
                 <button className={`pill ${open ? "on" : ""}`} onClick={toggle} title="Aspect ratio">
                   <RatioIcon ratio={aspectRatioNow} size={15} />
                   {aspectText}
-                  <ChevronDown size={13} />
+                  <ChevronDown size={13} className="chev" />
                 </button>
               )}
             >
@@ -475,7 +476,7 @@ export function Composer() {
               <button className={`pill ${open ? "on" : ""}`} onClick={toggle} title="Resolution">
                 <Maximize size={14} />
                 {resolutionLabel(c.resolution, c.customWidth, c.customHeight)}
-                <ChevronDown size={13} />
+                <ChevronDown size={13} className="chev" />
               </button>
             )}
           >
@@ -486,8 +487,8 @@ export function Composer() {
             trigger={(open, toggle) => (
               <button className={`pill ${open ? "on" : ""}`} onClick={toggle} title="Quality">
                 <Gauge size={15} />
-                {QUALITY.find((q) => q.value === c.quality)?.label}
-                <ChevronDown size={13} />
+                <span className="lbl">{QUALITY.find((q) => q.value === c.quality)?.label}</span>
+                <ChevronDown size={13} className="chev" />
               </button>
             )}
           >
@@ -509,7 +510,7 @@ export function Composer() {
               }
             >
               <WandSparkles size={15} />
-              Prompt+
+              <span className="lbl">Prompt+</span>
             </button>
           )}
 

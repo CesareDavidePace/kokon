@@ -6,8 +6,8 @@
         "title": "Kokon",
         "width": 1320,
         "height": 880,
-        "minWidth": 880,
-        "minHeight": 620,
+        "minWidth": 960,
+        "minHeight": 660,
         "center": true,
         "visible": false,
         "dragDropEnabled": true,
@@ -16,7 +16,7 @@
         "hiddenTitle": true,
         "trafficLightPosition": {
           "x": 18,
-          "y": 20
+          "y": 28
         }
       }
     ]

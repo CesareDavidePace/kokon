@@ -13,7 +13,7 @@ import { Gallery } from "./components/Gallery";
 import { InpaintEditor } from "./components/InpaintEditor";
 import { Settings as SettingsDialog } from "./components/Settings";
 import { Setup } from "./components/Setup";
-import { ProjectTitle, Sidebar } from "./components/Sidebar";
+import { ProjectTitle, Sidebar, Wordmark } from "./components/Sidebar";
 import { Stage } from "./components/Stage";
 import { Tour } from "./components/Tour";
 import { IconButton } from "./components/ui";
@@ -373,6 +373,7 @@ export default function App() {
       <div className="workspace">
         <div className="topbar" data-tauri-drag-region>
           <div className="brand" data-tauri-drag-region>
+            {(!sidebar || needsSetup) && <Wordmark />}
             {!sidebar && !needsSetup && (
               <>
                 <IconButton title="Show sidebar" onClick={() => setState({ sidebar: true })}>

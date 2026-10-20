@@ -670,9 +670,14 @@ export function renameProject(id: string, name: string) {
 
 /** Removes a project from the list; its images stay in the gallery. */
 export function deleteProject(id: string) {
-  delete projects[id];
+  deleteProjects([id]);
+}
+
+/** Removes projects from the list (their images stay in All images); the open one closes. */
+export function deleteProjects(ids: string[]) {
+  for (const id of ids) delete projects[id];
   persistProjects();
-  if (id === state.projectId) setState((s) => ({ projectId: newKey(), session: [], selected: null, composer: emptyComposer(s.composer) }));
+  if (ids.includes(state.projectId)) setState((s) => ({ projectId: newKey(), session: [], selected: null, composer: emptyComposer(s.composer), projects: projectList() }));
   else setState({ projects: projectList() });
 }
 

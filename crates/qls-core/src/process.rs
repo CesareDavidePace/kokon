@@ -325,6 +325,9 @@ struct Inner {
     state: ServerState,
     owned: bool,
     pid: Option<u32>,
+    /// The server this app launched in this session. Kept so an exit is seen (and reaped)
+    /// with `try_wait`: on Linux/macOS a dropped child that dies stays a zombie under its pid.
+    child: Option<std::process::Child>,
     port: u16,
     model: Option<String>,
     started_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -354,6 +357,7 @@ impl ServerManager {
                 state: ServerState::Stopped,
                 owned: false,
                 pid: None,
+                child: None,
                 port: 0,
                 model: None,
                 started_at: None,
@@ -440,6 +444,9 @@ impl ServerManager {
                     g.state = ServerState::Ready;
                     g.owned = owned;
                     g.pid = rec.as_ref().map(|r| r.pid);
+                    if g.child.as_ref().map(|c| c.id()) != g.pid {
+                        g.child = None;
+                    }
                     g.port = port;
                     g.model = Some(caps.model.name.clone());
                     g.error = None;
@@ -529,6 +536,9 @@ impl ServerManager {
             g.state = ServerState::Starting;
             g.owned = true;
             g.pid = Some(pid);
+            if let Some(mut old) = g.child.take() {
+                let _ = old.try_wait(); // reap a crashed predecessor
+            }
             g.port = port;
             g.error = None;
             g.caps = None;
@@ -554,8 +564,8 @@ impl ServerManager {
                     g.state = ServerState::Ready;
                     g.model = Some(caps.model.name.clone());
                     g.caps = Some(caps.clone());
+                    g.child = Some(child);
                 });
-                // The Child handle is dropped; the process keeps running and is tracked by pid.
                 return Ok(caps);
             }
             if started.elapsed() > Duration::from_secs(900) {
@@ -596,6 +606,7 @@ impl ServerManager {
             g.state = ServerState::Stopped;
             g.owned = false;
             g.pid = None;
+            g.child = None;
             g.caps = None;
             g.started_at = None;
         });
@@ -604,9 +615,16 @@ impl ServerManager {
 
     /// Whether the owned process is still alive (false for external servers).
     pub fn owned_alive(&self) -> Option<bool> {
-        let g = self.inner.lock().unwrap();
+        let mut g = self.inner.lock().unwrap();
         if !g.owned {
             return None;
+        }
+        // A server launched in this session: `try_wait` sees (and reaps) an exit. One reused
+        // from an earlier session is not our child, so it is checked by pid.
+        if let Some(child) = g.child.as_mut()
+            && let Ok(status) = child.try_wait()
+        {
+            return Some(status.is_none());
         }
         g.pid.map(process_alive)
     }
@@ -1019,5 +1037,31 @@ CPU	Apple M2 Pro
         assert!(parse_device_list(out).iter().any(|(n, _)| n.to_ascii_lowercase() == cfg.effective_device()));
         let out = "ggml_vulkan: Found 1 Vulkan devices:\nggml_vulkan: 0 = AMD Radeon RX 7800 XT (AMD proprietary driver) | uma: 0 | fp16: 1\nVulkan0\tAMD Radeon RX 7800 XT\nCPU\tAMD Ryzen 7 7700\n";
         assert_eq!(parse_device_list(out)[0], ("Vulkan0".into(), "AMD Radeon RX 7800 XT".into()));
+    }
+
+    /// Regression: on Linux a crashed sd-server stayed a zombie under its pid, so the job
+    /// poll loop never saw it exit and waited forever.
+    #[cfg(unix)]
+    #[test]
+    fn owned_alive_sees_a_launched_server_exit() {
+        // `sleep` under the name sd-server, so `process_alive` recognizes it.
+        let dir = std::env::temp_dir().join(format!("qls-owned-alive-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("sd-server");
+        std::fs::copy("/bin/sleep", &exe).unwrap();
+        let mut child = std::process::Command::new(&exe).arg("30").spawn().unwrap();
+        let pid = child.id();
+        child.kill().unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(process_alive(pid), "the dead, unreaped server still looks alive by pid (zombie)");
+        let m = ServerManager::new(dir.clone());
+        m.set_state(|g| {
+            g.owned = true;
+            g.pid = Some(pid);
+            g.child = Some(child);
+        });
+        assert_eq!(m.owned_alive(), Some(false), "try_wait sees the exit");
+        assert!(!process_alive(pid), "and reaps it");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

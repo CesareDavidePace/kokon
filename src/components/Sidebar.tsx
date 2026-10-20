@@ -1,4 +1,4 @@
-import { Check, Images, PanelLeftClose, Pencil, SquarePen, Trash2, X } from "lucide-react";
+import { Check, Images, PanelLeftClose, Pencil, Settings, SquarePen, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { urls } from "../lib/api";
 import { timeAgo } from "../lib/logic";
@@ -178,6 +178,11 @@ export function Sidebar() {
           </IconButton>
         </div>
       )}
+      <div className="side-foot">
+        <button className={`side-item settings ${overlay === "settings" ? "on" : ""}`} onClick={() => setState({ overlay: "settings" })}>
+          <Settings size={18} /> Settings
+        </button>
+      </div>
     </aside>
   );
 }

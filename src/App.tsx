@@ -389,14 +389,17 @@ export default function App() {
           <div className="toolbar" data-tauri-drag-region>
             {!needsSetup && <HistoryButtons />}
             <UpdatePill />
-            {!needsSetup && <PrivateToggle />}
             <StatusIndicator />
+            {!needsSetup && <PrivateToggle />}
             <IconButton title="Shortcuts (?)" onClick={() => setState({ overlay: "shortcuts" })}>
               <CircleHelp size={18} />
             </IconButton>
-            <IconButton title="Settings" onClick={() => setState({ overlay: "settings" })}>
-              <Settings size={18} />
-            </IconButton>
+            {/* Settings lives at the foot of the sidebar; here only while the sidebar is hidden. */}
+            {(!sidebar || needsSetup) && (
+              <IconButton title="Settings" onClick={() => setState({ overlay: "settings" })}>
+                <Settings size={18} />
+              </IconButton>
+            )}
           </div>
           <WindowControls />
         </div>

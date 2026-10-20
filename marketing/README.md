@@ -35,6 +35,21 @@ words, Prompt+ writes the prompt, the image hatches) → Region (paint, remove, 
 Montage (five edits, full frame) → Agent (MCP) → Hardware (Windows, macOS, Linux) → Outro. Each scene is also its own composition, so one can be rendered alone, for example
 `npx remotion render Montage out/montage.mp4` (the voice and music play only in `KokonLaunch`).
 
+**"Kokon 0.10" update video** (`Update010`, ~41 s, for Reddit, YouTube and the site): Prompt+
+(a few words, the prompt written, the image hatching on the drop), "One model. Two jobs." (Prompt+
+runs on the Qwen3-VL 8B text encoder Qwen-Image 2.1 already loads), your own LoRAs (beta: Settings,
+then the LoRA pill), the new look, the end card. Its clock is `src/app/timeline010.ts` (beats,
+shots, voice cues), its scenes `src/scenes/Update010.tsx`, its script `audio/voiceover-0.10.md`.
+Until its own takes exist it plays the launch track's tail and no voice (`voice-0.10.json` holds
+estimated spans, marked `_provisional`).
+
+```powershell
+python audio/gen_music.py update                                   # takes/update-<stamp>-N.wav (ACE-Step API running)
+D:/AI/tts/.venv/Scripts/python audio/gen_voice.py audition         # voice/update-0.10/audition-<stamp>/
+D:/AI/tts/.venv/Scripts/python audio/gen_voice.py build --from audio/voice/update-0.10/audition-<stamp> --pick 1.0:11,2.0:11,...
+npx remotion render Update010 out/kokon-0.10-update.mp4            # in video/, 1920×1080
+```
+
 `src/app/timeline.ts` is the film's clock: scene lengths, the frame where each voice-over sentence
 plays, the frames of the actions the voice names (Remove, Add, the montage cuts) and the music's
 beat grid. Retime there and pictures, voice and music move together.

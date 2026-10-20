@@ -10,3 +10,5 @@ body { background: #000; }
 .kokon-window { position: relative; overflow: hidden; border-radius: 12px; background: var(--ground); color: var(--text); font-family: var(--font);
   box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 40px 120px rgba(0,0,0,0.6), 0 12px 40px rgba(0,0,0,0.5); display: flex; flex-direction: column; }
 .kokon-window .app { flex: 1; min-height: 0; height: auto; }
+/* The silk thread round the composer shows while the prompt has focus, which a video can't give it. */
+.kokon-window.silk .composer::before { opacity: 1; }

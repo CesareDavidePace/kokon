@@ -25,19 +25,19 @@ const inpaintReq = (prompt: string, from: string, action: "remove" | "add") => (
   inpaint_action: action,
 });
 // Made with Prompt+ from a few words: the record keeps the written prompt and the user's own.
-const STREET = gen("street", "generate", PROMPTS.enhanced, undefined, { original_prompt: PROMPTS.idea, request: { prompt: PROMPTS.idea, mode: "generate", images: [], quality: "quality", resolution: "auto", advanced: {}, enhance: true } });
-const REMOVED = gen("street-removed", "inpaint", PROMPTS.remove, "street", { request: inpaintReq(PROMPTS.remove, "street", "remove") });
-const CAT = gen("street-cat", "inpaint", PROMPTS.add, "street-removed", { request: inpaintReq(PROMPTS.add, "street-removed", "add") });
+export const STREET = gen("street", "generate", PROMPTS.enhanced, undefined, { original_prompt: PROMPTS.idea, request: { prompt: PROMPTS.idea, mode: "generate", images: [], quality: "quality", resolution: "auto", advanced: {}, enhance: true } });
+export const REMOVED = gen("street-removed", "inpaint", PROMPTS.remove, "street", { request: inpaintReq(PROMPTS.remove, "street", "remove") });
+export const CAT = gen("street-cat", "inpaint", PROMPTS.add, "street-removed", { request: inpaintReq(PROMPTS.add, "street-removed", "add") });
 const STREET_PROJECT = { id: "current", title: "Italian street café", updatedAt: Date.now() - 20_000, cover: "gen:street", count: 1 };
 const withProject = (count: number, cover: string): State["projects"] => [{ ...STREET_PROJECT, count, cover }, ...PROJECTS];
 const proj = (n: number, cover: string) => ({ projects: withProject(n, cover), projectId: "current" });
 
-const SEND: [number, number] = [1232, 857];
+export const SEND: [number, number] = [1232, 857];
 /** The composer, close: a macro shot past the window's bottom edge, sharp on the composer only. */
 const COMPOSER_CAM: Cam = { x: 850, y: 630, s: 1.8 };
 const COMPOSER_FOCUS: [number, number] = [690, 1010];
 /** The empty project's composer is shorter and lower: centre it. */
-const PROMPT_CAM: Cam = { x: 850, y: 615, s: 1.7 };
+export const PROMPT_CAM: Cam = { x: 850, y: 615, s: 1.7 };
 const PROMPT_FOCUS: [number, number] = [800, 1050];
 /** Where the stage image sits once a result is selected (window px), to fly into it. */
 const STAGE_IMG = { x: 850, y: 319, w: 820 };
@@ -46,7 +46,7 @@ const STAGE_IMG = { x: 850, y: 319, w: 820 };
 const stepAt = (f: number, start: number, every: number) => Math.max(0, Math.min(8, Math.floor((f - start) / every) + 1));
 
 /** Big centred words that rise in with the voice and leave with the next ones. */
-function Words({ items, end }: { items: { text: string; at: number }[]; end: number }) {
+export function Words({ items, end }: { items: { text: string; at: number }[]; end: number }) {
   const f = useCurrentFrame();
   return (
     <>
@@ -80,50 +80,64 @@ export const CREATE_FRAMES = LENGTH.create;
 /** The card in two still shots: the whole card while Prompt+ writes (a slow push), then, from
  * the percentage on, closer, with the logo where the full-frame logo the image hatches from
  * sits (same centre and size, measured), so the cut between them reads as one logo. */
-const CARD_CAM: Cam = { x: 852, y: 360, s: 1.55 };
+export const CARD_CAM: Cam = { x: 852, y: 360, s: 1.55 };
 const CARD_CAM_END = 1.6;
-const LOGO_CAM: Cam = { x: 848, y: 364, s: 1.756 };
-const PILL: [number, number] = [840, 853];
+export const LOGO_CAM: Cam = { x: 848, y: 364, s: 1.756 };
+export const PILL: [number, number] = [840, 853];
+
+/** When things happen in a Prompt+ shot (scene frames): typing, the Prompt+ pill, Send, the
+ * prompt being written and leaving, the logo forming, the hatch. Create uses CREATE; the 0.10
+ * update video its own. */
+export type PromptPlusTimes = Pick<typeof CREATE, "ask" | "pill" | "send" | "job" | "write" | "written" | "leave" | "form" | "done" | "hatch"> & { typeCps?: number };
 
 /** The job's percentage at scene frame `f`: the image starts while Prompt+ is still on screen. */
-const createPct = (f: number) => kf(f, [[CREATE.write, 0], [CREATE.form, 92], [CREATE.done, 100]]);
+const pctFor = (C: PromptPlusTimes) => (f: number) => kf(f, [[C.write, 0], [C.form, 92], [C.done, 100]]);
 
-export function Create() {
-  const f = useCurrentFrame();
-  const base = appState();
-  const cues = sceneCues("create");
-  const C = CREATE;
-  const T0 = C.ask + 2;
-  const T1 = typingDone(PROMPTS.idea, T0, 32);
-  // Prompt+ writes the whole prompt in about two seconds on screen (sped up, like the image).
+/** The job card's clock at scene frame `f`. */
+export function promptPlusCard(f: number, C: PromptPlusTimes): CardMotion {
+  const pct = pctFor(C);
+  // Prompt+ writes the whole prompt between `write` and `written` (sped up, like the image).
   const cps = (PROMPTS.enhanced.length * FPS) / (C.written - C.write);
-  const card: CardMotion = {
+  return {
     t: Math.max(0, f - C.job) / FPS,
-    pctAt: (t) => createPct(C.job + t * FPS),
+    pctAt: (t) => pct(C.job + t * FPS),
     chars: Math.max(0, f - C.write) * (cps / FPS),
     cps,
     leave: prog(f, C.leave, 21, (x) => x),
     hatchMs: f >= C.hatch ? ((f - C.hatch) * 1000) / FPS : null,
   };
-  const request = { prompt: PROMPTS.idea, mode: "generate" as const, images: [], quality: "quality" as const, resolution: "auto" as const, advanced: {}, enhance: true };
+}
 
-  const view = (t: number) => {
-    let state: State;
-    const composer = { ...base.composer, enhance: t >= C.pill };
-    if (t < C.job) {
-      state = appState({ composer: { ...composer, prompt: typed(PROMPTS.idea, t, T0, 32) } });
-    } else if (t < C.hatch) {
-      const pct = createPct(t);
-      const j = jobItem("j-street", "generate", PROMPTS.idea, "street", undefined, Math.min(8, Math.floor((pct / 100) * 8)));
-      const writing = t < C.write + 40;
-      // The prompt is written while the image is being made; it stays on screen until it leaves.
-      const job = { ...j.job, status: writing ? ("enhancing_prompt" as const) : j.job.status, step: writing ? null : j.job.step, enhanced_prompt: t < C.leave + 21 ? PROMPTS.enhanced : null };
-      state = appState({ session: [{ ...j.item, request }], selected: "j-street", jobs: { "j-street": job }, composer, ...proj(1, "gen:street") });
-    } else {
-      state = appState({ session: [genItem(STREET)], selected: "street", composer, ...proj(1, "gen:street") });
-    }
-    return <AppWindow state={state} width={1440} height={900} card={card} />;
-  };
+/** The window at scene frame `t`: the words typed, the job with Prompt+ writing, then the image. */
+export function promptPlusView(t: number, C: PromptPlusTimes, card: CardMotion, size: { width: number; height: number } = { width: 1440, height: 900 }) {
+  const base = appState();
+  const cpsType = C.typeCps ?? 32;
+  const request = { prompt: PROMPTS.idea, mode: "generate" as const, images: [], quality: "quality" as const, resolution: "auto" as const, advanced: {}, enhance: true };
+  let state: State;
+  const composer = { ...base.composer, enhance: t >= C.pill };
+  if (t < C.job) {
+    state = appState({ composer: { ...composer, prompt: typed(PROMPTS.idea, t, C.ask + 2, cpsType) } });
+  } else if (t < C.hatch) {
+    const pct = pctFor(C)(t);
+    const j = jobItem("j-street", "generate", PROMPTS.idea, "street", undefined, Math.min(8, Math.floor((pct / 100) * 8)));
+    const writing = t < C.write + 40;
+    // The prompt is written while the image is being made; it stays on screen until it leaves.
+    const job = { ...j.job, status: writing ? ("enhancing_prompt" as const) : j.job.status, step: writing ? null : j.job.step, enhanced_prompt: t < C.leave + 21 ? PROMPTS.enhanced : null };
+    state = appState({ session: [{ ...j.item, request }], selected: "j-street", jobs: { "j-street": job }, composer, ...proj(1, "gen:street") });
+  } else {
+    state = appState({ session: [genItem(STREET)], selected: "street", composer, ...proj(1, "gen:street") });
+  }
+  return <AppWindow state={state} {...size} card={card} />;
+}
+
+export function Create() {
+  const f = useCurrentFrame();
+  const cues = sceneCues("create");
+  const C = CREATE;
+  const T0 = C.ask + 2;
+  const T1 = typingDone(PROMPTS.idea, T0, 32);
+  const card = promptPlusCard(f, C);
+  const view = (t: number) => promptPlusView(t, C, card);
 
   const enter = prog(f, 0, 34);
   const typingCam = camAt(f, [

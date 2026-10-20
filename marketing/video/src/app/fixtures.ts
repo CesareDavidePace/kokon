@@ -2,7 +2,7 @@
 // public/img. Everything a scene shows goes through the app's own components.
 import { emptyComposer, type Composer } from "../../../../src/lib/logic";
 import { getState, type SessionItem, type State } from "../mocks/store";
-import type { GenerationRecord, GenerationRequest, InpaintAction, JobView, ResolvedMode } from "../../../../src/lib/types";
+import type { GenerationRecord, GenerationRequest, InpaintAction, JobView, LoraItem, ResolvedMode } from "../../../../src/lib/types";
 
 export const SIZES: Record<string, [number, number]> = {
   street: [2752, 1536],
@@ -177,3 +177,22 @@ export function appState(patch: Partial<State> = {}): State {
     ...patch,
   };
 }
+
+/** The app with Settings open on the LoRA (beta) tab (Settings also reads the service's version). */
+export const settingsState = (patch: Partial<State> = {}): State =>
+  appState({ overlay: "settings", settingsTab: "lora", loras: [LORA], status: { server: { text_generation: true }, service: { version: "0.10.0" } } as unknown as State["status"], ...patch });
+
+/** A LoRA the user has loaded in Settings → LoRA (beta): a stand-in name, no real file. */
+export const LORA: LoraItem = {
+  id: "film-look",
+  name: "Film look",
+  source: String.raw`C:\Users\you\Downloads\film-look.safetensors`,
+  weight: 0.7,
+  triggerWords: "analog film photo",
+  onByDefault: false,
+  size: 84_200_000,
+  warning: null,
+  notes: [],
+  addedAt: "2026-10-20T09:00:00Z",
+  available: true,
+};

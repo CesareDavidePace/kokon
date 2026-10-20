@@ -52,28 +52,36 @@ export const beatFrame = (k: number) => Math.round((BEAT0 + k * BEAT) * FPS);
 // Voice-over: public/voice/NN.wav from marketing/audio/gen_voice.py; voice.json holds where each
 // sentence starts and ends in its file (seconds).
 // ---------------------------------------------------------------------------------------------
-type Lines = Record<string, { dur: number; sentences: [number, number][] }>;
-const LINES = voice as unknown as Lines;
+export type Lines = Record<string, { dur: number; sentences: [number, number][] }>;
+/** A voice-over: the folder of its files in public/ (NN.wav per line) and where each sentence is. */
+export interface VoiceSet {
+  dir: string;
+  lines: Lines;
+}
+export const LAUNCH_VOICE: VoiceSet = { dir: "voice", lines: voice as unknown as Lines };
 
-/** A piece of one line: sentences `from`..`to` (inclusive), starting at main-timeline frame `at`. */
+/** A piece of one line: sentences `from`..`to` (inclusive), starting at main-timeline frame `at`.
+ * `set`: the voice-over it comes from (the launch film's by default). */
 export interface Cue {
   line: number;
   from: number;
   to: number;
   at: number;
+  set?: VoiceSet;
 }
 
+const linesOf = (c: Cue) => (c.set ?? LAUNCH_VOICE).lines[String(c.line)].sentences;
 /** Seconds into the line's file where the cue's sentences start and end. */
 export function cueSpan(c: Cue): [number, number] {
-  const s = LINES[String(c.line)].sentences;
+  const s = linesOf(c);
   return [s[c.from][0], s[c.to][1]];
 }
 export const cueFrames = (c: Cue) => Math.ceil((cueSpan(c)[1] - cueSpan(c)[0]) * FPS);
 /** Frame (main timeline) where sentence `i` of the cue's line starts, when played from this cue. */
-export const sentenceAt = (c: Cue, i: number) => c.at + Math.round((LINES[String(c.line)].sentences[i][0] - cueSpan(c)[0]) * FPS);
+export const sentenceAt = (c: Cue, i: number) => c.at + Math.round((linesOf(c)[i][0] - cueSpan(c)[0]) * FPS);
 
 const cue = (scene: SceneName, line: number, local: number, from = 0, to = from): Cue => ({ line, from, to, at: START[scene] + local });
-const all = (scene: SceneName, line: number, local: number): Cue => cue(scene, line, local, 0, LINES[String(line)].sentences.length - 1);
+const all = (scene: SceneName, line: number, local: number): Cue => cue(scene, line, local, 0, LAUNCH_VOICE.lines[String(line)].sentences.length - 1);
 
 // Scene-local frames where things happen that the voice names. Scenes import these too.
 // Create with Prompt+: a few words typed, Prompt+ on, Send on beat 10 and a cut to the card; it

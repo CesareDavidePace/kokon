@@ -41,7 +41,7 @@ interface MarkLayout {
   h: number;
 }
 
-function markLayout(w: number, h: number): MarkLayout {
+export function markLayout(w: number, h: number): MarkLayout {
   let sh = h * 0.48;
   sh = Math.min(sh, (w * 0.8 * STEM_H) / 1024, (w * 0.5) / STEM_RATIO);
   const scale = sh / STEM_H;
@@ -66,7 +66,7 @@ function mapPath(d: string, f: (x: number, y: number) => [number, number]): stri
 }
 
 /** The mark at `left`/`top`/`scale` with its wings grown to `up`/`down` (0..1): one path. */
-function markPath(left: number, top: number, scale: number, up: number, down: number): string {
+export function markPath(left: number, top: number, scale: number, up: number, down: number): string {
   const toPx = (x: number, y: number): [number, number] => [left + x * scale, top + y * scale];
   const grow = (root: [number, number], k: number) => (x: number, y: number) => toPx(root[0] + (x - root[0]) * k, root[1] + (y - root[1]) * k);
   return mapPath(STEM, toPx) + (up > 0.001 ? mapPath(WING_UP, grow(UP_ROOT, up)) : "") + (down > 0.001 ? mapPath(WING_DOWN, grow(DOWN_ROOT, down)) : "");
@@ -79,9 +79,9 @@ const easeInOut = (v: number) => (v < 0.5 ? 4 * v * v * v : 1 - Math.pow(-2 * v 
 const easeOutBack = (v: number) => 1 + 2.2 * Math.pow(v - 1, 3) + 1.2 * Math.pow(v - 1, 2);
 
 /** The logo forming: the stem steps left while the wings grow (ms). */
-const FORM_MS = 700;
+export const FORM_MS = 700;
 /** Shift and wing growth at `ms` after the logo started forming. */
-function formingAt(ms: number) {
+export function formingAt(ms: number) {
   return {
     shift: easeInOut(clamp01(ms / FORM_MS)),
     up: easeOutBack(clamp01((ms - 120) / (FORM_MS - 120))),
@@ -102,10 +102,10 @@ function radiusAt(u: number, m: MarkLayout): number {
   return Math.sqrt(Math.max(0, r * r - d * d));
 }
 
-interface Thread { turns: number; dir: number; phase: number; spin: number; u0: number; u1: number; birth: number; loose: number; width: number; alpha: number; born: number | null }
+export interface Thread { turns: number; dir: number; phase: number; spin: number; u0: number; u1: number; birth: number; loose: number; width: number; alpha: number; born: number | null }
 
 /** Same threads on every render: a small seeded generator. */
-function makeThreads(n: number): Thread[] {
+export function makeThreads(n: number): Thread[] {
   let seed = 0x4b6f6b6f; // "Koko"
   const rnd = () => {
     seed = (seed + 0x6d2b79f5) | 0;
@@ -131,8 +131,82 @@ function makeThreads(n: number): Thread[] {
   }));
 }
 
-const THREADS = 120;
+export const THREADS = 120;
 const POINTS = 72;
+
+/** One frame of the cocoon on `ctx`: `t` seconds since the card appeared, `formMs` since the
+ * logo started forming (null: not yet). Threads remember when they were spun in (`born`). */
+export function drawCocoon(ctx: CanvasRenderingContext2D, threads: Thread[], o: { w: number; h: number; dpr: number; ink: string; t: number; pct: number; formMs: number | null; still: boolean }) {
+  const { t, still, dpr, ink } = o;
+  const pctNow = o.pct;
+  const size = { w: o.w, h: o.h };
+  const p = clamp01(pctNow / 100);
+  const formed = o.formMs !== null;
+  const f = !formed ? { shift: 0, up: 0, down: 0 } : still ? { shift: 1, up: 1, down: 1 } : formingAt(o.formMs!);
+  // Tightness eases in: loose orbits at the start, a closed cocoon near the end; past half
+  // way the silk fills in until the cocoon is the solid stem (at ~90 %, or when forming).
+  const tight = 1 - Math.pow(1 - p, 1.6);
+  const solid = formed ? 1 : easeInOut(clamp01((p - 0.5) / 0.4));
+  const m = markLayout(size.w, size.h);
+  const left = m.leftCocoon + (m.leftLogo - m.leftCocoon) * f.shift;
+  const dx = left - m.leftCocoon;
+  const breathe = still ? 1 : 1 + Math.sin(t * 1.3) * 0.008 * (1 - solid);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, size.w, size.h);
+  ctx.strokeStyle = ink;
+  ctx.fillStyle = ink;
+  ctx.lineCap = "round";
+
+  // The body: a faint fill that thickens with the silk, solid at the end; then the wings.
+  ctx.globalAlpha = 0.025 + 0.06 * tight + (1 - 0.025 - 0.06 * tight) * solid;
+  ctx.fill(new Path2D(markPath(left, m.top, m.scale, f.up, f.down)));
+
+  const threadAlpha = 1 - solid;
+  if (threadAlpha > 0.01) {
+    for (const th of threads) {
+      if (pctNow < th.birth && !still) continue;
+      if (th.born === null) th.born = t;
+      const grow = still ? 1 : Math.min(1, (t - th.born) / 1.8);
+      const slack = (1 - tight) * th.loose;
+      const rMul = (1 + slack * 1.1) * breathe;
+      const yMul = 1 + slack * 0.35;
+      const front = new Path2D();
+      const back = new Path2D();
+      let side = 0;
+      let hx = 0;
+      let hy = 0;
+      for (let k = 0; k <= POINTS; k++) {
+        const s = (k / POINTS) * grow;
+        const u = th.u0 + (th.u1 - th.u0) * s;
+        const phi = th.phase + th.dir * th.turns * Math.PI * 2 * s + th.spin * t;
+        const r = radiusAt(u, m) * rMul + slack * m.w * 0.15 * Math.sin(phi * 2 + th.phase);
+        const x = m.cx + dx + r * Math.cos(phi);
+        const y = m.cy + u * (m.h / 2) * yMul;
+        const z = Math.sin(phi) >= 0 ? 1 : -1;
+        const path = z > 0 ? front : back;
+        if (k === 0) path.moveTo(x, y);
+        else if (z !== side) path.moveTo(hx, hy); // join front and back across the edge
+        path.lineTo(x, y);
+        side = z;
+        hx = x;
+        hy = y;
+      }
+      ctx.lineWidth = th.width;
+      ctx.globalAlpha = th.alpha * 0.35 * threadAlpha;
+      ctx.stroke(back);
+      ctx.globalAlpha = th.alpha * (0.7 + 0.3 * tight) * threadAlpha;
+      ctx.stroke(front);
+      // The spinning end of a thread still being laid: a small glint.
+      if (grow < 1) {
+        ctx.globalAlpha = 0.8 * threadAlpha;
+        ctx.beginPath();
+        ctx.arc(hx, hy, 1.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+  ctx.globalAlpha = 1;
+}
 
 /** The cocoon behind a job in progress (`pct` 0..100). For an edit the source shows in black
  * and white inside it, coming into focus, until the silk fills in. `form` turns the filled
@@ -175,73 +249,9 @@ export function Cocoon({ src, pct, form, dim }: { src?: string; pct: number; for
         lastInk = now;
       }
       const { pct: pctNow, form: formNow } = live.current;
-      const p = clamp01(pctNow / 100);
       if (formNow && formStart === null) formStart = now;
-      const f = formStart === null ? { shift: 0, up: 0, down: 0 } : still ? { shift: 1, up: 1, down: 1 } : formingAt(now - formStart);
       if (formStart !== null && now - formStart >= FORM_MS) logoFormedAt = now;
-      // Tightness eases in: loose orbits at the start, a closed cocoon near the end; past half
-      // way the silk fills in until the cocoon is the solid stem (at ~90 %, or when forming).
-      const tight = 1 - Math.pow(1 - p, 1.6);
-      const solid = formStart !== null ? 1 : easeInOut(clamp01((p - 0.5) / 0.4));
-      const m = markLayout(size.w, size.h);
-      const left = m.leftCocoon + (m.leftLogo - m.leftCocoon) * f.shift;
-      const dx = left - m.leftCocoon;
-      const breathe = still ? 1 : 1 + Math.sin(t * 1.3) * 0.008 * (1 - solid);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, size.w, size.h);
-      ctx.strokeStyle = ink;
-      ctx.fillStyle = ink;
-      ctx.lineCap = "round";
-
-      // The body: a faint fill that thickens with the silk, solid at the end; then the wings.
-      ctx.globalAlpha = 0.025 + 0.06 * tight + (1 - 0.025 - 0.06 * tight) * solid;
-      ctx.fill(new Path2D(markPath(left, m.top, m.scale, f.up, f.down)));
-
-      const threadAlpha = 1 - solid;
-      if (threadAlpha > 0.01) {
-        for (const th of threads) {
-          if (pctNow < th.birth && !still) continue;
-          if (th.born === null) th.born = t;
-          const grow = still ? 1 : Math.min(1, (t - th.born) / 1.8);
-          const slack = (1 - tight) * th.loose;
-          const rMul = (1 + slack * 1.1) * breathe;
-          const yMul = 1 + slack * 0.35;
-          const front = new Path2D();
-          const back = new Path2D();
-          let side = 0;
-          let hx = 0;
-          let hy = 0;
-          for (let k = 0; k <= POINTS; k++) {
-            const s = (k / POINTS) * grow;
-            const u = th.u0 + (th.u1 - th.u0) * s;
-            const phi = th.phase + th.dir * th.turns * Math.PI * 2 * s + th.spin * t;
-            const r = radiusAt(u, m) * rMul + slack * m.w * 0.15 * Math.sin(phi * 2 + th.phase);
-            const x = m.cx + dx + r * Math.cos(phi);
-            const y = m.cy + u * (m.h / 2) * yMul;
-            const z = Math.sin(phi) >= 0 ? 1 : -1;
-            const path = z > 0 ? front : back;
-            if (k === 0) path.moveTo(x, y);
-            else if (z !== side) path.moveTo(hx, hy); // join front and back across the edge
-            path.lineTo(x, y);
-            side = z;
-            hx = x;
-            hy = y;
-          }
-          ctx.lineWidth = th.width;
-          ctx.globalAlpha = th.alpha * 0.35 * threadAlpha;
-          ctx.stroke(back);
-          ctx.globalAlpha = th.alpha * (0.7 + 0.3 * tight) * threadAlpha;
-          ctx.stroke(front);
-          // The spinning end of a thread still being laid: a small glint.
-          if (grow < 1) {
-            ctx.globalAlpha = 0.8 * threadAlpha;
-            ctx.beginPath();
-            ctx.arc(hx, hy, 1.4, 0, Math.PI * 2);
-            ctx.fill();
-          }
-        }
-      }
-      ctx.globalAlpha = 1;
+      drawCocoon(ctx, threads, { w: size.w, h: size.h, dpr, ink, t, pct: pctNow, formMs: formStart === null ? null : now - formStart, still });
       if (!still || formStart === null) raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);
@@ -302,7 +312,7 @@ function takeFresh(id: string): boolean {
   return at !== undefined && Date.now() - at < 8000;
 }
 
-function clearMask(b: HTMLElement) {
+export function clearMask(b: HTMLElement) {
   b.style.clipPath = "";
   b.style.filter = "";
   for (const p of ["mask-image", "-webkit-mask-image", "mask-size", "-webkit-mask-size", "mask-repeat", "-webkit-mask-repeat"]) b.style.removeProperty(p);
@@ -312,6 +322,86 @@ function clearMask(b: HTMLElement) {
 const FILL_MS = 450;
 const HOLD_MS = 350;
 const ZOOM_MS = 950;
+
+/** The parts of a hatching result frame (the markup of `Hatch`). */
+export interface HatchEls {
+  el: HTMLDivElement;
+  body: HTMLDivElement;
+  canvasBox: HTMLDivElement | null;
+  veilBox: HTMLDivElement | null;
+  veil: SVGSVGElement | null;
+  veilPath: SVGPathElement | null;
+  ink: SVGPathElement | null;
+}
+
+/** Where the hatching timeline ends (ms), when it starts `formFrom` ms into the logo forming. */
+export const hatchEnd = (formFrom: number) => FORM_MS - formFrom + FILL_MS + HOLD_MS + ZOOM_MS;
+
+/** The hatching at `tl` ms on its timeline (which waits while the image decodes), started
+ * `formFrom` ms into the logo forming. The canvas is the frame's own image box, measured on
+ * each call since the frame sizes itself after mounting; until then the same fit computed. The
+ * mark sits on it like on the card. */
+export function paintHatch(e: HatchEls, aspect: number, tl: number, formFrom: number) {
+  const { el, body: b } = e;
+  const W = el.clientWidth;
+  const H = el.clientHeight;
+  let r = { w: Math.min(W, H * aspect), h: 0, x: 0, y: 0 };
+  r = { ...r, h: r.w / aspect, x: (W - r.w) / 2, y: (H - r.w / aspect) / 2 };
+  const shown = b.querySelector<HTMLElement>(".image-box, .compare-box");
+  if (shown && shown.offsetWidth > 0) {
+    // Client rects include any scaling of an ancestor; the styles set below are layout pixels.
+    const a = shown.getBoundingClientRect();
+    const o = el.getBoundingClientRect();
+    const k = el.offsetWidth > 0 ? o.width / el.offsetWidth : 1;
+    r = { w: a.width / k, h: a.height / k, x: (a.left - o.left) / k, y: (a.top - o.top) / k };
+  }
+  const { w: iw, h: ih, x: ox, y: oy } = r;
+  const m = markLayout(iw, ih);
+  for (const box of [e.canvasBox, e.veilBox]) if (box) Object.assign(box.style, { left: `${ox}px`, top: `${oy}px`, width: `${iw}px`, height: `${ih}px` });
+  const fillAt = FORM_MS - formFrom;
+  const zoomAt = fillAt + FILL_MS + HOLD_MS;
+  const f = formingAt(formFrom + tl);
+  const z = easeInOut(clamp01((tl - zoomAt) / ZOOM_MS));
+  const left = ox + m.leftCocoon + (m.leftLogo - m.leftCocoon) * f.shift;
+  const top = oy + m.top;
+  let d: string;
+  if (z <= 0) {
+    d = markPath(left, top, m.scale, f.up, f.down);
+    b.style.clipPath = `path('${d}')`;
+  } else {
+    // The logo grows while drifting to the canvas centre, and the canvas around it (a veil
+    // with the logo cut out) softens at the edge and fades away: the image dissolves out of
+    // the logo instead of being cut by it. A path, not a mask image, so no frame waits on a
+    // decode.
+    const k = 1 + (ZOOM_TO - 1) * z;
+    const c0x = left + 512 * m.scale;
+    const c0y = top + 512 * m.scale;
+    const cx = c0x + (ox + iw / 2 - c0x) * z;
+    const cy = c0y + (oy + ih / 2 - c0y) * z;
+    const s = m.scale * k;
+    d = markPath(cx - 512 * s, cy - 512 * s, s, 1, 1);
+    b.style.clipPath = "";
+    const v = e.veil;
+    const vp = e.veilPath;
+    if (v && vp) {
+      const feather = Math.min(iw, ih) * 0.05 * easeOut(z);
+      const pad = feather * 3 + 2;
+      const hole = markPath(cx - ox - 512 * s, cy - oy - 512 * s, s, 1, 1);
+      vp.setAttribute("d", `M${-pad} ${-pad} H${iw + pad} V${ih + pad} H${-pad} Z ` + hole);
+      v.style.display = "block";
+      v.style.opacity = String(1 - easeInOut(clamp01((z - 0.15) / 0.85)));
+      v.style.filter = feather > 0.3 ? `blur(${feather.toFixed(1)}px)` : "";
+    }
+  }
+  // The solid logo gives way to the image inside it.
+  const fill = easeOut(clamp01((tl - fillAt) / FILL_MS));
+  if (e.ink) {
+    e.ink.setAttribute("d", d);
+    e.ink.style.opacity = String(1 - fill);
+  }
+  const blur = 6 * (1 - easeOut(clamp01((tl - fillAt) / (FILL_MS + HOLD_MS + ZOOM_MS * 0.5))));
+  b.style.filter = blur > 0.05 ? `blur(${blur.toFixed(2)}px)` : "";
+}
 
 /** Wraps a result frame. The first time a fresh result is shown it hatches, on the canvas the
  * job was made on: from the solid logo (formed here first if the job ended before its card
@@ -332,30 +422,9 @@ export function Hatch({ id, aspect, children }: { id?: string; aspect: number; c
     const el = ref.current;
     const b = body.current;
     if (!on || !el || !b) return;
-    // The canvas: the frame's own image box, measured each frame since the frame sizes itself
-    // after mounting; until then the same fit computed. The mark sits on it like on the card.
-    let iw = 0, ih = 0, ox = 0, oy = 0;
-    let m = markLayout(1, 1);
-    const measure = () => {
-      const W = el.clientWidth;
-      const H = el.clientHeight;
-      let r = { w: Math.min(W, H * aspect), h: 0, x: 0, y: 0 };
-      r = { ...r, h: r.w / aspect, x: (W - r.w) / 2, y: (H - r.w / aspect) / 2 };
-      const shown = b.querySelector<HTMLElement>(".image-box, .compare-box");
-      if (shown && shown.offsetWidth > 0) {
-        const a = shown.getBoundingClientRect();
-        const o = el.getBoundingClientRect();
-        r = { w: a.width, h: a.height, x: a.left - o.left, y: a.top - o.top };
-      }
-      if (r.w === iw && r.h === ih && r.x === ox && r.y === oy) return;
-      [iw, ih, ox, oy] = [r.w, r.h, r.x, r.y];
-      m = markLayout(iw, ih);
-      for (const box of [canvasBox.current, veilBox.current]) if (box) Object.assign(box.style, { left: `${ox}px`, top: `${oy}px`, width: `${iw}px`, height: `${ih}px` });
-    };
     const formed = performance.now() - logoFormedAt < 4000;
     const formFrom = formed ? FORM_MS : 0;
     const fillAt = FORM_MS - formFrom;
-    const zoomAt = fillAt + FILL_MS + HOLD_MS;
     const start = performance.now();
     // The solid logo holds until the image inside it is decoded: otherwise the ink fades onto an
     // empty canvas and the image pops in afterwards (the logo seems to appear twice).
@@ -366,53 +435,12 @@ export function Hatch({ id, aspect, children }: { id?: string; aspect: number; c
     const giveUp = window.setTimeout(ready, 5000);
     let raf = 0;
     const frame = (now: number) => {
-      measure();
       const t = now - start;
-      const f = formingAt(formFrom + t);
       // The timeline after the logo has formed, paused while the image is not ready.
       const wait = readyAt === null ? Math.max(0, t - fillAt) : Math.max(0, readyAt - start - fillAt);
       const tl = t <= fillAt ? t : Math.max(fillAt, t - wait);
-      const z = easeInOut(clamp01((tl - zoomAt) / ZOOM_MS));
-      const left = ox + m.leftCocoon + (m.leftLogo - m.leftCocoon) * f.shift;
-      const top = oy + m.top;
-      let d: string;
-      if (z <= 0) {
-        d = markPath(left, top, m.scale, f.up, f.down);
-        b.style.clipPath = `path('${d}')`;
-      } else {
-        // The logo grows while drifting to the canvas centre, and the canvas around it (a veil
-        // with the logo cut out) softens at the edge and fades away: the image dissolves out of
-        // the logo instead of being cut by it. A path, not a mask image, so no frame waits on a
-        // decode.
-        const k = 1 + (ZOOM_TO - 1) * z;
-        const c0x = left + 512 * m.scale;
-        const c0y = top + 512 * m.scale;
-        const cx = c0x + (ox + iw / 2 - c0x) * z;
-        const cy = c0y + (oy + ih / 2 - c0y) * z;
-        const s = m.scale * k;
-        d = markPath(cx - 512 * s, cy - 512 * s, s, 1, 1);
-        b.style.clipPath = "";
-        const v = veil.current;
-        const vp = veilPath.current;
-        if (v && vp) {
-          const feather = Math.min(iw, ih) * 0.05 * easeOut(z);
-          const pad = feather * 3 + 2;
-          const hole = markPath(cx - ox - 512 * s, cy - oy - 512 * s, s, 1, 1);
-          vp.setAttribute("d", `M${-pad} ${-pad} H${iw + pad} V${ih + pad} H${-pad} Z ` + hole);
-          v.style.display = "block";
-          v.style.opacity = String(1 - easeInOut(clamp01((z - 0.15) / 0.85)));
-          v.style.filter = feather > 0.3 ? `blur(${feather.toFixed(1)}px)` : "";
-        }
-      }
-      // The solid logo gives way to the image inside it.
-      const fill = easeOut(clamp01((tl - fillAt) / FILL_MS));
-      if (ink.current) {
-        ink.current.setAttribute("d", d);
-        ink.current.style.opacity = String(1 - fill);
-      }
-      const blur = 6 * (1 - easeOut(clamp01((tl - fillAt) / (FILL_MS + HOLD_MS + ZOOM_MS * 0.5))));
-      b.style.filter = blur > 0.05 ? `blur(${blur.toFixed(2)}px)` : "";
-      if (tl < zoomAt + ZOOM_MS) raf = requestAnimationFrame(frame);
+      paintHatch({ el, body: b, canvasBox: canvasBox.current, veilBox: veilBox.current, veil: veil.current, veilPath: veilPath.current, ink: ink.current }, aspect, tl, formFrom);
+      if (tl < hatchEnd(formFrom)) raf = requestAnimationFrame(frame);
       else {
         clearMask(b);
         setRunning(false);

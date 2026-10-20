@@ -9,6 +9,7 @@ import { MAIN_FRAMES, Main } from "./scenes/Main";
 import { MONTAGE_FRAMES, Montage } from "./scenes/Montage";
 import { Hook, Intro } from "./scenes/Opening";
 import { Banner } from "./scenes/Banner";
+import { Update010, UPDATE_FRAMES } from "./scenes/Update010";
 import { LENGTH } from "./app/timeline";
 
 const withPreload = (C: ComponentType) => () => (
@@ -23,6 +24,7 @@ export function Root() {
   return (
     <>
       <Composition id="KokonLaunch" component={withPreload(Main)} durationInFrames={MAIN_FRAMES} {...S} />
+      <Composition id="Update010" component={withPreload(Update010)} durationInFrames={UPDATE_FRAMES} {...S} />
       <Composition id="Montage" component={withPreload(Montage)} durationInFrames={MONTAGE_FRAMES} {...S} />
       <Composition id="Agent" component={withPreload(Agent)} durationInFrames={AGENT_FRAMES} {...S} />
       <Composition id="Hardware" component={withPreload(Hardware)} durationInFrames={HARDWARE_FRAMES} {...S} />
@@ -32,7 +34,7 @@ export function Root() {
       <Composition id="Create" component={withPreload(Create)} durationInFrames={CREATE_FRAMES} {...S} />
       <Composition id="Region" component={withPreload(Region)} durationInFrames={REGION_FRAMES} {...S} />
       <Composition id="Versions" component={withPreload(Versions)} durationInFrames={VERSIONS_FRAMES} {...S} />
-      <Composition id="Layout" component={Layout} durationInFrames={4} {...S} />
+      <Composition id="Layout" component={Layout} durationInFrames={8} {...S} />
       <Composition id="Banner" component={withPreload(Banner)} durationInFrames={1} fps={30} width={2560} height={1440} />
     </>
   );

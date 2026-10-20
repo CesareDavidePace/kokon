@@ -110,9 +110,18 @@ pub struct ImgGenRequest {
     /// e.g. "threshold=0.2".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_option: Option<String>,
+    /// LoRAs, by path relative to the server's `--lora-model-dir`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub lora: Vec<LoraParam>,
     pub output_format: String,
     /// We write our own metadata after post-processing.
     pub embed_image_metadata: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct LoraParam {
+    pub path: String,
+    pub multiplier: f32,
 }
 
 pub fn b64(bytes: &[u8]) -> String {
@@ -734,6 +743,7 @@ mod tests {
             hires: None,
             cache_mode: None,
             cache_option: None,
+            lora: Vec::new(),
             output_format: "png".into(),
             embed_image_metadata: false,
         };

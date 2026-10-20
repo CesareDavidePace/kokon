@@ -339,6 +339,9 @@ pub struct AppConfig {
     /// built-in ones (`enhancer::T2I_SYSTEM_PROMPT`, `enhancer::EDIT_SYSTEM_PROMPT`).
     pub enhancer_t2i_prompt: String,
     pub enhancer_edit_prompt: String,
+    /// The user's LoRAs (Settings → LoRA), each a copy in `lora_dir`. Changed only through the
+    /// LoRA endpoints: a whole-config save keeps the current list (`Engine::set_config`).
+    pub loras: Vec<LoraEntry>,
     /// Opaque UI preferences (last quality, resolution mode, aspect...).
     pub ui: serde_json::Value,
 }
@@ -376,8 +379,45 @@ impl Default for AppConfig {
             vram_override_mib: 0,
             enhancer_t2i_prompt: String::new(),
             enhancer_edit_prompt: String::new(),
+            loras: vec![],
             ui: serde_json::json!({}),
         }
+    }
+}
+
+/// A LoRA the user loaded. Kokon's copy is `<lora_dir>/<id>.safetensors` (see `lora.rs`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct LoraEntry {
+    /// File stem of the copy; also how requests name it.
+    pub id: String,
+    /// Shown in the app (the original file's name until the user renames it).
+    pub name: String,
+    /// The file the user picked (never changed by Kokon).
+    pub source: PathBuf,
+    pub weight: f32,
+    /// Added in front of the prompt when the LoRA is used.
+    pub trigger_words: String,
+    /// On in every new project (and for MCP requests that name no LoRAs).
+    pub on_by_default: bool,
+    /// Size of the copy in bytes.
+    pub size: u64,
+    /// From the check: the LoRA works only in part.
+    pub warning: Option<String>,
+    /// What the copy changed (split layers, alpha).
+    pub notes: Vec<String>,
+    pub added_at: String,
+}
+
+impl Default for LoraEntry {
+    fn default() -> Self {
+        Self { id: String::new(), name: String::new(), source: PathBuf::new(), weight: 1.0, trigger_words: String::new(), on_by_default: false, size: 0, warning: None, notes: vec![], added_at: String::new() }
+    }
+}
+
+impl LoraEntry {
+    pub fn file_name(&self) -> String {
+        format!("{}.safetensors", self.id)
     }
 }
 
@@ -736,6 +776,12 @@ impl AppConfig {
     }
 
     /// Folder of the upscaler (`--hires-upscalers-dir`).
+    /// Kokon's copies of the user's LoRAs (`--lora-model-dir`). Not `models/loras`, where users
+    /// and tools keep their own files: the engine would list those too.
+    pub fn lora_dir(&self) -> PathBuf {
+        self.sdcpp_dir.join("models").join("kokon-loras")
+    }
+
     pub fn upscalers_dir(&self) -> PathBuf {
         crate::catalog::join_rel(&self.sdcpp_dir, crate::catalog::UPSCALERS_SUBDIR)
     }

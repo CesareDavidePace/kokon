@@ -144,6 +144,7 @@ impl Engine {
                     mode,
                     prompt: s.prompt.into(),
                     original_prompt: None,
+                    loras: vec![],
                     negative_prompt: String::new(),
                     seed: s.seed,
                     width: img.width(),

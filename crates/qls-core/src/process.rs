@@ -99,6 +99,10 @@ pub fn build_server_args(cfg: &AppConfig, profile: &ModelProfile) -> Vec<String>
         a.push("--hires-upscalers-dir".into());
         a.push(p(&up_dir));
     }
+    // The user's LoRAs (Kokon's copies); scanned on every request, so a LoRA loaded later
+    // needs no restart.
+    a.push("--lora-model-dir".into());
+    a.push(p(&cfg.lora_dir()));
     if cfg.gpu_backend != crate::config::GpuBackend::Metal {
         // Direct convolutions in the upscaler (it only affects UNet/ControlNet models besides,
         // never Qwen). MoSR at 1472², 768 px tiles on an RTX 5070 Ti: CUDA 3.8 s / +2.4 GB →

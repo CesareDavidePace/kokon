@@ -56,6 +56,9 @@ pub struct GenerationRecord {
     /// The user's own prompt, when the prompt enhancer rewrote it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_prompt: Option<String>,
+    /// LoRAs the image was made with.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub loras: Vec<crate::lora::AppliedLora>,
     pub negative_prompt: String,
     pub seed: i64,
     pub width: u32,
@@ -115,6 +118,10 @@ impl GenerationRecord {
         ));
         if let Some(st) = self.strength {
             s.push_str(&format!(", Denoising strength: {st}"));
+        }
+        if !self.loras.is_empty() {
+            let list: Vec<String> = self.loras.iter().map(|l| format!("{} ({})", l.name.replace([',', ':'], " "), l.weight)).collect();
+            s.push_str(&format!(", LoRA: {}", list.join(" + ")));
         }
         if let Some(p) = &self.pipeline
             && let Some(base) = p.base
@@ -441,6 +448,7 @@ mod tests {
             created_at: created.into(),
             mode: "generate".into(),
             original_prompt: None,
+            loras: vec![],
             prompt: prompt.into(),
             negative_prompt: "blurry".into(),
             seed: 1234,

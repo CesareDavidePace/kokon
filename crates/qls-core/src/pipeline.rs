@@ -195,6 +195,7 @@ pub fn prepare(plan: &Plan, prompt: &str, seed: i64, images: &[LoadedImage], mas
         hires: None,
         cache_mode: None,
         cache_option: None,
+        lora: Vec::new(),
         output_format: "png".into(),
         embed_image_metadata: false,
     };

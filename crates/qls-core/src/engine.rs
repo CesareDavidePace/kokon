@@ -8,15 +8,16 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use image::GrayImage;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::{Notify, broadcast};
 
-use crate::config::AppConfig;
+use crate::config::{AppConfig, LoraEntry};
 use crate::diagnostics::{GpuInfo, query_gpus};
 use crate::enhancer;
 use crate::error::{AppError, AppResult, ErrorCode, translate_generation_failure};
 use crate::geometry::Size;
 use crate::imaging::{self, LoadedImage};
+use crate::lora::{self, AppliedLora};
 use crate::paths;
 use crate::pipeline;
 use crate::planner::{self, GenerationRequest, Mode, OutputFormat, Plan, PlanInputs, ResolutionMode, ResolvedMode};
@@ -45,6 +46,25 @@ impl JobStatus {
     pub fn is_terminal(&self) -> bool {
         matches!(self, Self::Done | Self::Failed | Self::Cancelled)
     }
+}
+
+/// A LoRA as the app lists it.
+#[derive(Debug, Clone, Serialize)]
+pub struct LoraView {
+    #[serde(flatten)]
+    pub entry: LoraEntry,
+    /// Kokon's copy is in the LoRA folder.
+    pub available: bool,
+}
+
+/// Settings of a LoRA to change; missing fields stay as they are.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct LoraPatch {
+    pub name: Option<String>,
+    pub weight: Option<f32>,
+    pub trigger_words: Option<String>,
+    pub on_by_default: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -219,6 +239,8 @@ impl Engine {
 
     /// Replaces the configuration. Returns true when the backend must restart.
     pub fn set_config(&self, mut new: AppConfig) -> AppResult<bool> {
+        // LoRAs change only through `set_loras` (a Settings save may carry an older list).
+        new.loras = self.cfg.read().unwrap().loras.clone();
         // The official profile follows the folder and preset; see `AppConfig::normalize`.
         new.normalize();
         new.validate()?;
@@ -237,6 +259,80 @@ impl Engine {
         drop(g);
         self.place_bundled_upscaler();
         Ok(restart)
+    }
+
+    /// Replaces the LoRA list (callers hold `lora::LIBRARY`).
+    fn set_loras(&self, loras: Vec<LoraEntry>) -> AppResult<()> {
+        let mut new = self.config();
+        new.loras = loras;
+        new.save()?;
+        self.cfg.write().unwrap().loras = new.loras;
+        Ok(())
+    }
+
+    /// Loads a LoRA file the user picked (blocking: checks it and writes Kokon's copy). Loading
+    /// the same file again refreshes the copy and keeps its settings.
+    pub fn add_lora(&self, src: &Path) -> AppResult<LoraEntry> {
+        let _lock = lora::LIBRARY.lock().unwrap_or_else(|e| e.into_inner());
+        let cfg = self.config();
+        let existing = cfg.loras.iter().find(|l| l.source == src);
+        let entry = lora::import(&cfg, src, existing)?;
+        let mut list = cfg.loras.clone();
+        match list.iter_mut().find(|l| l.id == entry.id) {
+            Some(l) => *l = entry.clone(),
+            None => list.push(entry.clone()),
+        }
+        self.set_loras(list)?;
+        Ok(entry)
+    }
+
+    /// Changes a LoRA's settings (name, weight, trigger words, on by default).
+    pub fn update_lora(&self, id: &str, patch: LoraPatch) -> AppResult<LoraEntry> {
+        let _lock = lora::LIBRARY.lock().unwrap_or_else(|e| e.into_inner());
+        let mut list = self.config().loras;
+        let l = list.iter_mut().find(|l| l.id == id).ok_or_else(|| AppError::new(ErrorCode::NotFound, "This LoRA is no longer loaded."))?;
+        if let Some(n) = patch.name {
+            let n = n.trim();
+            if n.is_empty() {
+                return Err(AppError::invalid("Give the LoRA a name."));
+            }
+            l.name = n.chars().take(80).collect();
+        }
+        if let Some(w) = patch.weight {
+            if !w.is_finite() || !(-2.0..=2.0).contains(&w) {
+                return Err(AppError::invalid("A LoRA's strength goes from -2 to 2."));
+            }
+            l.weight = (w * 100.0).round() / 100.0;
+        }
+        if let Some(t) = patch.trigger_words {
+            l.trigger_words = t.trim().chars().take(500).collect();
+        }
+        if let Some(on) = patch.on_by_default {
+            l.on_by_default = on;
+        }
+        let out = l.clone();
+        self.set_loras(list)?;
+        Ok(out)
+    }
+
+    /// Removes a LoRA and Kokon's copy of it (the user's own file stays).
+    pub fn remove_lora(&self, id: &str) -> AppResult<()> {
+        let _lock = lora::LIBRARY.lock().unwrap_or_else(|e| e.into_inner());
+        let cfg = self.config();
+        let Some(l) = cfg.loras.iter().find(|l| l.id == id) else { return Ok(()) };
+        let path = lora::entry_path(&cfg, l);
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(AppError::io("delete", &path, e)),
+        }
+        self.set_loras(cfg.loras.iter().filter(|l| l.id != id).cloned().collect())
+    }
+
+    /// The loaded LoRAs, with whether Kokon's copy is still there.
+    pub fn loras(&self) -> Vec<LoraView> {
+        let cfg = self.config();
+        cfg.loras.iter().map(|l| LoraView { available: lora::entry_path(&cfg, l).is_file(), entry: l.clone() }).collect()
     }
 
     /// Copies the upscaler shipped with the app into the configured folder when it is missing
@@ -677,6 +773,7 @@ impl Engine {
             mode: "lut".into(),
             prompt: String::new(),
             original_prompt: None,
+            loras: vec![],
             negative_prompt: String::new(),
             seed: parent.as_ref().map(|p| p.seed).unwrap_or(0),
             width: out.width(),
@@ -839,6 +936,7 @@ impl Engine {
         let quick_upscale = plan.upscale.is_some();
         let icc = images.first().and_then(|i| i.icc_profile.clone());
         let mut enhanced: Option<String> = None;
+        let mut loras: Vec<AppliedLora> = Vec::new();
 
         let (contents, post) = if quick_upscale {
             // No diffusion: the source itself is enlarged.
@@ -872,6 +970,13 @@ impl Engine {
                 if let Some(text) = &enhanced {
                     sd_req.prompt = pipeline::enhanced_prompt(&request.prompt, text);
                 }
+            }
+
+            // 4c. The user's LoRAs, trigger words in front of the final prompt.
+            loras = self.job_loras(id, &cfg, &request, &caps);
+            if !loras.is_empty() {
+                sd_req.prompt = lora::with_triggers(&sd_req.prompt, &loras);
+                sd_req.lora = lora::request_entries(&loras);
             }
 
             // 5. Submit and follow.
@@ -947,7 +1052,8 @@ impl Engine {
                     return self.maybe_retry_oom(id, err).await;
                 }
             }
-            if !cold_start {
+            // LoRAs slow each step (~19 % for one at 0.7 on Q4_K): not a speed sample.
+            if !cold_start && loras.is_empty() {
                 let key = crate::speed::machine_key(&cfg, self.gpu().as_ref());
                 let predicted = planner::backend_seconds(&plan, cfg.uses_sage_attention());
                 if let Some(f) = self.speed.record(&key, submitted.elapsed().as_secs_f32(), predicted) {
@@ -1008,12 +1114,12 @@ impl Engine {
             if let Some(j) = self.job(id) {
                 plan3.notes = j.notes;
             }
-            let (p, req3, inputs3, mask3, icc3, ws, enh3) = (post.clone(), request.clone(), inputs_meta.clone(), mask_rec.clone(), icc.clone(), workspace.clone(), enhanced.clone());
+            let (p, req3, inputs3, mask3, icc3, ws, enh3, loras3) = (post.clone(), request.clone(), inputs_meta.clone(), mask_rec.clone(), icc.clone(), workspace.clone(), enhanced.clone(), loras.clone());
             let rec = blocking(move || {
                 let final_img = pipeline::finish(content, &p)?;
                 let duration_ms = duration_start.elapsed().as_millis() as u64;
                 let pipeline = (pipeline_rec != PipelineRecord::default()).then_some(pipeline_rec);
-                this.save_result(&final_img, &req3, &plan3, seed + i as i64, &inputs3, mask3.as_ref(), icc3.as_deref(), duration_ms, ws.as_deref(), i, pipeline, original.as_ref(), enh3)
+                this.save_result(&final_img, &req3, &plan3, seed + i as i64, &inputs3, mask3.as_ref(), icc3.as_deref(), duration_ms, ws.as_deref(), i, pipeline, original.as_ref(), enh3, loras3)
             })
             .await?;
             if !request.private {
@@ -1028,6 +1134,20 @@ impl Engine {
             j.view.stage = None;
         });
         Ok(())
+    }
+
+    /// The LoRAs job `id` uses (see `lora::resolve`); skipped ones are noted on the job.
+    fn job_loras(&self, id: &str, cfg: &AppConfig, request: &GenerationRequest, caps: &Capabilities) -> Vec<AppliedLora> {
+        let (loras, notes) = lora::resolve(cfg, request.loras.as_deref());
+        let (loras, notes) = if !loras.is_empty() && !caps.img_feature("lora") {
+            (Vec::new(), vec!["This inference engine can't use LoRAs (update it in Setup); made without them.".to_string()])
+        } else {
+            (loras, notes)
+        };
+        if !notes.is_empty() {
+            self.update(id, |j| j.view.notes.extend(notes));
+        }
+        loras
     }
 
     /// Runs the prompt enhancer for job `id` and streams its text into the job. Returns the
@@ -1268,6 +1388,7 @@ impl Engine {
         mut pipeline: Option<PipelineRecord>,
         original: Option<&image::RgbaImage>,
         enhanced_prompt: Option<String>,
+        loras: Vec<AppliedLora>,
     ) -> AppResult<GenerationRecord> {
         let cfg = self.config();
         let id = new_id();
@@ -1312,6 +1433,7 @@ impl Engine {
             // An enhanced job records the prompt the image was made from, and the user's.
             original_prompt: enhanced_prompt.is_some().then(|| req.prompt.clone()),
             prompt: enhanced_prompt.unwrap_or_else(|| req.prompt.clone()),
+            loras,
             negative_prompt: plan.negative_prompt.clone(),
             seed,
             width: img.width(),
@@ -1510,6 +1632,43 @@ mod tests {
     fn numbered_paths() {
         assert_eq!(numbered(r"C:\a\hero.png", 1), r"C:\a\hero-2.png");
         assert_eq!(numbered("x", 2), "x-3");
+    }
+
+    #[test]
+    fn lora_library_survives_settings_saves() {
+        let dir = tempfile::tempdir().unwrap();
+        // SAFETY: test-only env override, single-threaded setup.
+        unsafe { std::env::set_var("QLS_CONFIG_DIR", dir.path().join("cfg")) };
+        let mut cfg = AppConfig { sdcpp_dir: dir.path().join("sdcpp"), ..AppConfig::default() };
+        cfg.normalize();
+        let model = cfg.profile().diffusion_model.clone();
+        std::fs::create_dir_all(model.parent().unwrap()).unwrap();
+        crate::modelfile::tests::write_gguf(&model, &[], &[], &[("transformer_blocks.0.attn.to_q.weight", 1, &[8, 8])]);
+        // A LoRA for that layer (header only: the copy is byte for byte).
+        let src = dir.path().join("My Style.safetensors");
+        crate::modelfile::tests::write_st(&src, &[("transformer_blocks.0.attn.to_q.lora_A.weight", "BF16", &[4, 8]), ("transformer_blocks.0.attn.to_q.lora_B.weight", "BF16", &[8, 4])]);
+        let e = Engine::new(cfg, dir.path()).unwrap();
+
+        let added = e.add_lora(&src).unwrap();
+        assert_eq!((added.id.as_str(), added.name.as_str(), added.weight), ("my-style", "My Style", 1.0));
+        let copy = e.config().lora_dir().join("my-style.safetensors");
+        assert_eq!(std::fs::read(&copy).unwrap(), std::fs::read(&src).unwrap());
+        e.update_lora("my-style", LoraPatch { weight: Some(0.75), trigger_words: Some(" grainscape ".into()), on_by_default: Some(true), ..Default::default() }).unwrap();
+        assert!(e.update_lora("my-style", LoraPatch { weight: Some(3.0), ..Default::default() }).is_err());
+        // Loading the same file again keeps its settings.
+        assert_eq!(e.add_lora(&src).unwrap().weight, 0.75);
+
+        // Settings saved from an older copy of the config keep the list.
+        let mut stale = e.config();
+        stale.loras.clear();
+        e.set_config(stale).unwrap();
+        let l = &e.loras()[0];
+        assert!(l.available);
+        assert_eq!((l.entry.trigger_words.as_str(), l.entry.on_by_default), ("grainscape", true));
+        assert_eq!(AppConfig::load().loras.len(), 1);
+
+        e.remove_lora("my-style").unwrap();
+        assert!(e.loras().is_empty() && !copy.exists() && src.exists());
     }
 
     #[tokio::test]

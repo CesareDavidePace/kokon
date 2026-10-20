@@ -20,7 +20,7 @@ use qls_core::{
     catalog,
     config::{AppConfig, GpuBackend, OFFICIAL_PROFILE_ID, USER_PROFILE_ID},
     diagnostics,
-    engine::{APP_VERSION, JobView},
+    engine::{APP_VERSION, JobView, LoraPatch},
     error::{AppError, ErrorCode},
     geometry::{ExpansionUnits, Size, aspect_label},
     imaging, installer,
@@ -103,6 +103,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/gallery/{id}/original", get(gallery_original))
         .route("/gallery/{id}/export", post(gallery_export))
         .route("/image-info", post(image_info))
+        .route("/loras", get(loras_list).post(loras_add))
+        .route("/loras/{id}", delete(loras_remove).patch(loras_update))
         .route("/luts", get(luts_list))
         .route("/luts/import", post(luts_import))
         .route("/luts/{name}", delete(luts_remove))
@@ -878,6 +880,33 @@ async fn serve_file(path: &Path, content_type: Option<&str>) -> ApiResult<Respon
         .header(header::CACHE_CONTROL, "private, max-age=31536000, immutable")
         .body(Body::from(bytes))
         .unwrap())
+}
+
+async fn loras_list(State(s): St) -> Json<Value> {
+    let cfg = s.engine.config();
+    Json(json!({ "items": s.engine.loras(), "dir": cfg.lora_dir(), "max_active": qls_core::lora::MAX_ACTIVE }))
+}
+
+/// Loads a LoRA file the user picked: checked against the image model, then copied into
+/// Kokon's LoRA folder (the user's file stays as it is).
+async fn loras_add(State(s): St, Json(b): Json<PathBody>) -> ApiResult<Json<Value>> {
+    let p = PathBuf::from(&b.path);
+    if !p.is_absolute() || !p.is_file() {
+        return Err(AppError::new(ErrorCode::InvalidInput, "Choose a LoRA file (.safetensors).").into());
+    }
+    let engine = s.engine.clone();
+    let entry = tokio::task::spawn_blocking(move || engine.add_lora(&p)).await.map_err(AppError::internal)??;
+    Ok(Json(serde_json::to_value(entry).unwrap()))
+}
+
+async fn loras_update(State(s): St, AxPath(id): AxPath<String>, Json(b): Json<LoraPatch>) -> ApiResult<Json<Value>> {
+    let entry = s.engine.update_lora(&id, b)?;
+    Ok(Json(serde_json::to_value(entry).unwrap()))
+}
+
+async fn loras_remove(State(s): St, AxPath(id): AxPath<String>) -> ApiResult<Json<Value>> {
+    s.engine.remove_lora(&id)?;
+    Ok(Json(json!({ "removed": id })))
 }
 
 async fn luts_list(State(s): St) -> Json<Value> {

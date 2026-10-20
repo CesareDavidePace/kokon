@@ -293,31 +293,29 @@ function LoraBadge() {
   const on = activeLoras({ loras: choice }, all);
   const names = all.filter((l) => on.includes(l.id)).map((l) => `${l.name} (${weightLabel(l.weight)})`);
   const title = on.length ? `LoRA on in this project: ${names.join(", ")}` : "LoRA: none on in this project";
-  const label = on.length === 1 ? all.find((l) => l.id === on[0])?.name ?? "LoRA" : on.length > 1 ? `LoRA · ${on.length}` : "LoRA";
   const toggle = (id: string) => setProjectLoras(toggleLora({ loras: choice }, all, id));
   if (all.length === 1) {
     const l = all[0];
     return (
       <button
-        className={`pill lora ${on.length ? "on" : ""}`}
+        className={`icon-btn ${on.length ? "active" : ""}`}
         role="switch"
         aria-checked={on.length > 0}
+        aria-label={`LoRA ${l.name}`}
         disabled={!l.available}
         onClick={() => toggle(l.id)}
         title={l.available ? `${title}. Click to turn ${on.length ? "off" : "on"}.` : "This LoRA's file is missing: load it again in Settings → LoRA."}
       >
-        <Layers size={15} />
-        <span className="lora-name">{label}</span>
+        <Layers size={17} />
       </button>
     );
   }
   return (
     <Popover
       trigger={(open, toggleOpen) => (
-        <button className={`pill lora ${on.length || open ? "on" : ""}`} onClick={toggleOpen} title={title}>
-          <Layers size={15} />
-          <span className="lora-name">{label}</span>
-          <ChevronDown size={13} />
+        <button className={`icon-btn has-badge ${on.length || open ? "active" : ""}`} onClick={toggleOpen} title={title} aria-label={`LoRA, ${on.length} on`}>
+          <Layers size={17} />
+          {on.length > 0 && <span className="lora-count">{on.length}</span>}
         </button>
       )}
     >
@@ -497,6 +495,23 @@ export function Composer() {
             }
           </Popover>
 
+          {canEnhance && (
+            <button
+              className={`icon-btn ${c.enhance ? "active" : ""}`}
+              role="switch"
+              aria-checked={c.enhance}
+              aria-label="Prompt enhancer"
+              onClick={() => updateComposer({ enhance: !c.enhance })}
+              title={
+                c.enhance
+                  ? "Prompt enhancer on: before making the image, the model rewrites your prompt as a detailed English description (looking at your image for edits). You see it being written; the result keeps both. Click to turn off."
+                  : "Prompt enhancer: let the model rewrite a short prompt, in any language, as a detailed English description before making the image. Adds a few seconds."
+              }
+            >
+              <WandSparkles size={17} />
+            </button>
+          )}
+
           <Popover
             placement="top-start"
             className="panel"
@@ -515,28 +530,12 @@ export function Composer() {
             {() => <AdvancedPanel plan={plan} />}
           </Popover>
 
-          {canEnhance && (
-            <button
-              className={`pill enhance ${c.enhance ? "on" : ""}`}
-              role="switch"
-              aria-checked={c.enhance}
-              onClick={() => updateComposer({ enhance: !c.enhance })}
-              title={
-                c.enhance
-                  ? "Prompt enhancer on: before making the image, the model rewrites your prompt as a detailed English description (looking at your image for edits). You see it being written; the result keeps both. Click to turn off."
-                  : "Prompt enhancer: let the model rewrite a short prompt, in any language, as a detailed English description before making the image. Adds a few seconds."
-              }
-            >
-              <WandSparkles size={15} />
-              Enhance
-            </button>
-          )}
-
-          <LoraBadge />
 
           <button className="icon-btn" onClick={() => setState({ overlay: "prompt-tips" })} title="Prompt tips" aria-label="Prompt tips">
             <Lightbulb size={17} />
           </button>
+
+          <LoraBadge />
 
           <span className="spacer" />
           <span className="plan-hint" title={hintTitle}>

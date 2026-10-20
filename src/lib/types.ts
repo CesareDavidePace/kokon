@@ -87,6 +87,9 @@ export interface Plan {
   optimized_for_vram: boolean;
   /** Calibrated to this machine after its first image; 0 = not measured yet. */
   estimated_seconds: number;
+  /** Part of that time the upscaler takes (0..1; known even when the estimate is 0; absent in
+   * plans of older versions). */
+  upscale_share?: number;
   upscaler: string | null;
   /** Upscaler tile size in px (0 in plans of older versions). */
   upscale_tile?: number;

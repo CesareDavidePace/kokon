@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  activeOverrides, buildRequest, jobPercent, compareBase, composerFromRecord, enhancerApplies, diffPixels, emptyComposer, expansionPixels, expansionPreset, jobFraction, jobLabel, lutInfo, moveRef, needsPrompt, normalizeQuality, persistentAdvanced, pipelineSummary,
-  planPipeline, remainingSeconds, sizeForWidth, timeAgo, upscaleRequest, upscaleTargets, versionLabels, type Ref,
+  activeOverrides, buildRequest, jobPercent, compareBase, composerFromRecord, enhancerApplies, diffPixels, emptyComposer, expansionPixels, expansionPreset, jobLabel, jobSecondsLeft, lutInfo, moveRef, needsPrompt, normalizeQuality, persistentAdvanced, pipelineSummary,
+  planPipeline, remainingSeconds, sizeForWidth, timeAgo, upscaleRequest, upscaleTargets, versionLabels, type JobClock, type Ref,
   neighbourAfterRemoval, previewIndex, starPromptDue, STAR_PROMPT_AFTER, formatBytes, formatDuration, installItemShort, installItemText, installProgress, installStep, installTimeLeft, timelineLinks, undoTarget, aspectLabel, parseRatio, sizeForRatio, expandToRatio, expandToSize, arcLayout,
 } from "./logic";
 import type { GenerationRecord, InstallItem, JobView, Plan } from "./types";
@@ -138,34 +138,73 @@ describe("job labels are truthful", () => {
     id: "j", status: "running", stage: "generating", step: [12, 30], image: null, seconds_per_step: 2, queue_position: 0, created_at: "",
     started_at: null, finished_at: null, prompt: "", plan: null, seed: 1, results: [], error: null, notes: [], detailed_progress: true,
   };
-  it("shows steps only when reported", () => {
+  it("shows steps and tiles only when reported", () => {
     expect(jobLabel(base)).toBe("Generating · 12/30");
-    expect(jobFraction(base)).toBeCloseTo(0.4);
-    const noDetail = { ...base, step: null };
-    expect(jobLabel(noDetail)).toBe("Generating");
-    expect(jobFraction(noDetail)).toBeNull();
+    expect(jobLabel({ ...base, step: null })).toBe("Generating");
     expect(jobLabel({ ...base, status: "queued", queue_position: 3 })).toBe("Queued · 3");
     expect(jobLabel({ ...base, status: "enhancing_prompt", stage: null, step: null })).toBe("Writing the prompt");
-    // Percent: steps (moving on within a step), else time against the estimate; 100 only when done.
-    expect(jobPercent(base, 0, 0)).toBeCloseTo(10 + 80 * (12 / 30));
-    expect(jobPercent(base, 0, 1)).toBeCloseTo(10 + 80 * (12.5 / 30));
-    expect(jobPercent(base, 0, 99)).toBeLessThan(10 + 80 * (13 / 30));
-    const noSteps = { ...base, step: null, plan: { estimated_seconds: 20 } as Plan };
-    expect(jobPercent(noSteps, 10, 0)).toBeCloseTo(8 + 87 * 0.5);
-    expect(jobPercent(noSteps, 60, 0)).toBe(95);
-    expect(jobPercent({ ...noSteps, plan: null }, 600, 0)).toBeLessThanOrEqual(95);
-    expect(jobPercent({ ...base, stage: "decoding" }, 0, 0)).toBe(93);
-    expect(jobPercent({ ...base, status: "saving" }, 0, 0)).toBe(99);
-    expect(jobPercent({ ...base, status: "done" }, 0, 0)).toBe(100);
-    expect(jobPercent({ ...base, status: "enhancing_prompt" }, 0, 0)).toBe(5);
-    expect(jobFraction({ ...base, status: "enhancing_prompt" })).toBeNull();
+    expect(jobLabel({ ...base, stage: "upscaling", step: null })).toBe("Upscaling");
+    expect(jobLabel({ ...base, stage: "upscaling", step: [2, 6], image: [1, 2] })).toBe("Upscaling · 2/6 · 1/2");
+  });
+});
+
+describe("one percentage for the whole job", () => {
+  // 20 s planned: 15 s to generate, 5 s of upscaler; 8 steps at 1.5 s; the model loads in 10 s.
+  const plan = { mode: "generate", estimated_seconds: 20, upscale_share: 0.25, batch_count: 1 } as Plan;
+  const job = (o: Partial<JobView>): JobView => ({
+    id: "j", status: "running", stage: null, step: null, image: null, seconds_per_step: null, queue_position: 0, created_at: "",
+    started_at: null, finished_at: null, prompt: "", plan, seed: 1, results: [], error: null, notes: [], detailed_progress: true, ...o,
+  });
+  const clock = (o: Partial<JobClock>): JobClock => ({ elapsed: 0, inPhase: 0, inRunning: 0, sinceStep: 0, enhance: false, loadSeconds: 10, enhancerSecondsPerWord: 0.015, ...o });
+
+  it("counts every phase still to come", () => {
+    // Loading: the rest of the load, then generation, upscaler and saving.
+    expect(jobSecondsLeft(job({ status: "starting_backend" }), clock({ inPhase: 4 }))).toBeCloseTo(6 + 15 + 5 + 1);
+    // With the enhancer on, its time too.
+    expect(jobSecondsLeft(job({ status: "preparing" }), clock({ enhance: true }))).toBeCloseTo(0.5 + (0.5 + 110 * 0.015) + 21);
+    // Sampling: the steps left at the measured pace, decoding, upscaler, saving.
+    expect(jobSecondsLeft(job({ stage: "generating", step: [4, 8], seconds_per_step: 1.5 }), clock({}))).toBeCloseTo(4 * 1.5 + 1.5 + 5 + 1);
+    // Upscaling: the tiles left at the measured pace, then saving.
+    expect(jobSecondsLeft(job({ stage: "upscaling", step: [1, 3], seconds_per_step: 1.5 }), clock({}))).toBeCloseTo(2 * 1.5 + 1);
+    // The enhancer's own pace once it writes: 20 words in 1 s, ~110 asked.
+    const writing = job({ status: "enhancing_prompt", enhanced_prompt: Array(20).fill("word").join(" ") });
+    expect(jobSecondsLeft(writing, clock({ inPhase: 1, enhance: true }))).toBeCloseTo(90 / 20 + 21);
   });
 
-  it("one pass fills the bar; enlarging is indeterminate", () => {
-    expect(remainingSeconds({ ...base, step: [10, 20] as [number, number] })).toBeCloseTo(10 * 2);
-    expect(jobLabel({ ...base, stage: "upscaling", step: null })).toBe("Upscaling");
-    expect(jobFraction({ ...base, stage: "upscaling", step: null })).toBeNull();
-    expect(jobFraction({ ...base, stage: "decoding", step: null })).toBe(1);
+  it("moves with time, forms the logo only after the upscaler, and reaches 100 only when done", () => {
+    // Accurate estimates: the percentage is the share of the time spent.
+    const loading = jobPercent(job({ status: "starting_backend" }), clock({ elapsed: 5, inPhase: 5 }));
+    expect(loading).toBeCloseTo((100 * 5) / 31, 0);
+    const halfSteps = jobPercent(job({ stage: "generating", step: [4, 8], seconds_per_step: 1.5 }), clock({ elapsed: 10 + 7, inRunning: 7 }));
+    expect(halfSteps).toBeGreaterThan(loading);
+    // Generation done, upscaler not started: well short of the logo (92 %).
+    const decoded = jobPercent(job({ stage: "upscaling", step: [0, 3] }), clock({ elapsed: 25 }));
+    expect(decoded).toBeLessThan(85);
+    const lastTile = jobPercent(job({ stage: "upscaling", step: [3, 3], seconds_per_step: 1.6 }), clock({ elapsed: 30 }));
+    expect(lastTile).toBeGreaterThan(92);
+    expect(jobPercent(job({ status: "saving" }), clock({ elapsed: 31, inPhase: 9 }))).toBeLessThanOrEqual(99);
+    expect(jobPercent(job({ status: "done" }), clock({ elapsed: 31 }))).toBe(100);
+    expect(jobPercent(job({ status: "queued" }), clock({}))).toBe(0);
+  });
+
+  it("an overrun slows the bar instead of stopping it", () => {
+    const a = jobPercent(job({ status: "starting_backend" }), clock({ elapsed: 30, inPhase: 30 }));
+    const b = jobPercent(job({ status: "starting_backend" }), clock({ elapsed: 60, inPhase: 60 }));
+    expect(b).toBeGreaterThan(a);
+    expect(b).toBeLessThan(99);
+  });
+
+  it("an upscale is all upscaler, and an unmeasured machine still gets a curve", () => {
+    const quick = { mode: "upscale", estimated_seconds: 8, upscale_share: 0.8, batch_count: 1 } as Plan;
+    expect(jobSecondsLeft(job({ plan: quick, stage: "upscaling", step: [0, 4] }), clock({}))).toBeCloseTo(8 + 1);
+    const unknown = { ...plan, estimated_seconds: 0 };
+    expect(jobPercent(job({ plan: unknown, stage: "encoding_prompt" }), clock({ elapsed: 3, inRunning: 3 }))).toBeGreaterThan(0);
+  });
+
+  it("shows the time left only once the engine's pace is known", () => {
+    expect(remainingSeconds(job({ stage: "generating", step: [4, 8], seconds_per_step: 1.5 }), clock({}))).toBeCloseTo(4 * 1.5 + 1.5 + 5 + 1);
+    expect(remainingSeconds(job({ stage: "generating", step: [0, 8] }), clock({}))).toBeNull();
+    expect(remainingSeconds(job({ status: "starting_backend" }), clock({}))).toBeNull();
   });
 });
 

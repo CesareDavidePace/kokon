@@ -329,6 +329,10 @@ pub struct Plan {
     pub notes: Vec<String>,
     pub optimized_for_vram: bool,
     pub estimated_seconds: f32,
+    /// Part of the job's time the upscaler takes (0..1, from the time model; also known when
+    /// `estimated_seconds` is 0): the progress gives each phase its share.
+    #[serde(default)]
+    pub upscale_share: f32,
     /// Upscaler model used to enlarge the result; None = Lanczos.
     #[serde(default)]
     pub upscaler: Option<String>,
@@ -1083,10 +1087,13 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
     let enlarge = output.area() as f64 > working.content.area() as f64 * 1.21;
     let mut estimated_seconds =
         if quick_upscale { 2.0 } else { estimate_seconds(working.canvas, &references, steps, batch_count, inputs.sage_attention, cfg) };
+    let mut upscale_seconds = 0.0;
     if inputs.upscaler.is_some() && (enlarge || quick_upscale) {
         let mosr = inputs.upscaler.as_deref().is_some_and(is_mosr);
-        estimated_seconds += esrgan_seconds(working.content.area(), inputs.upscale_tile, inputs.metal, mosr) * batch_count as f32;
+        upscale_seconds = esrgan_seconds(working.content.area(), inputs.upscale_tile, inputs.metal, mosr) * batch_count as f32;
+        estimated_seconds += upscale_seconds;
     }
+    let upscale_share = upscale_seconds / estimated_seconds;
     estimated_seconds = match inputs.speed_factor {
         Some(f) => estimated_seconds * f,
         None if inputs.hide_uncalibrated => 0.0,
@@ -1121,6 +1128,7 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
         notes,
         optimized_for_vram: optimized,
         estimated_seconds,
+        upscale_share,
         upscaler: inputs.upscaler.clone(),
         upscale_tile: if inputs.upscale_tile > 0 { inputs.upscale_tile } else { LARGE_UPSCALE_TILE },
         upscale,
@@ -1142,8 +1150,10 @@ mod tests {
         let s = plan(&r, &slow, &RecommendedSettings::default()).unwrap();
         assert!((s.estimated_seconds / raw - 13.0).abs() < 0.01);
         assert!((backend_seconds(&s, false) - raw).abs() < 0.5, "the calibration compares against the uncalibrated backend time");
-        let unknown = PlanInputs { hide_uncalibrated: true, ..base.clone() };
-        assert_eq!(plan(&r, &unknown, &RecommendedSettings::default()).unwrap().estimated_seconds, 0.0, "unknown until measured");
+        let unknown = PlanInputs { hide_uncalibrated: true, upscaler: Some("4xNomos2_hq_mosr".into()), ..base.clone() };
+        let u = plan(&GenerationRequest { quality: Quality::Quality, ..r.clone() }, &unknown, &RecommendedSettings::default()).unwrap();
+        assert_eq!(u.estimated_seconds, 0.0, "unknown until measured");
+        assert!(u.upscale_share >= 0.0 && u.upscale_share < 1.0, "the share is known anyway: {}", u.upscale_share);
         let known = PlanInputs { hide_uncalibrated: true, speed_factor: Some(2.0), ..base };
         assert!(plan(&r, &known, &RecommendedSettings::default()).unwrap().estimated_seconds > 0.0);
     }
@@ -1385,6 +1395,9 @@ mod tests {
         let p2 = plan(&r, &PlanInputs { upscaler: None, ..i.clone() }, &rec()).unwrap();
         assert!(esrgan > p2.estimated_seconds, "the enlargement is included in the estimate");
         assert!(p2.notes.iter().any(|n| n.ends_with("with Lanczos.")));
+        // Its share of the time, for the progress: the part added by the upscaler.
+        assert!((p.upscale_share - (esrgan - p2.estimated_seconds) / esrgan).abs() < 1e-4, "{}", p.upscale_share);
+        assert_eq!(p2.upscale_share, 0.0, "Lanczos takes no time worth showing");
     }
 
     #[test]
@@ -1506,6 +1519,7 @@ mod tests {
         let i = PlanInputs { image_sizes: vec![Size::new(1472, 1472)], upscale_tile: 768, upscaler: Some("4xNomos2_hq_mosr".into()), ..env(true) };
         let (pc, mac) = (plan(&r, &i, &rec()).unwrap(), plan(&r, &PlanInputs { metal: true, ..i.clone() }, &rec()).unwrap());
         assert!(mac.estimated_seconds > pc.estimated_seconds * 5.0, "{} vs {}", mac.estimated_seconds, pc.estimated_seconds);
+        assert!(pc.upscale_share > 0.5 && mac.upscale_share > 0.9, "an upscale is mostly upscaler: {} {}", pc.upscale_share, mac.upscale_share);
     }
 
     #[test]

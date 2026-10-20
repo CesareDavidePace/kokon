@@ -4,14 +4,14 @@ import {
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, urls } from "../lib/api";
 import {
-  compareBase, composerFromRecord, formatDuration, jobFraction, jobLabel, jobPercent, lutInfo, lutLabel, MAX_UPSCALE_AREA, MAX_UPSCALE_SIDE, MODE_LABEL, pipelineSummary, remainingSeconds, sizeForWidth, upscaleRequest, arcLayout,
+  compareBase, composerFromRecord, formatDuration, jobLabel, jobPercent, type JobClock, lutInfo, lutLabel, MAX_UPSCALE_AREA, MAX_UPSCALE_SIDE, MODE_LABEL, pipelineSummary, remainingSeconds, sizeForWidth, upscaleRequest, arcLayout,
   upscalerLabel, upscaleTargets, variationRequest, imageName, type LinkKind, type TimelineLink,
 } from "../lib/logic";
 import { native } from "../lib/native";
 import {
   addAsReference, addResult, cancelJob, focusPrompt, getState, itemSource, removeSessionItem, reusePrompt, selectedItem, selectItem, sessionLabels, sessionLinks, setState, submitRequest, toastError, toastInfo, useStore, type SessionItem,
 } from "../lib/store";
-import type { GenerationRecord, JobView, LutEntry, Mode, Size } from "../lib/types";
+import type { GenerationRecord, GenerationRequest, JobView, LutEntry, Mode, Size } from "../lib/types";
 import { Cocoon, Hatch, reducedMotion } from "./Cocoon";
 import { CompareFrame, CompareFullscreen } from "./Compare";
 import { LutBar, LutButton, LutOverlay } from "./Lut";
@@ -77,7 +77,7 @@ function Pending({ job, item, labels }: { job: JobView; item: SessionItem; label
   const title = [imageName(labels[item.key]), mode && `${MODE_DOING[mode]}${from && mode !== "multi_reference" ? ` ${imageName(labels[from.key]).toLowerCase()}` : ""}`].filter(Boolean).join(" · ");
   // The source keeps its own shape inside an expansion; elsewhere it fills the frame.
   const outpaint = item.request?.outpaint;
-  const pct = useJobPercent(job);
+  const { pct, clock } = useJobPercent(job, item.request, true);
   const [promptGone, setPromptGone] = useState(false);
   const promptPhase = job.enhanced_prompt != null && !promptGone;
   return (
@@ -95,44 +95,93 @@ function Pending({ job, item, labels }: { job: JobView; item: SessionItem; label
             onGone={() => setPromptGone(true)}
           />
         ) : (
-          <ProgressPhase job={job} title={title} pct={pct} />
+          <ProgressPhase job={job} title={title} pct={pct} clock={clock} />
         )}
       </div>
     </div>
   );
 }
 
-/** Live percentage of a job: computed by `jobPercent` a few times a second, only ever going up,
- * and eased so it counts up smoothly instead of jumping from step to step. */
-function useJobPercent(job: JobView): number {
-  const [shown, setShown] = useState(0);
-  const live = useRef(job);
-  live.current = job;
-  const runningAt = useRef<number | null>(null);
-  const stepAt = useRef<{ step: string; at: number }>({ step: "", at: performance.now() });
+/** This machine's pace for the phases the plan cannot estimate (model load, prompt enhancer),
+ * remembered between jobs; a per-viewer convenience, so defaults when storage is unavailable. */
+const PROGRESS_KEY = "kokon.progress";
+interface ProgressMemory { loadSeconds: number; enhancerSecondsPerWord: number }
+function progressMemory(): ProgressMemory {
+  const d: ProgressMemory = { loadSeconds: 20, enhancerSecondsPerWord: 0.015 };
+  try {
+    const v = JSON.parse(localStorage.getItem(PROGRESS_KEY) || "{}");
+    return { loadSeconds: v.loadSeconds > 0 ? v.loadSeconds : d.loadSeconds, enhancerSecondsPerWord: v.enhancerSecondsPerWord > 0 ? v.enhancerSecondsPerWord : d.enhancerSecondsPerWord };
+  } catch {
+    return d;
+  }
+}
+function rememberProgress(m: Partial<ProgressMemory>) {
+  try {
+    localStorage.setItem(PROGRESS_KEY, JSON.stringify({ ...progressMemory(), ...m }));
+  } catch {
+    /* storage unavailable: the defaults stay */
+  }
+}
+
+const ENHANCED_MODES = new Set(["generate", "edit", "multi_reference"]);
+
+/** Live percentage of a whole job (`jobPercent`), computed a few times a second, only ever going
+ * up, and eased so it counts up smoothly. Tracks when the job and each phase started; `learn`
+ * (the main card only) remembers how long the model load and the prompt enhancer took. */
+function useJobPercent(job: JobView, request: GenerationRequest | null | undefined, learn = false): { pct: number; clock: JobClock } {
+  const enhance = !!request?.enhance && ENHANCED_MODES.has(job.plan?.mode ?? request?.mode ?? "");
+  const [shown, setShown] = useState<{ pct: number; clock: JobClock }>(() => ({ pct: 0, clock: { elapsed: 0, inPhase: 0, inRunning: 0, sinceStep: 0, enhance, ...progressMemory() } }));
+  const live = useRef({ job, enhance });
+  live.current = { job, enhance };
   useEffect(() => {
+    const mem = progressMemory();
+    let startedAt: number | null = null;
+    let runningAt: number | null = null;
+    let phase = { key: "", at: performance.now() };
+    let step = { key: "", at: performance.now() };
     let target = 0;
     let value = 0;
     const id = window.setInterval(() => {
-      const j = live.current;
+      const { job: j, enhance: e } = live.current;
       const now = performance.now();
-      if (j.status === "running" && runningAt.current === null) runningAt.current = now;
-      const step = j.step ? `${j.step[0]}/${j.step[1]}` : "";
-      if (step !== stepAt.current.step) stepAt.current = { step, at: now };
-      const runningS = runningAt.current === null ? 0 : (now - runningAt.current) / 1000;
-      target = Math.max(target, jobPercent(j, runningS, (now - stepAt.current.at) / 1000));
+      if (startedAt === null && j.status !== "queued") startedAt = now;
+      if (runningAt === null && j.status === "running") runningAt = now;
+      const key = `${j.status}|${j.stage ?? ""}`;
+      if (key !== phase.key) {
+        // Learn the phases the plan does not estimate, when they end.
+        const took = (now - phase.at) / 1000;
+        const was = phase.key.split("|")[0];
+        if (learn && was === "starting_backend" && took > 1) rememberProgress({ loadSeconds: took });
+        if (learn && was === "enhancing_prompt" && j.enhanced_prompt) {
+          const words = j.enhanced_prompt.split(/\s+/).filter(Boolean).length;
+          if (words >= 5) rememberProgress({ enhancerSecondsPerWord: took / words });
+        }
+        phase = { key, at: now };
+      }
+      const stepKey = j.step ? `${j.stage}|${j.step[0]}/${j.step[1]}` : "";
+      if (stepKey !== step.key) step = { key: stepKey, at: now };
+      const clock: JobClock = {
+        elapsed: startedAt === null ? 0 : (now - startedAt) / 1000,
+        inPhase: (now - phase.at) / 1000,
+        inRunning: runningAt === null ? 0 : (now - runningAt) / 1000,
+        sinceStep: (now - step.at) / 1000,
+        enhance: e,
+        ...mem,
+      };
+      target = Math.max(target, jobPercent(j, clock));
       value += (target - value) * (reducedMotion() ? 1 : 0.18);
       if (target - value < 0.05) value = target;
-      setShown(value);
+      setShown({ pct: value, clock });
     }, 60);
     return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return shown;
 }
 
-function ProgressPhase({ job, title, pct }: { job: JobView; title: string; pct: number }) {
+function ProgressPhase({ job, title, pct, clock }: { job: JobView; title: string; pct: number; clock: JobClock }) {
   const o = job.plan?.output;
-  const remain = remainingSeconds(job);
+  const remain = remainingSeconds(job, clock);
   const canCancel = !["done", "failed", "cancelled"].includes(job.status);
   return (
     <div className="progress-phase">
@@ -730,7 +779,6 @@ function Timeline({ labels }: { labels: Record<string, string> }) {
           const src = itemSource(it);
           const pending = it.kind === "job";
           const failed = pending && job && ["failed", "cancelled"].includes(job.status);
-          const frac = pending && job ? jobFraction(job) : null;
           const mode: Mode | "lut" | undefined = it.gen?.mode ?? job?.plan?.mode;
           const link = links[it.key];
           const pendingSrc = pending && it.request?.mode !== "generate" ? it.request?.images?.[0] : undefined;
@@ -783,7 +831,7 @@ function Timeline({ labels }: { labels: Record<string, string> }) {
                   {pendingSrc && <img className="dim" src={urls.sourceThumb(pendingSrc)} alt="" draggable={false} />}
                   {pending && !failed && (
                     <span className="frame-state">
-                      {frac !== null ? <Ring frac={frac} /> : <Loader2 className="spin" size={16} />}
+                      {job && job.status !== "queued" ? <JobRing job={job} request={it.request} /> : <Loader2 className="spin" size={16} />}
                     </span>
                   )}
                   {failed && (
@@ -809,6 +857,12 @@ function Timeline({ labels }: { labels: Record<string, string> }) {
       {ghost && <img className={`drag-ghost ${ghost.over ? "over" : ""}`} src={urls.sourceThumb(ghost.src)} style={{ left: ghost.x, top: ghost.y }} alt="" draggable={false} />}
     </div>
   );
+}
+
+/** The whole job's progress in the timeline, the same percentage as its card. */
+function JobRing({ job, request }: { job: JobView; request?: GenerationRequest | null }) {
+  const { pct } = useJobPercent(job, request);
+  return <Ring frac={pct / 100} />;
 }
 
 function Ring({ frac }: { frac: number }) {

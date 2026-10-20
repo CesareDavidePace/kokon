@@ -978,13 +978,14 @@ impl Engine {
         let duration_start = started;
         let mask_rec = mask.map(|(_, r)| r);
         let mut records = Vec::with_capacity(contents.len());
+        let count = contents.len() as u32;
         for (i, content) in contents.into_iter().enumerate() {
             let before = Size::new(content.width(), content.height());
             let target = pipeline::enlarge_target(&post);
             // Kept when the upscaler enlarges it, so the user can still see and save it.
             let original = target.map(|_| content.clone());
             let how = EnlargeOptions { tile: plan.upscale_tile, blend: cfg.upscale_blend, prescale: cfg.upscale_prescale };
-            let (content, enlarged_with) = self.enlarge(id, &client, content, target, esrgan.as_deref(), how).await?;
+            let (content, enlarged_with) = self.enlarge(id, &client, content, target, esrgan.as_deref(), how, (i as u32 + 1, count)).await?;
             let original = original.filter(|_| enlarged_with.is_some());
             self.update(id, |j| {
                 j.view.status = JobStatus::Saving;
@@ -1109,8 +1110,10 @@ impl Engine {
 
     /// Enlarges `content` with the upscaler model when [`pipeline::finish`] would resize it
     /// up to `target` by more than ~1.1x. Returns the (possibly larger) content and how the
-    /// enlargement is done; upscaler failures fall back to Lanczos with a note.
-    async fn enlarge(&self, id: &str, client: &SdcppClient, content: image::RgbaImage, target: Option<Size>, esrgan: Option<&str>, how: EnlargeOptions) -> AppResult<(image::RgbaImage, Option<String>)> {
+    /// enlargement is done; upscaler failures fall back to Lanczos with a note. `image` is
+    /// (this image, images in the batch), for the progress.
+    #[allow(clippy::too_many_arguments)]
+    async fn enlarge(&self, id: &str, client: &SdcppClient, content: image::RgbaImage, target: Option<Size>, esrgan: Option<&str>, how: EnlargeOptions, image: (u32, u32)) -> AppResult<(image::RgbaImage, Option<String>)> {
         let Some(target) = target else { return Ok((content, None)) };
         let size = Size::new(content.width(), content.height());
         let factor = (target.width as f64 / size.width as f64).max(target.height as f64 / size.height as f64);
@@ -1122,6 +1125,8 @@ impl Engine {
             j.view.status = JobStatus::Running;
             j.view.stage = Some(BackendStage::Upscaling);
             j.view.step = None;
+            j.view.image = Some(image);
+            j.view.seconds_per_step = None;
         });
         let content = Arc::new(content);
         let r = self.esrgan_enlarge(id, client, content.clone(), target, name, how).await;
@@ -1154,13 +1159,23 @@ impl Engine {
         let c = content.clone();
         let input = Arc::new(blocking(move || Ok(imaging::resize(&c, ep.input.width, ep.input.height))).await?);
         let mut stitcher = pipeline::Stitcher::new(ep.input);
-        for tile in &ep.tiles {
+        // Tiles are the upscaler's steps: (done, total) and the measured time per tile.
+        let total = ep.tiles.len() as u32;
+        self.update(id, |j| j.view.step = Some((0, total)));
+        let started = Instant::now();
+        for (k, tile) in ep.tiles.iter().enumerate() {
             self.check_cancel(id)?;
             let (inp, t) = (input.clone(), *tile);
             let png = blocking(move || pipeline::tile_png_b64(&inp, &t)).await?;
             let resp = client.upscale(&UpscaleRequest { image: png, upscaler: Some(upscaler.to_string()), tile_size: (tile_px > 0).then_some(tile_px), output_format: "png".into() }).await?;
             let up = blocking(move || imaging::decode_engine_image(&crate::sdcpp::b64_decode(&resp.images[0].b64_json)?, pipeline::ESRGAN_MAX_OUTPUT_SIDE)).await?;
             stitcher.add(tile, &up)?;
+            let done = k as u32 + 1;
+            let per_tile = started.elapsed().as_secs_f32() / done as f32;
+            self.update(id, |j| {
+                j.view.step = Some((done, total));
+                j.view.seconds_per_step = Some(per_tile);
+            });
         }
         Ok(Some(blocking(move || stitcher.finish(&content)).await?))
     }
@@ -1547,6 +1562,79 @@ mod tests {
         assert_eq!(e.cancel_client_jobs("ui"), 1);
         assert_eq!(e.job(&ui.id).unwrap().status, JobStatus::Cancelled);
         assert_eq!(e.job(&mcp.id).unwrap().status, JobStatus::Queued);
+    }
+
+    /// An upscale endpoint that answers every request with its tile enlarged x2 (nearest).
+    async fn fake_upscaler() -> u16 {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                let mut req = Vec::new();
+                let mut buf = [0u8; 65536];
+                let body = loop {
+                    let n = sock.read(&mut buf).await.unwrap();
+                    req.extend_from_slice(&buf[..n]);
+                    let text = String::from_utf8_lossy(&req).to_string();
+                    if let Some(end) = text.find("\r\n\r\n") {
+                        let len = text.lines().find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap())).unwrap_or(0);
+                        if req.len() >= end + 4 + len {
+                            break req[end + 4..end + 4 + len].to_vec();
+                        }
+                    }
+                };
+                let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                let tile = image::load_from_memory(&crate::sdcpp::b64_decode(v["image"].as_str().unwrap()).unwrap()).unwrap();
+                let up = tile.resize_exact(tile.width() * 2, tile.height() * 2, image::imageops::FilterType::Nearest);
+                let mut png = std::io::Cursor::new(Vec::new());
+                up.write_to(&mut png, image::ImageFormat::Png).unwrap();
+                let out = serde_json::json!({ "images": [{ "index": 0, "b64_json": crate::sdcpp::b64(png.get_ref()) }] }).to_string();
+                let head = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", out.len());
+                let _ = sock.write_all(head.as_bytes()).await;
+                let _ = sock.write_all(out.as_bytes()).await;
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn upscaling_reports_its_tiles_as_steps() {
+        let dir = tempfile::tempdir().unwrap();
+        // SAFETY: test-only env override, single-threaded setup.
+        unsafe { std::env::set_var("QLS_CONFIG_DIR", dir.path().join("cfg")) };
+        let mut cfg = AppConfig::default();
+        cfg.sdcpp_dir = dir.path().join("sdcpp");
+        cfg.normalize();
+        std::fs::create_dir_all(cfg.engine_dir()).unwrap();
+        std::fs::write(cfg.server_exe(), b"").unwrap();
+        for (_, p, _) in cfg.profile().files() {
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, b"").unwrap();
+        }
+        let e = Engine::new(cfg, dir.path()).unwrap();
+        let id = e.submit(GenerationRequest { prompt: "a long strip".into(), ..Default::default() }, None).unwrap().id;
+        let mut events = e.events.subscribe();
+        // 4200 px wide: three tiles of at most 2048 px for an x4 model.
+        let content = image::RgbaImage::from_pixel(4200, 40, image::Rgba([90, 120, 200, 255]));
+        let how = EnlargeOptions { tile: 0, blend: 1.0, prescale: false };
+        let client = SdcppClient::new(fake_upscaler().await);
+        let (img, with) = e.enlarge(&id, &client, content, Some(Size::new(16800, 160)), Some("4x"), how, (2, 3)).await.unwrap();
+        assert_eq!((img.width(), with.as_deref()), (8400, Some("4x")), "stitched from the x2 answers");
+        let mut steps = Vec::new();
+        while let Ok(ev) = events.try_recv() {
+            if let Event::Job { job } = ev {
+                if job.stage == Some(BackendStage::Upscaling) {
+                    assert_eq!((job.status, job.image), (JobStatus::Running, Some((2, 3))));
+                    if steps.last() != Some(&(job.step, job.seconds_per_step.is_some())) {
+                        steps.push((job.step, job.seconds_per_step.is_some()));
+                    }
+                }
+            }
+        }
+        assert_eq!(steps.first(), Some(&(None, false)));
+        let tiles: Vec<_> = steps.iter().filter_map(|(s, timed)| s.map(|s| (s, *timed))).collect();
+        assert_eq!(tiles, vec![((0, 3), false), ((1, 3), true), ((2, 3), true), ((3, 3), true)], "{steps:?}");
     }
 
     #[tokio::test]

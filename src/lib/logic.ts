@@ -352,7 +352,7 @@ export function jobLabel(j: JobView): string {
         case "generating":
           return j.step ? `Generating · ${j.step[0]}/${j.step[1]}${batch}` : `Generating${batch}`;
         case "upscaling":
-          return "Upscaling";
+          return j.step ? `Upscaling · ${j.step[0]}/${j.step[1]}${batch}` : `Upscaling${batch}`;
         case "refining":
           return j.step ? `Refining · ${j.step[0]}/${j.step[1]}${batch}` : `Refining${batch}`;
         case "decoding":
@@ -366,61 +366,111 @@ export function jobLabel(j: JobView): string {
   }
 }
 
-/** 0..1 when the backend reports steps, else null (indeterminate). */
-export function jobFraction(j: JobView): number | null {
-  if (j.status !== "running") return null;
-  if (j.stage === "generating" && j.step) return j.step[0] / Math.max(1, j.step[1]);
-  if (j.stage === "decoding" || j.stage === "finishing") return 1;
-  return null;
+/** What the progress knows besides the job (seconds): time since the job left the queue,
+ * time in the current phase (status and stage), since the job started running and since the
+ * last step or tile; whether the prompt enhancer runs for it; and this machine's remembered
+ * speeds (`progressMemory`). */
+export interface JobClock {
+  elapsed: number;
+  inPhase: number;
+  inRunning: number;
+  sinceStep: number;
+  enhance: boolean;
+  /** Seconds the model took to load the last time. */
+  loadSeconds: number;
+  /** Seconds the prompt enhancer took per word the last time. */
+  enhancerSecondsPerWord: number;
 }
 
-/** Completion (0..100) for the progress card. `runningS`: seconds since the job started running;
- * `stepS`: seconds since the last reported step. The steps when the server reports them (moving
- * on within a step at the measured pace), else time against the plan's estimate (an external
- * server gives no steps). Short of 100 until the job is done. */
-export function jobPercent(j: JobView, runningS: number, stepS: number): number {
+/** About how many words the built-in enhancer prompts ask for. */
+const ENHANCER_WORDS = { generate: 110, edit: 35 };
+const SAVE_SECONDS = 1;
+
+/** Time left of a phase estimated at `est` seconds, `t` seconds in. Past ~80 % of the
+ * estimate it keeps shrinking without reaching 0, so an overrun slows the bar instead of
+ * stopping it. */
+function phaseLeft(est: number, t: number): number {
+  if (est <= 0) return 0;
+  return t < 0.8 * est ? est - t : (0.16 * est * est) / t;
+}
+
+/** Estimated seconds until the job is done: what is left of the current phase, measured where
+ * the engine reports progress (steps, tiles, the enhancer's words), plus every phase still to
+ * come (model load, enhancer, generation, decoding, upscaler, saving). */
+export function jobSecondsLeft(j: JobView, c: JobClock): number {
+  const p = j.plan;
+  const quick = p?.mode === "upscale";
+  // The plan's split of the time; without a measured speed, a typical job (corrected live by the
+  // steps and tiles as they come).
+  const total = p && p.estimated_seconds > 0 ? p.estimated_seconds : quick ? 8 : 30;
+  const share = quick ? 1 : Math.min(0.95, Math.max(0, p?.upscale_share ?? 0));
+  const upS = total * share;
+  const genS = total - upS;
+  const decodeS = genS * 0.1;
+  const batch = Math.max(1, p?.batch_count ?? 1);
+  const imagesAfter = j.image && j.image[1] > 1 ? j.image[1] - j.image[0] : 0;
+  const words = ENHANCER_WORDS[p?.mode === "generate" ? "generate" : "edit"];
+  const enhanceS = c.enhance ? 0.5 + words * c.enhancerSecondsPerWord : 0;
+  const fromGeneration = genS + upS + SAVE_SECONDS;
   switch (j.status) {
     case "queued":
+    case "starting_backend":
+      return phaseLeft(c.loadSeconds, j.status === "queued" ? 0 : c.inPhase) + enhanceS + fromGeneration;
+    case "preparing":
+      return phaseLeft(0.5, c.inPhase) + enhanceS + fromGeneration;
+    case "enhancing_prompt": {
+      const written = (j.enhanced_prompt ?? "").split(/\s+/).filter(Boolean).length;
+      // Once it writes, its own pace says how long the rest takes.
+      const left = written >= 8 ? (Math.max(words - written, words * 0.05) * c.inPhase) / written : phaseLeft(enhanceS, c.inPhase);
+      return left + fromGeneration;
+    }
+    case "saving":
+      return phaseLeft(SAVE_SECONDS, c.inPhase);
+    case "done":
     case "failed":
     case "cancelled":
       return 0;
-    case "starting_backend":
-      return 2;
-    case "preparing":
-      return 4;
-    case "enhancing_prompt":
-      return 5;
-    case "saving":
-      return 99;
-    case "done":
-      return 100;
   }
   switch (j.stage) {
-    case "preparing":
-      return 6;
-    case "encoding_images":
-    case "encoding_prompt":
-      return 8;
-    case "decoding":
-      return 93;
-    case "upscaling":
-      return 95;
+    case "upscaling": {
+      const perImage = upS / batch;
+      const after = (imagesAfter * upS) / batch + SAVE_SECONDS;
+      if (j.step && j.step[1] > 0) {
+        const perTile = j.seconds_per_step ?? perImage / j.step[1];
+        const within = Math.min(0.95, c.sinceStep / perTile);
+        return Math.max(0, j.step[1] - j.step[0] - within) * perTile + after;
+      }
+      return phaseLeft(perImage, c.inPhase) + after;
+    }
     case "finishing":
-      return 97;
+      return phaseLeft(0.5, c.inPhase) + upS + SAVE_SECONDS;
+    case "decoding":
+      return phaseLeft(decodeS / batch, c.inPhase) + (imagesAfter * genS) / batch + upS + SAVE_SECONDS;
+    case "generating":
+    case "refining":
+      if (j.step && j.step[1] > 0) {
+        const perStep = j.seconds_per_step ?? (0.85 * genS) / batch / j.step[1];
+        const within = Math.min(0.95, c.sinceStep / perStep);
+        return Math.max(0, j.step[1] - j.step[0] - within) * perStep + decodeS / batch + (imagesAfter * genS) / batch + upS + SAVE_SECONDS;
+      }
   }
-  if (j.step && j.step[1] > 0) {
-    const within = j.seconds_per_step ? Math.min(0.95, stepS / j.seconds_per_step) : 0;
-    return 10 + (80 * Math.min(j.step[1], j.step[0] + within)) / j.step[1];
-  }
-  const est = j.plan?.estimated_seconds ?? 0;
-  const share = est > 0 ? Math.min(1, runningS / est) : 1 - Math.exp(-runningS / 15);
-  return Math.min(95, 8 + 87 * share);
+  // Encoding, or a server that reports no steps: time against the generation estimate.
+  return phaseLeft(genS, c.inRunning) + upS + SAVE_SECONDS;
 }
 
-export function remainingSeconds(j: JobView): number | null {
+/** Completion (0..100) of the whole job, model load to saved file: the time it has taken over
+ * that time plus the time left (`jobSecondsLeft`). Short of 100 until the job is done. */
+export function jobPercent(j: JobView, c: JobClock): number {
+  if (j.status === "done") return 100;
+  if (j.status === "queued" || j.status === "failed" || j.status === "cancelled" || c.elapsed <= 0) return 0;
+  return Math.min(99, (100 * c.elapsed) / (c.elapsed + jobSecondsLeft(j, c)));
+}
+
+/** Time left to show, only once the engine's own pace is known (steps or tiles running). */
+export function remainingSeconds(j: JobView, c: JobClock): number | null {
   if (j.status !== "running" || !j.step || !j.seconds_per_step) return null;
-  if (j.stage !== "generating") return null;
-  return Math.max(0, (j.step[1] - j.step[0]) * j.seconds_per_step);
+  if (j.stage !== "generating" && j.stage !== "upscaling") return null;
+  return jobSecondsLeft(j, c);
 }
 
 // ---------------------------------------------------------------------------------------

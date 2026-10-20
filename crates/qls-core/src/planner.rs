@@ -275,8 +275,8 @@ pub struct GenerationRequest {
     /// generating (text-to-image, edits, combines; engines with text generation only).
     #[serde(default)]
     pub enhance: bool,
-    /// The user's LoRAs to use, by id or name (Settings → LoRA); None = the ones on by
-    /// default. Not used by upscales.
+    /// The user's LoRAs to use, by id or name (Settings → LoRA); sent by the app only, None =
+    /// no LoRA (MCP and the HTTP API don't use LoRAs for now). Not used by upscales.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loras: Option<Vec<String>>,
 }

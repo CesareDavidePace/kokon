@@ -61,7 +61,7 @@ export interface GenerationRequest {
   private?: boolean;
   /** Prompt enhancer: the model's language model rewrites the prompt first (new images, edits, combines). */
   enhance?: boolean;
-  /** LoRA ids to use; omitted = the ones on by default. */
+  /** LoRA ids to use (the app always sends its list; omitted = none, as for MCP). */
   loras?: string[] | null;
 }
 

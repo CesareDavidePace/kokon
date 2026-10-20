@@ -412,13 +412,15 @@ pub struct AppliedLora {
     pub trigger_words: String,
 }
 
-/// The LoRAs a job uses: `requested` ids or names (case-insensitive) in that order, or the ones
-/// turned on by default when the request names none (`None`, e.g. MCP without `loras`). Also
-/// returns notes for the ones skipped.
+/// The LoRAs a job uses: `requested` ids or names (case-insensitive), in that order. A request
+/// without the field (MCP, the HTTP API) uses none: LoRAs are an app feature for now (decided
+/// 2026-10-20: no catalog of LoRAs with a clear purpose that an agent could pick). "On by
+/// default" is applied by the app, which always sends its list. Also returns notes for the ones
+/// skipped.
 pub fn resolve(cfg: &AppConfig, requested: Option<&[String]>) -> (Vec<AppliedLora>, Vec<String>) {
     let mut notes = Vec::new();
     let chosen: Vec<&LoraEntry> = match requested {
-        None => cfg.loras.iter().filter(|l| l.on_by_default).collect(),
+        None => Vec::new(),
         Some(list) => {
             let mut out: Vec<&LoraEntry> = Vec::new();
             for want in list {
@@ -618,7 +620,9 @@ mod tests {
         for id in ["film", "angles", "off"] {
             std::fs::write(cfg.lora_dir().join(format!("{id}.safetensors")), b"x").unwrap();
         }
-        let (on, notes) = resolve(&cfg, None);
+        // MCP / API requests name no LoRAs: none, whatever is on by default in the app.
+        assert_eq!(resolve(&cfg, None), (vec![], vec![]));
+        let (on, notes) = resolve(&cfg, Some(&["gone".into(), "film".into()]));
         assert_eq!(on.iter().map(|l| l.id.as_str()).collect::<Vec<_>>(), ["film"]);
         assert!(notes[0].contains("\"GONE\" is missing"));
         let (on, notes) = resolve(&cfg, Some(&["Angles".into(), "film".into(), "film".into(), "nope".into()]));

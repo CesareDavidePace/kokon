@@ -398,7 +398,7 @@ pub struct LoraEntry {
     pub weight: f32,
     /// Added in front of the prompt when the LoRA is used.
     pub trigger_words: String,
-    /// On in every new project (and for MCP requests that name no LoRAs).
+    /// On in every new project of the app (MCP never uses LoRAs).
     pub on_by_default: bool,
     /// Size of the copy in bytes.
     pub size: u64,

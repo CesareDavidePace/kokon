@@ -295,6 +295,31 @@ to read your prompt) to write a detailed English prompt, looking at your photo f
 inside stable-diffusion.cpp, so there is no second language model in memory. The image then uses
 that prompt, and the result keeps both yours and the written one.
 
+### The engine
+
+Kokon runs on [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) by leejet.
+Prompt+ needed something it doesn't have: a way for the Qwen3-VL text encoder, already loaded for
+the image, to write text. The easy route was a second language model next to it, but another 5 GB
+model doesn't fit beside Qwen-Image 2.1 on 8–12 GB cards or on most Macs. So since 0.10 Kokon runs
+its own build of stable-diffusion.cpp, from
+[our fork](https://github.com/GabrieleLozupone/stable-diffusion.cpp/tree/kokon), on Windows,
+macOS and Linux. It is upstream plus a few additions:
+
+- **Text generation on the loaded text encoder:** a decoding loop with a KV cache, sampling, the
+  chat template with image tokens, and a `/sdcpp/v1/text_gen` endpoint in sd-server. With greedy
+  decoding it writes the same tokens as llama.cpp on the same GGUF.
+- **Room on small cards:** while it writes, the diffusion model and the VAE wait in RAM if the GPU
+  is short of memory, and come back in about half a second for the image. Prompt+ fits within
+  8 GB (tested on an 8 GB-capped card).
+- **Speed:** the decoding step is reused from token to token and, on NVIDIA, replayed as a CUDA
+  graph: about 127 tokens/s on an RTX 5070 Ti (llama.cpp: 133–145), so a prompt takes 1–2 s.
+
+The image side is upstream's code, and our changes leave its images bit-identical. We proposed
+the text generation upstream ([#2155](https://github.com/leejet/stable-diffusion.cpp/issues/2155));
+leejet prefers to keep text generation out of stable-diffusion.cpp, since llama.cpp already does
+it, which is fair. So it lives in our fork, which we keep close to upstream's master. Kokon still
+works with an official stable-diffusion.cpp release, just without Prompt+.
+
 Want the details? The [engineering notes](docs/engineering-notes.md) cover the architecture,
 the measured backend settings and the reasons behind each default.
 
@@ -744,7 +769,8 @@ Model weights and the upscaler are downloaded from their authors and keep their 
 (see the [FAQ](#faq)).
 
 Kokon builds on [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) by
-leejet, [Qwen-Image 2.1](https://huggingface.co/Qwen/Qwen-Image-2.1) and its Turbo model by the
+leejet (since 0.10 through [our fork](https://github.com/GabrieleLozupone/stable-diffusion.cpp/tree/kokon),
+kept close to upstream), [Qwen-Image 2.1](https://huggingface.co/Qwen/Qwen-Image-2.1) and its Turbo model by the
 Qwen team, DogukanUrker's Turbo GGUF conversions, [Tauri](https://tauri.app) and
 the upscalers by Nmkd (Superscale-SP), Philip Hofmann (4xNomos2 MoSR) and Kim2091 (UltraSharp).
 Thank you.

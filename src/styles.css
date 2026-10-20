@@ -1,48 +1,64 @@
 @import "@fontsource-variable/inter";
 
+/* Paper and ink (assets/brand): the window is paper (--ground); what sits on it is a card
+   (--bg) lifted by a soft shadow; --surface* are paper tints for fills and hovers. */
 :root {
+  --ground: #f7f6f2;
   --bg: #ffffff;
-  --surface: #f4f4f4;
-  --surface-2: #e9e9e9;
-  --surface-3: #dcdcdc;
-  --border: #e4e4e4;
+  --surface: #f0eee9;
+  --surface-2: #e7e4dd;
+  --surface-3: #dad6ce;
+  --border: rgba(13, 13, 13, 0.08);
+  --border-2: rgba(13, 13, 13, 0.14);
   --text: #0d0d0d;
-  --text-2: #5c5c5c;
-  --text-3: #8e8e8e;
+  --text-2: #55534e;
+  --text-3: #75736d;
   --invert-bg: #0d0d0d;
-  --invert-text: #ffffff;
-  --scrim: rgba(255, 255, 255, 0.82);
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 6px 24px rgba(0, 0, 0, 0.08);
-  --checker: #f0f0f0;
-  --sidebar: #f9f9f9;
+  --invert-text: #f7f6f2;
+  --scrim: rgba(247, 246, 242, 0.84);
+  /* depth: a resting card, a floating panel (menus, dialogs), the image laid on the page */
+  --lift: 0 1px 0 rgba(13, 13, 13, 0.03), 0 1px 2px rgba(13, 13, 13, 0.06), 0 10px 28px -12px rgba(13, 13, 13, 0.16);
+  --shadow: 0 0 0 1px rgba(13, 13, 13, 0.06), 0 2px 6px rgba(13, 13, 13, 0.05), 0 24px 56px -18px rgba(13, 13, 13, 0.24);
+  --print: 0 2px 4px rgba(13, 13, 13, 0.06), 0 30px 60px -28px rgba(13, 13, 13, 0.38);
+  --glow: rgba(255, 255, 255, 0.9);
+  --checker: #ebe9e3;
+  --sidebar: transparent;
   --radius: 14px;
+  --radius-img: 14px;
+  /* motion: the cocoon's curve (things arrive out of a soft blur) */
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
   --font: "Inter Variable", "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   color-scheme: light;
 }
 
 /* data-theme is set before the first paint by public/theme.js (OS setting or Settings → General). */
 :root[data-theme="dark"] {
-  --bg: #161616;
-  --surface: #222222;
-  --surface-2: #2c2c2c;
-  --surface-3: #383838;
-  --border: #2c2c2c;
-  --text: #ececec;
-  --text-2: #a3a3a3;
-  --text-3: #6f6f6f;
-  --invert-bg: #ececec;
-  --invert-text: #111111;
-  --scrim: rgba(22, 22, 22, 0.85);
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 28px rgba(0, 0, 0, 0.45);
-  --checker: #1f1f1f;
-  --sidebar: #1d1d1d;
+  --ground: #0f0f0e;
+  --bg: #1a1a18;
+  --surface: #232321;
+  --surface-2: #2c2c29;
+  --surface-3: #383834;
+  --border: rgba(242, 241, 237, 0.08);
+  --border-2: rgba(242, 241, 237, 0.15);
+  --text: #f2f1ed;
+  --text-2: #b4b2ac;
+  --text-3: #8a8884;
+  --invert-bg: #f2f1ed;
+  --invert-text: #0f0f0e;
+  --scrim: rgba(15, 15, 14, 0.85);
+  --lift: inset 0 1px 0 rgba(255, 255, 255, 0.045), 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 28px -12px rgba(0, 0, 0, 0.6);
+  --shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 0 1px rgba(242, 241, 237, 0.07), 0 24px 60px -18px rgba(0, 0, 0, 0.75);
+  --print: 0 2px 6px rgba(0, 0, 0, 0.4), 0 34px 70px -24px rgba(0, 0, 0, 0.85);
+  --glow: rgba(247, 246, 242, 0.055);
+  --checker: #1d1d1b;
+  --sidebar: transparent;
   color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
 body {
-  background: var(--bg);
+  background: var(--ground);
   color: var(--text);
   font-family: var(--font);
   font-size: 14px;
@@ -318,7 +334,7 @@ input[type="range"] { width: 100%; accent-color: var(--text); }
 .muted { color: var(--text-3); font-size: 12px; }
 
 /* ---------- overlays ---------- */
-.overlay { position: absolute; inset: 0; z-index: 30; background: var(--bg); display: flex; flex-direction: column; }
+.overlay { position: absolute; inset: 0; z-index: 30; background: var(--ground); display: flex; flex-direction: column; }
 .overlay-head { height: 52px; display: flex; align-items: center; gap: 10px; padding: 0 12px 0 16px; flex: none; }
 .overlay-head h2 { font-size: 15px; font-weight: 600; margin: 0; }
 .overlay-head .spacer { flex: 1; }
@@ -445,7 +461,7 @@ pre.diag { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font
 .compare-box.slider.zoomed { cursor: inherit; }
 .compare-img, .compare-diff { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 /* Areas the original did not cover (expanded edges) show the checkerboard. */
-.compare-before { position: absolute; inset: 0; background-color: var(--bg); background-image: conic-gradient(var(--checker) 25%, transparent 0 50%, var(--checker) 0 75%, transparent 0); background-size: 16px 16px; }
+.compare-before { position: absolute; inset: 0; background-color: var(--ground); background-image: conic-gradient(var(--checker) 25%, transparent 0 50%, var(--checker) 0 75%, transparent 0); background-size: 16px 16px; }
 .compare-before img { position: absolute; display: block; }
 .compare-handle { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35); cursor: ew-resize; }
 /* a wider grab area, so the handle can be dragged while zoomed in */
@@ -522,7 +538,7 @@ pre.diag { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font
 .nav-arrow:focus-visible { opacity: 1; }
 
 /* gallery preview: one image over the grid */
-.preview { position: absolute; inset: 0; z-index: 5; background: var(--bg); display: flex; flex-direction: column; }
+.preview { position: absolute; inset: 0; z-index: 5; background: var(--ground); display: flex; flex-direction: column; }
 .preview-prompt { flex: 1; min-width: 0; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .preview-pos { font-size: 13px; font-variant-numeric: tabular-nums; }
 .preview-stage { position: relative; flex: 1; min-height: 0; }

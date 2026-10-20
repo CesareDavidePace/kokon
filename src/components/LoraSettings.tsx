@@ -120,7 +120,7 @@ export function LoraSettings() {
     <>
       <div className="setting-card">
         <div className="setting-card-text">
-          <strong>Your LoRA files</strong>
+          <strong>Your LoRA files (beta)</strong>
           <span className="muted">
             Load LoRAs made for Qwen-Image 2.1 (.safetensors). Kokon checks each file and keeps its own prepared copy; your file is not changed. Turn them on or off for each project with the
             LoRA button next to the prompt, up to {MAX_LORAS} at a time.
@@ -130,6 +130,9 @@ export function LoraSettings() {
           <Plus size={15} /> {busy ? "Checking…" : "Load a LoRA…"}
         </button>
       </div>
+      <span className="muted">
+        Beta: tested on Windows with an NVIDIA card. It should work the same on Mac and Linux, but it hasn't been tested there yet: please tell us how it goes on GitHub.
+      </span>
       <span className="muted">
         Most LoRAs are trained on the full Qwen-Image 2.1 model, while Kokon runs the faster Turbo model. The popular ones we tested didn't improve on what Turbo does with a good prompt, so compare
         with the LoRA on and off. A LoRA makes each image about 20 % slower.

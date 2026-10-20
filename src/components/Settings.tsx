@@ -232,7 +232,7 @@ export function Settings() {
   const nav: [Tab, string, React.ReactNode][] = [
     ["general", "General", <Settings2 size={16} key="g" />],
     ["models", "Models", <HardDrive size={16} key="m" />],
-    ["lora", "LoRA", <Layers size={16} key="l" />],
+    ["lora", "LoRA (beta)", <Layers size={16} key="l" />],
     ["performance", "Performance", <Cpu size={16} key="p" />],
     ["diagnostics", "Diagnostics", <Activity size={16} key="d" />],
   ];

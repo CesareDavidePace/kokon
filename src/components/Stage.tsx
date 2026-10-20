@@ -12,7 +12,7 @@ import {
   addAsReference, addResult, cancelJob, focusPrompt, getState, itemSource, removeSessionItem, reusePrompt, selectedItem, selectItem, sessionLabels, sessionLinks, setState, submitRequest, toastError, toastInfo, useStore, type SessionItem,
 } from "../lib/store";
 import type { GenerationRecord, GenerationRequest, JobView, LutEntry, Mode, Size } from "../lib/types";
-import { Cocoon, Hatch, reducedMotion } from "./Cocoon";
+import { Cocoon, Hatch, reducedMotion, SilkSpin } from "./Cocoon";
 import { CompareFrame, CompareFullscreen } from "./Compare";
 import { LutBar, LutButton, LutOverlay } from "./Lut";
 import { IconButton, Popover, useFit } from "./ui";
@@ -671,7 +671,13 @@ const R = 5;
 function Joint({ kind, hot }: { kind: LinkKind; hot: boolean }) {
   if (kind === "start") return <span className="joint break" aria-hidden />;
   if (kind === "branch" || kind === "combine") return <span className="joint gap" aria-hidden />;
-  return <span className={`joint link ${kind === "variant" ? "dashed" : ""} ${hot ? "hot" : ""}`} aria-hidden />;
+  // Two silk threads between the thumbnails' centres (25 px down the 50 px frame).
+  return (
+    <svg className={`joint silk ${kind === "variant" ? "dashed" : ""} ${hot ? "hot" : ""}`} viewBox="0 0 22 50" aria-hidden>
+      <path className="t1" d="M-3 25 C 5 30.5, 17 30.5, 25 25" />
+      <path className="t2" d="M-3 24 C 6 20, 15 21, 25 26" />
+    </svg>
+  );
 }
 
 function linkText(link: TimelineLink | undefined, labels: Record<string, string>): string {
@@ -827,14 +833,15 @@ function Timeline({ labels }: { labels: Record<string, string> }) {
                 }}
                 onPointerCancel={endDrag}
               >
+                <span className="frame-box">
                 <span className="frame-img">
                   {src && <img src={urls.sourceThumb(src)} alt="" draggable={false} />}
                   {pendingSrc && <img className="dim" src={urls.sourceThumb(pendingSrc)} alt="" draggable={false} />}
-                  {pending && !failed && (
+                  {pending && !failed && (job && job.status !== "queued" ? <JobCocoon job={job} request={it.request} /> : (
                     <span className="frame-state">
-                      {job && job.status !== "queued" ? <JobRing job={job} request={it.request} /> : <Loader2 className="spin" size={16} />}
+                      <SilkSpin size={30} />
                     </span>
-                  )}
+                  ))}
                   {failed && (
                     <span className="frame-state">
                       <X size={16} />
@@ -845,6 +852,13 @@ function Timeline({ labels }: { labels: Record<string, string> }) {
                       <Pencil size={10} />
                     </span>
                   )}
+                </span>
+                {selected === it.key && (
+                  <svg className="frame-silk" viewBox="0 0 60 60" aria-hidden>
+                    <rect className="ring" x="1" y="1" width="58" height="58" rx="17" />
+                    <rect className="run" x="1" y="1" width="58" height="58" rx="17" pathLength={200} />
+                  </svg>
+                )}
                 </span>
                 <span className="frame-label">
                   {mode && MODE_ICON[mode]}
@@ -860,20 +874,17 @@ function Timeline({ labels }: { labels: Record<string, string> }) {
   );
 }
 
-/** The whole job's progress in the timeline, the same percentage as its card. */
-function JobRing({ job, request }: { job: JobView; request?: GenerationRequest | null }) {
+/** The whole job's progress in the timeline, the same percentage as its card: a tiny cocoon
+ * that fills as the job advances, with the number under it. */
+function JobCocoon({ job, request }: { job: JobView; request?: GenerationRequest | null }) {
   const { pct } = useJobPercent(job, request);
-  return <Ring frac={pct / 100} />;
-}
-
-function Ring({ frac }: { frac: number }) {
-  const r = 8;
-  const c = 2 * Math.PI * r;
   return (
-    <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden>
-      <circle cx="10" cy="10" r={r} fill="none" stroke="currentColor" strokeOpacity="0.25" strokeWidth="2.5" />
-      <circle cx="10" cy="10" r={r} fill="none" stroke="currentColor" strokeWidth="2.5" strokeDasharray={c} strokeDashoffset={c * (1 - frac)} strokeLinecap="round" transform="rotate(-90 10 10)" />
-    </svg>
+    <>
+      <span className="frame-state">
+        <SilkSpin size={28} fill={pct / 100} />
+      </span>
+      <span className="frame-pct">{Math.floor(pct)}</span>
+    </>
   );
 }
 

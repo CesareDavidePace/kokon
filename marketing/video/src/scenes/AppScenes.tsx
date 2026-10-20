@@ -158,7 +158,7 @@ export function Create() {
   // Once the card has formed the logo: a hard cut to the same logo filling the frame, and the
   // image hatches out of it full frame (the app's hatching, on the frame instead of the stage).
   const full = f >= C.hatch ? 1 : 0;
-  const words = cues.find((c) => c.from === 2)!;
+  const words = cues.find((c) => c.from === 3)!;
   return (
     <AbsoluteFill>
       <Backdrop />
@@ -178,9 +178,9 @@ export function Create() {
       <Caption title="Made on your own GPU." sub="Qwen-Image 2.1 Turbo · Prompt+ ~2 s, then 2752×1536 in 38 s on an RTX 5070 Ti (sped up here)" start={C.leave + 14} end={C.hatch} size={48} />
       <Words
         items={[
-          { text: "No cloud.", at: sentenceAt(words, 2) },
-          { text: "No account.", at: sentenceAt(words, 3) },
-          { text: "No subscription.", at: sentenceAt(words, 4) },
+          { text: "No cloud.", at: sentenceAt(words, 3) },
+          { text: "No account.", at: sentenceAt(words, 4) },
+          { text: "No subscription.", at: sentenceAt(words, 5) },
         ]}
         end={LENGTH.create - 4}
       />

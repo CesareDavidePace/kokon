@@ -43,7 +43,7 @@
 
 https://github.com/user-attachments/assets/8851c580-99b9-432a-82be-b6d42fa9a749
 
-<p align="center"><a href="https://youtu.be/ulMVqrhrn-w">Watch in 4K on YouTube</a></p>
+<p align="center"><a href="https://youtu.be/y2NAJkZ4vH0">Watch in 4K on YouTube</a> · <a href="https://youtu.be/qGiGXasJJNI">What's new in 0.10 (42 s)</a></p>
 
 <p align="center">
   <a href="https://github.com/GabrieleLozupone/kokon/releases/latest"><picture>

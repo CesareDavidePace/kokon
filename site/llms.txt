@@ -25,4 +25,5 @@ Key facts (version 0.10.0, October 2026):
 - [GitHub repository](https://github.com/GabrieleLozupone/kokon): source, README, issues
 - [Latest release](https://github.com/GabrieleLozupone/kokon/releases/latest): Windows installer and Mac app
 - [npm package kokon-mcp](https://www.npmjs.com/package/kokon-mcp): MCP server launcher
-- [Demo video](https://www.youtube.com/watch?v=ulMVqrhrn-w): 85 seconds
+- [Demo video](https://www.youtube.com/watch?v=y2NAJkZ4vH0): 85 seconds
+- [What's new in 0.10](https://www.youtube.com/watch?v=qGiGXasJJNI): 42 seconds

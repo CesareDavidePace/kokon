@@ -71,7 +71,8 @@ https://github.com/user-attachments/assets/8851c580-99b9-432a-82be-b6d42fa9a749
     <td width="33%" valign="top">
       <h3>✍️ Just describe it</h3>
       “Remove all the people from the beach.” “Make it golden hour.” Kokon picks the mode, the
-      resolution and the memory settings for you. There are no sliders to learn.
+      resolution and the memory settings for you. There are no sliders to learn. Only have a short
+      idea? Prompt+ writes the detailed prompt for you, in any language.
     </td>
     <td width="33%" valign="top">
       <h3>🔒 Private by design</h3>
@@ -249,6 +250,8 @@ files are not tested by Kokon; you can switch to the official files at any time 
 | Dragged edges | **Expand** the photo (outpainting) | Or type pixel or percent values |
 | Any result | **Upscale** to 2×, 4K, the source size or a custom width | With the upscaler model, in seconds |
 | Any result | **Colour-grade** it with a LUT | Eight built-in looks (Neutral takes out a yellow cast) or your own `.cube` files, live preview with intensity |
+| A short idea, in any language | **Prompt+** writes the detailed prompt first | You watch it being written; for edits it looks at your photo. Runs on the model Kokon already has: no extra download, a few seconds more |
+| Your own LoRA files | **Apply them** to a project (beta) | Qwen-Image 2.1 LoRAs (`.safetensors`) loaded in Settings → LoRA, up to 3 at once, each with its strength |
 
 **New to prompts?** The [prompt guide](https://kokon.app/prompt-guide/) shows good and bad prompts side by side, with real results.
 
@@ -264,6 +267,8 @@ opened in Explorer, Finder or your file manager. A few things make that loop fas
   Undo returns to the version the current one came from, and nothing is ever deleted.
 - **Gallery**: every image keeps its full recipe (prompt, seed, settings, pipeline) and reopens
   with one click. The recipe is also embedded in the PNG.
+- **Clean up in one go**: press **Select** (or <kbd>Ctrl</kbd>/<kbd>⌘</kbd>-click, <kbd>Shift</kbd>-click
+  for a range) to remove several projects or delete several gallery images at once.
 - **Quality presets**: **Fast** (the default, ~1 MP), **Balanced** (~1.5K) and **Quality**
   (native 2K). All run Qwen's official 8-step Turbo model with its own schedule, so you never
   need to tune steps or guidance.
@@ -284,6 +289,11 @@ and runs a single diffusion pass. When the result has to be larger than what the
 it is enlarged with an AI upscaler instead of a plain resize. For brushed edits, Kokon marks the area on
 a second reference image so the model knows exactly where to work. Without that, Qwen-Image 2.1
 cannot see the mask.
+
+With **Prompt+** on, the planner first asks the model's own text encoder (Qwen3-VL, already loaded
+to read your prompt) to write a detailed English prompt, looking at your photo for edits. It runs
+inside stable-diffusion.cpp, so there is no second language model in memory. The image then uses
+that prompt, and the result keeps both yours and the written one.
 
 Want the details? The [engineering notes](docs/engineering-notes.md) cover the architecture,
 the measured backend settings and the reasons behind each default.
@@ -633,10 +643,12 @@ or macOS version and the log from `KokonData/logs` (see the table above).
 - [x] Linux (`.deb` and `.rpm`, beta)
 - [x] Colour LUTs: built-in looks and your own `.cube` files
 - [x] Qwen's official 8-step Turbo model for every preset
+- [x] Prompt+: the prompt enhancer on the model Kokon already has (0.10.0)
+- [x] Your own LoRA files, per project (0.10.0, beta)
 - [ ] AMD and Intel GPUs through Vulkan (beta now; works on NVIDIA, to verify on AMD/Intel)
 - [ ] Background removal and transparent cutouts
 - [ ] Batch edits: one instruction for a whole folder
-- [ ] LoRA support, with a curated list tested with Kokon (0.10.0)
+- [ ] Curated LoRAs tested with Kokon, installed in one click
 - [ ] Headless server with the interface in the browser, then Docker
   ([#15](https://github.com/GabrieleLozupone/kokon/issues/15))
 - [ ] Plugins for Krita, GIMP and Photoshop through the local API

@@ -11,10 +11,10 @@ export const FADE = 18;
 export const LENGTH = {
   intro: 120,
   hook: 150,
-  create: 384,
+  create: 475,
   region: 475,
   versions: 155,
-  montage: 597,
+  montage: 506,
   agent: 300,
   hardware: 240,
   outro: 240,
@@ -76,11 +76,15 @@ const cue = (scene: SceneName, line: number, local: number, from = 0, to = from)
 const all = (scene: SceneName, line: number, local: number): Cue => cue(scene, line, local, 0, LINES[String(line)].sentences.length - 1);
 
 // Scene-local frames where things happen that the voice names. Scenes import these too.
-export const CREATE = { ask: 100, send: 172, done: 232, flyIn: 236, promises: 252 };
+// Create with Prompt+: a few words typed, Prompt+ on, Send on beat 10 and a cut to the card; it
+// writes the prompt, fades to the percentage, the result hatches, and the full-frame image
+// arrives on beat 22.
+export const CREATE = { ask: 100, pill: 150, writes: 158, send: 172, job: 173, write: 180, written: 244, leave: 256, rest: 264, form: 278, done: 294, hatch: 300, full: 355, promises: 360 };
 // Shot changes (removeCut, removeShot, addCut, addShot) and the scene's end sit on beats.
 export const REGION = { paint: 46, paint1: 130, removeCut: 138, remove: 150, removeSend: 177, removeShot: 185, addCut: 246, add: 256, addSend: 298, addShot: 307, same: 344 };
 export const MONTAGE_EDIT = 91.5; // 1.5 bars
-export const MONTAGE = { edits: 6, mosaic: 549 };
+// Five edits ("Shoot a product ad." made room for Prompt+ in Create, so the drop stays put).
+export const MONTAGE = { edits: 5, mosaic: 458 };
 export const AGENT = { works: 83, ask: 150 };
 export const OUTRO = { try: 102, knows: 144 };
 
@@ -89,7 +93,9 @@ export const CUES: Cue[] = [
   all("hook", 2, 15),
   cue("create", 3, 12, 0),
   cue("create", 3, CREATE.ask, 1),
-  cue("create", 3, CREATE.promises, 2, 4),
+  cue("create", 3, CREATE.writes, 2),
+  cue("create", 3, CREATE.rest, 3),
+  cue("create", 3, CREATE.promises, 4, 6),
   cue("region", 4, 6, 0),
   cue("region", 4, 58, 1),
   cue("region", 4, REGION.remove, 2),
@@ -97,6 +103,7 @@ export const CUES: Cue[] = [
   cue("region", 4, REGION.same, 4),
   all("versions", 5, 10),
   ...Array.from({ length: MONTAGE.edits }, (_, i) => cue("montage", 6, Math.round(i * MONTAGE_EDIT) + 4, i)),
+  // Sentence 5 ("Shoot a product ad.") is no longer played.
   cue("montage", 6, MONTAGE.mosaic + 3, 6),
   cue("agent", 7, 14, 0),
   cue("agent", 7, AGENT.works, 1),

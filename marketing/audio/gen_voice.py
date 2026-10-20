@@ -3,6 +3,15 @@
     D:/AI/tts/.venv/Scripts/python gen_voice.py [take ...]          -> voice/<take>.wav
     D:/AI/tts/.venv/Scripts/python gen_voice.py --ref me.wav [take ...]
     D:/AI/tts/.venv/Scripts/python gen_voice.py final              -> voice/final/NN.wav (approved take)
+    D:/AI/tts/.venv/Scripts/python gen_voice.py redo 3 --keep 0:0,4:2 [--seeds 6]
+                                                    -> voice/redo-<stamp>/: takes of line 3's new sentences
+    D:/AI/tts/.venv/Scripts/python gen_voice.py splice 3 --keep 0:0,4:2 --pick 1:13,2:22 --from voice/redo-<stamp>
+                                                    -> line 3 rebuilt from kept and picked sentences
+
+redo/splice change single sentences of the approved take: `--keep NEW:OLD` reuses old sentence
+OLD (cut from voice/final/raw by raw/spans.json) as new sentence NEW; the other sentences of the
+line in voiceover.md get takes to audition, and `--pick NEW:SEED` chooses one each (the auditioned file itself). splice backs
+voice/final up first and matches the line's loudness to the old file.
 
 Each take reads the whole script (voiceover.md, one file per line too, in voice/<take>/NN.wav)
 so takes can be compared on the same text. Without --ref the model's built-in voice is used;
@@ -14,6 +23,7 @@ import json
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import numpy as np
@@ -166,11 +176,87 @@ def final() -> None:
     print("copied to video/public/voice, timings in video/src/app/voice.json")
 
 
+def pairs(arg: str | None) -> dict[int, int]:
+    return {int(a): int(b) for a, b in (p.split(":") for p in arg.split(","))} if arg else {}
+
+
+def redo(n: int, keep: dict[int, int], seeds: int, take: str, base: int) -> None:
+    """Takes of the sentences of line `n` that are not kept, for picking by ear."""
+    parts = sentences(script_lines()[n - 1])
+    folder = OUT / f"redo-{time.strftime('%Y%m%d-%H%M%S')}"
+    folder.mkdir(parents=True)
+    for i, text in enumerate(parts):
+        if i in keep:
+            continue
+        for k in range(seeds):
+            seed = base + 10 * i + k
+            a = say(take, text, None, seed)
+            raw = folder / f"{n:02d}-s{i}-seed{seed}.raw.wav"
+            sf.write(raw, a, SR)
+            master(raw, folder / f"{n:02d}-s{i}-seed{seed}.wav")
+            print(f"{n:02d} s{i} seed {seed}  {a.size / SR:4.1f} s  {text}", flush=True)
+    print(f"takes in {folder}")
+
+
+def splice(n: int, keep: dict[int, int], pick: dict[int, int], src: Path) -> None:
+    """Line `n` rebuilt: kept sentences cut from the approved raw file, picked takes from `src`
+    (the raw files redo wrote), 0.4 s between sentences, mastered to the old file's loudness."""
+    parts = sentences(script_lines()[n - 1])
+    missing = [i for i in range(len(parts)) if i not in keep and i not in pick]
+    if missing:
+        raise SystemExit(f"no take picked for sentences {missing}")
+    folder = OUT / "final"
+    spans_file = folder / "raw" / "spans.json"
+    spans = json.loads(spans_file.read_text(encoding="utf-8"))
+    old_raw, sr = sf.read(folder / "raw" / f"{n:02d}.wav", dtype="float32")
+    assert sr == SR
+    backup = OUT / f"final-backup-{time.strftime('%Y%m%d-%H%M%S')}"
+    shutil.copytree(folder, backup)
+    target = lufs(folder / f"{n:02d}.wav")
+    chunks, marks, pos = [], [], 0
+    for i, text in enumerate(parts):
+        if i in keep:
+            a, b = spans[str(n)]["sentences"][keep[i]]
+            c = old_raw[int(round(a * SR)):int(round(b * SR))]
+        else:
+            c, sr = sf.read(src / f"{n:02d}-s{i}-seed{pick[i]}.raw.wav", dtype="float32")
+            assert sr == SR
+        chunks.append(c)
+        marks.append([round(pos / SR, 3), round((pos + c.size) / SR, 3)])
+        pos += c.size
+        if i < len(parts) - 1:
+            chunks.append(np.zeros(int(SENTENCE_PAUSE * SR), dtype=np.float32))
+            pos += chunks[-1].size
+    raw = folder / "raw" / f"{n:02d}.wav"
+    sf.write(raw, np.concatenate(chunks), SR)
+    spans[str(n)] = {"dur": round(pos / SR, 3), "sentences": marks}
+    spans_file.write_text(json.dumps(spans, indent=1) + "\n", encoding="utf-8")
+    tmp = folder / f"{n:02d}.tmp.wav"
+    master(raw, tmp)
+    master(tmp, folder / f"{n:02d}.wav", target - lufs(tmp))
+    tmp.unlink()
+    shutil.copy(folder / f"{n:02d}.wav", VIDEO / "public" / "voice" / f"{n:02d}.wav")
+    vj = VIDEO / "src" / "app" / "voice.json"
+    video = json.loads(vj.read_text(encoding="utf-8"))
+    video[str(n)] = spans[str(n)]
+    vj.write_text(json.dumps(video, indent=1) + "\n", encoding="utf-8")
+    print(f"{n:02d}  {pos / SR:4.1f} s at {lufs(folder / f'{n:02d}.wav'):.1f} LUFS (was {target:.1f}); backup in {backup}")
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("takes", nargs="*", default=list(TAKES))
     ap.add_argument("--ref", type=Path)
     ap.add_argument("--seed", type=int, default=11)
+    ap.add_argument("--keep", help="redo/splice: NEW:OLD sentence pairs reused from the approved take")
+    ap.add_argument("--pick", help="splice: NEW:SEED, the take chosen for each new sentence")
+    ap.add_argument("--seeds", type=int, default=6, help="redo: takes per new sentence")
+    ap.add_argument("--take", default="expressive")
+    ap.add_argument("--from", dest="src", type=Path)
     a = ap.parse_args()
+    if a.takes[:1] == ["redo"]:
+        raise SystemExit(redo(int(a.takes[1]), pairs(a.keep), a.seeds, a.take, a.seed))
+    if a.takes[:1] == ["splice"]:
+        raise SystemExit(splice(int(a.takes[1]), pairs(a.keep), pairs(a.pick), a.src))
     for t in a.takes:
         final() if t == "final" else read(t, a.ref, a.seed)

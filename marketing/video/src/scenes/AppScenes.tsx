@@ -10,7 +10,8 @@ import { FullImage } from "../app/FullImage";
 import { imageBox, InpaintOverlay, strokePoints } from "../app/InpaintOverlay";
 import { Backdrop, type Cam, Camera, camAt, camSpeed, Caption, DepthOfField, Dissolve, inOut, kf, Pointer, prog, typed, typingDone, Vignette } from "../app/motion";
 import { Send, Sfx } from "../app/sound";
-import { CREATE, LENGTH, REGION, sceneCues, sentenceAt } from "../app/timeline";
+import { CREATE, FPS, LENGTH, REGION, sceneCues, sentenceAt } from "../app/timeline";
+import type { CardMotion } from "../mocks/card";
 import type { State } from "../mocks/store";
 
 const inpaintReq = (prompt: string, from: string, action: "remove" | "add") => ({
@@ -22,7 +23,8 @@ const inpaintReq = (prompt: string, from: string, action: "remove" | "add") => (
   advanced: {},
   inpaint_action: action,
 });
-const STREET = gen("street", "generate", PROMPTS.street);
+// Made with Prompt+ from a few words: the record keeps the written prompt and the user's own.
+const STREET = gen("street", "generate", PROMPTS.enhanced, undefined, { original_prompt: PROMPTS.idea, request: { prompt: PROMPTS.idea, mode: "generate", images: [], quality: "quality", resolution: "auto", advanced: {}, enhance: true } });
 const REMOVED = gen("street-removed", "inpaint", PROMPTS.remove, "street", { request: inpaintReq(PROMPTS.remove, "street", "remove") });
 const CAT = gen("street-cat", "inpaint", PROMPTS.add, "street-removed", { request: inpaintReq(PROMPTS.add, "street-removed", "add") });
 const STREET_PROJECT = { id: "current", title: "Italian street café", updatedAt: Date.now() - 20_000, cover: "gen:street", count: 1 };
@@ -70,94 +72,114 @@ function Words({ items, end }: { items: { text: string; at: number }[]; end: num
 const Tag = ({ text, start, end }: { text: string; start: number; end: number }) => <Caption title={text} start={start} end={end} y={930} size={48} />;
 
 // ---------------------------------------------------------------------------------------
-// Create: the window arrives, a sentence is typed, the image is made, and the camera flies
-// into it. "No cloud. No account. No subscription." over the finished picture.
+// Create: the window arrives and a few words are typed; Prompt+ on, Send. Cut to the card:
+// Prompt+ writes the full prompt, the percentage takes over the cocoon, the image hatches out
+// of the logo, then fills the frame. "No cloud. No account. No subscription." over it.
 // ---------------------------------------------------------------------------------------
 export const CREATE_FRAMES = LENGTH.create;
+
+/** The card's shot: the stage, still (a slow push only). */
+// Zoomed so the window just fills the width (the camera then holds it edge to edge).
+const CARD_CAM: Cam = { x: 720, y: 400, s: 1.34 };
+const PILL: [number, number] = [840, 853];
+
+/** The job's percentage at scene frame `f`: the image starts while Prompt+ is still on screen. */
+const createPct = (f: number) => kf(f, [[CREATE.write, 0], [CREATE.form, 92], [CREATE.done, 100]]);
 
 export function Create() {
   const f = useCurrentFrame();
   const base = appState();
   const cues = sceneCues("create");
-  const T0 = CREATE.ask;
-  const T1 = typingDone(PROMPTS.street, T0, 80);
-  const SEND_AT = CREATE.send;
-  const JOB = SEND_AT + 2;
-  const DONE = CREATE.done;
-  const FLY = CREATE.flyIn;
-  const FULL = FLY + 22;
+  const C = CREATE;
+  const T0 = C.ask + 2;
+  const T1 = typingDone(PROMPTS.idea, T0, 32);
+  // Prompt+ writes the whole prompt in about two seconds on screen (sped up, like the image).
+  const cps = (PROMPTS.enhanced.length * FPS) / (C.written - C.write);
+  const card: CardMotion = {
+    t: Math.max(0, f - C.job) / FPS,
+    pctAt: (t) => createPct(C.job + t * FPS),
+    chars: Math.max(0, f - C.write) * (cps / FPS),
+    cps,
+    leave: prog(f, C.leave, 21, (x) => x),
+    hatchMs: f >= C.hatch ? ((f - C.hatch) * 1000) / FPS : null,
+  };
+  const request = { prompt: PROMPTS.idea, mode: "generate" as const, images: [], quality: "quality" as const, resolution: "auto" as const, advanced: {}, enhance: true };
 
   const view = (t: number) => {
     let state: State;
-    if (t < JOB) {
-      state = appState({ composer: { ...base.composer, prompt: typed(PROMPTS.street, t, T0, 80) } });
-    } else if (t < DONE) {
-      const j = jobItem("j-street", "generate", PROMPTS.street, "street", undefined, stepAt(t, JOB + 6, 6));
-      state = appState({ session: [j.item], selected: "j-street", jobs: { "j-street": j.job }, ...proj(1, "gen:street") });
+    const composer = { ...base.composer, enhance: t >= C.pill };
+    if (t < C.job) {
+      state = appState({ composer: { ...composer, prompt: typed(PROMPTS.idea, t, T0, 32) } });
+    } else if (t < C.hatch) {
+      const pct = createPct(t);
+      const j = jobItem("j-street", "generate", PROMPTS.idea, "street", undefined, Math.min(8, Math.floor((pct / 100) * 8)));
+      const writing = t < C.write + 40;
+      // The prompt is written while the image is being made; it stays on screen until it leaves.
+      const job = { ...j.job, status: writing ? ("enhancing_prompt" as const) : j.job.status, step: writing ? null : j.job.step, enhanced_prompt: t < C.leave + 21 ? PROMPTS.enhanced : null };
+      state = appState({ session: [{ ...j.item, request }], selected: "j-street", jobs: { "j-street": job }, composer, ...proj(1, "gen:street") });
     } else {
-      state = appState({ session: [genItem(STREET)], selected: "street", ...proj(1, "gen:street") });
+      state = appState({ session: [genItem(STREET)], selected: "street", composer, ...proj(1, "gen:street") });
     }
-    return <AppWindow state={state} width={1440} height={900} busy={t >= JOB && t < DONE} />;
+    return <AppWindow state={state} width={1440} height={900} card={card} />;
   };
 
   const enter = prog(f, 0, 34);
-  const camKeys: [number, Cam][] = [
+  const typingCam = camAt(f, [
     [0, { x: 720, y: 450, s: 1.02 }],
     [40, { x: 720, y: 450, s: 1.1 }],
     [92, PROMPT_CAM],
-    [SEND_AT, { ...PROMPT_CAM, s: 1.86 }],
-    [SEND_AT + 30, { x: 850, y: 330, s: 1.3 }],
-    [FLY, { x: 850, y: 325, s: 1.34 }],
-    [FULL, { x: STAGE_IMG.x, y: STAGE_IMG.y, s: 1920 / STAGE_IMG.w }],
-  ];
-  const at = (t: number) => camAt(t, camKeys);
-  const cam = at(f);
-  // Sharp on the composer while typing; the whole window once the image is being made.
-  const dof = prog(f, 70, 20) * (1 - prog(f, SEND_AT + 2, 16));
+    [C.send, { ...PROMPT_CAM, s: 1.86 }],
+  ]);
+  const onCard = f >= C.job;
+  const cam = onCard ? { ...CARD_CAM, s: CARD_CAM.s + (f - C.job) * 0.0004 } : typingCam;
+  // Sharp on the composer while typing; the whole window on the card.
+  const dof = onCard ? 0 : prog(f, 70, 20);
   const app = (
-    <Camera cam={cam} tilt={(1 - enter) * 16} lift={(1 - enter) * 260} opacity={enter} free={f > 60 && f < SEND_AT + 30} turn={{ x: ANGLE.x * dof, y: ANGLE.y * dof }} blur={f > FLY ? camSpeed(f, at) * 0.12 : 0}>
-      <Dissolve frame={f} cuts={[JOB, DONE]} view={view} dur={10} />
-      <Pointer
-        path={[
-          [56, 980, 700],
-          [88, 640, 812],
-          [112, 1080, 880],
-          [SEND_AT - 16, 1120, 880],
-          [SEND_AT - 2, SEND[0], SEND[1]],
-          [SEND_AT + 24, 1260, 700],
-        ]}
-        clicks={[90, SEND_AT]}
-        hideBefore={56}
-        hideAfter={SEND_AT + 26}
-      />
+    <Camera cam={cam} tilt={(1 - enter) * 16} lift={(1 - enter) * 260} opacity={enter} free={f > 60 && !onCard} turn={{ x: ANGLE.x * dof, y: ANGLE.y * dof }}>
+      {view(f)}
+      {!onCard && (
+        <Pointer
+          path={[
+            [56, 980, 700],
+            [88, 640, 812],
+            [112, 900, 880],
+            [C.pill - 2, PILL[0], PILL[1]],
+            [C.send - 12, 1120, 880],
+            [C.send - 1, SEND[0], SEND[1]],
+          ]}
+          clicks={[90, C.pill, C.send]}
+          hideBefore={56}
+        />
+      )}
     </Camera>
   );
-  const full = prog(f, FULL - 6, 8, inOut);
-  const words = cues.find((c) => c.from === 2)!;
+  const full = prog(f, C.full - 6, 8, inOut);
+  const words = cues.find((c) => c.from === 4)!;
   return (
     <AbsoluteFill>
       <Backdrop />
       {dof > 0.01 ? <DepthOfField focus={PROMPT_FOCUS} blur={7 * dof}>{app}</DepthOfField> : app}
-      {f >= FULL - 6 && (
+      {f >= C.full - 6 && (
         <div style={{ position: "absolute", inset: 0, opacity: full }}>
-          <FullImage before="street" push={1 + prog(f, FULL, LENGTH.create - FULL, (x) => x) * 0.06} dim={0.25 * prog(f, CREATE.promises - 8, 12)} />
+          <FullImage before="street" push={1 + prog(f, C.full, LENGTH.create - C.full, (x) => x) * 0.05} dim={0.25 * prog(f, C.promises - 8, 12)} />
         </div>
       )}
-      <Vignette strength={prog(f, JOB, 12) * (1 - full)} />
-      <Caption title="Made on your own GPU." sub="Qwen-Image 2.1 Turbo · 2752×1536 in 38 s on an RTX 5070 Ti (sped up here)" start={JOB + 8} end={FLY} size={48} />
+      <Vignette strength={(onCard ? 0.7 : 0) * (1 - full)} />
+      <Tag text="Prompt+ writes the prompt." start={C.write - 2} end={C.leave + 12} />
+      <Caption title="Made on your own GPU." sub="Qwen-Image 2.1 Turbo · Prompt+ ~2 s, then 2752×1536 in 38 s on an RTX 5070 Ti (sped up here)" start={C.leave + 14} end={C.full - 4} size={48} />
       <Words
         items={[
-          { text: "No cloud.", at: sentenceAt(words, 2) },
-          { text: "No account.", at: sentenceAt(words, 3) },
-          { text: "No subscription.", at: sentenceAt(words, 4) },
+          { text: "No cloud.", at: sentenceAt(words, 4) },
+          { text: "No account.", at: sentenceAt(words, 5) },
+          { text: "No subscription.", at: sentenceAt(words, 6) },
         ]}
         end={LENGTH.create - 4}
       />
       <Sfx name="click" at={90} />
       <Sfx name="typing" at={T0} dur={T1 - T0} />
-      <Send at={SEND_AT} />
-      <Sfx name="reveal" at={DONE} variant={0} />
-      <Sfx name="whoosh" at={FLY - 4} gain={0.8} />
+      <Sfx name="click" at={C.pill} />
+      <Send at={C.send} />
+      <Sfx name="reveal" at={C.hatch + 6} variant={0} />
     </AbsoluteFill>
   );
 }

@@ -9,6 +9,7 @@ export function Layout() {
   const a = gen("street", "generate", PROMPTS.street);
   const base = appState();
   const states = [
+    appState({ composer: { ...base.composer, prompt: PROMPTS.idea, enhance: true } }),
     appState({ composer: { ...base.composer, prompt: PROMPTS.street } }),
     appState({ session: [genItem(a)], selected: "street", composer: { ...base.composer, refs: [ref("street")] } }),
     appState({ session: [genItem(a)], selected: "street", composer: { ...base.composer, refs: [ref("street")], mask: { inputId: "m", refKey: "ref-street" }, inpaintAction: "remove", prompt: PROMPTS.remove } }),

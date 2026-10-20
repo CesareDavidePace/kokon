@@ -16,18 +16,23 @@ the app's store, service API, native bridge and Tauri modules for mocks (`video/
 each frame's UI comes from a state computed for that frame. Change the app's UI and the video
 follows on the next render. Two parts are copies with the same markup and classes, because
 their state lives inside the component: the paint-area editor (`app/InpaintOverlay.tsx`) and
-the before/after slider (`mocks/Compare.tsx`).
+the before/after slider (`mocks/Compare.tsx`). The job card's motion (percentage, Prompt+ text,
+cocoon, hatching) runs on timers in the app; in the video `mocks/jobMotion.ts` and
+`mocks/Cocoon.tsx` drive the same code (`src/components/jobMotion.ts`, `drawCocoon`, `paintHatch`)
+from the frame, through `<AppWindow card={…}>`, since Remotion renders frames out of order. CSS
+loops follow the frame through `--vt` (`app/theme.css`).
 
 ```powershell
 cd marketing/video
 npm install
 npm run studio                    # preview and scrub in the browser
 npm run render                    # out/kokon-launch.mp4, 1920×1080, ~85 s, about 5 minutes
+npx remotion render KokonLaunch out/kokon-launch-0.10.mp4   # same, to a new file (keep old renders)
 ```
 
-Scenes (`src/scenes`): Intro (the mark assembles) → Hook (wall of before/afters) → Create →
-Region (paint, remove, add) → Versions → Montage (six edits, full frame) → Agent (MCP) → Hardware →
-Outro. Each scene is also its own composition, so one can be rendered alone, for example
+Scenes (`src/scenes`): Intro (the mark assembles) → Hook (wall of before/afters) → Create (a few
+words, Prompt+ writes the prompt, the image hatches) → Region (paint, remove, add) → Versions →
+Montage (five edits, full frame) → Agent (MCP) → Hardware (Windows, macOS, Linux) → Outro. Each scene is also its own composition, so one can be rendered alone, for example
 `npx remotion render Montage out/montage.mp4` (the voice and music play only in `KokonLaunch`).
 
 `src/app/timeline.ts` is the film's clock: scene lengths, the frame where each voice-over sentence
@@ -39,7 +44,8 @@ Sound (`src/app/sound.tsx`, all levels in one table):
 - **Voice-over**: `public/voice/NN.wav`, one file per line of `audio/voiceover.md`, generated
   locally with [Chatterbox](https://github.com/resemble-ai/chatterbox) (MIT) by
   `audio/gen_voice.py final`, which also writes `src/app/voice.json` (where each sentence starts
-  and ends) so sentences can be placed one by one. The music ducks about 8 dB under it.
+  and ends) so sentences can be placed one by one. To change single sentences, `gen_voice.py redo`
+  and `splice` keep the rest of the approved take (usage at the top of the script). The music ducks about 8 dB under it.
 - **Music**: `public/music.m4a`, generated locally with [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5)
   (MIT, output usable commercially) by `audio/gen_music.py`: take `house-4`, 118 BPM, with two bars
   removed from its breakdown so the second drop (60.3 s) lands on the Agent scene.
@@ -56,8 +62,8 @@ The website uses a lighter copy: `site/assets/kokon.mp4` (CRF 25, ~17 MB; it aut
 the same for `style.css` in every page that links it). To refresh them after a new render:
 
 ```powershell
-ffmpeg -y -i marketing/video/out/kokon-launch.mp4 -c:v libx264 -preset slow -crf 25 -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart site/assets/kokon.mp4
-ffmpeg -y -ss 35.5 -i marketing/video/out/kokon-launch.mp4 -frames:v 1 -q:v 3 site/assets/kokon-poster.jpg
+ffmpeg -y -i marketing/video/out/kokon-launch-0.10.mp4 -c:v libx264 -preset slow -crf 25 -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart site/assets/kokon.mp4
+ffmpeg -y -ss 38.5 -i marketing/video/out/kokon-launch-0.10.mp4 -frames:v 1 -q:v 3 site/assets/kokon-poster.jpg
 ```
 
 ## The website

@@ -1,36 +1,12 @@
-/* The app follows the system theme; videos are rendered in its dark theme. */
-:root {
-  --ground: #0a0a0a;
-  --bg: #151515;
-  --surface: #1c1c1c;
-  --surface-2: #252525;
-  --surface-3: #313131;
-  --border: rgba(255, 255, 255, 0.07);
-  --border-2: rgba(255, 255, 255, 0.14);
-  --text: #f2f2f2;
-  --text-2: #a8a8a8;
-  --text-3: #858585;
-  --invert-bg: #f2f2f2;
-  --invert-text: #0a0a0a;
-  --scrim: rgba(10, 10, 10, 0.85);
-  --lift: inset 0 0 0 1px rgba(255, 255, 255, 0.05), 0 10px 28px -12px rgba(0, 0, 0, 0.7);
-  --shadow: 0 0 0 1px rgba(255, 255, 255, 0.07), 0 24px 60px -18px rgba(0, 0, 0, 0.8);
-  --print: 0 2px 6px rgba(0, 0, 0, 0.5), 0 34px 70px -24px rgba(0, 0, 0, 0.9);
-  --pick: 0 0 0 1px rgba(255, 255, 255, 0.08);
-  --glow: rgba(255, 255, 255, 0.045);
-  --checker: #181818;
-  --sidebar: transparent;
-  color-scheme: dark;
-}
+/* Videos are rendered in the app's dark theme (data-theme="dark", set by AppWindow.tsx). */
+:root { --sidebar: transparent; }
 html, body, #root { height: auto; }
 body { background: #000; }
-/* No CSS animations in rendered frames: they would not follow the frame clock. */
-.kokon-window *, .kokon-window *::before, .kokon-window *::after { animation-play-state: paused !important; transition: none !important; }
+/* CSS animations follow the frame clock: paused, at --vt seconds (set per frame by AppWindow,
+   100 s + the scene's time), so loops run with the film and one-off entrances have finished.
+   Transitions would not follow the clock: off. */
+.kokon-window *, .kokon-window *::before, .kokon-window *::after { animation-play-state: paused !important; animation-delay: calc(var(--vt, 100) * -1s) !important; transition: none !important; }
 
 .kokon-window { position: relative; overflow: hidden; border-radius: 12px; background: var(--ground); color: var(--text); font-family: var(--font);
   box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 40px 120px rgba(0,0,0,0.6), 0 12px 40px rgba(0,0,0,0.5); display: flex; flex-direction: column; }
-.win-titlebar { height: 34px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 0 0 12px; background: #1b1b1b; color: #cfcfcf; font-size: 12.5px; }
-.win-titlebar .win-icon { width: 16px; height: 16px; border-radius: 4px; background: #f7f6f2; display: grid; place-items: center; }
-.win-titlebar .spacer { flex: 1; }
-.win-titlebar .ctl { width: 46px; height: 34px; display: grid; place-items: center; color: #9a9a9a; }
 .kokon-window .app { flex: 1; min-height: 0; height: auto; }

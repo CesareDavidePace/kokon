@@ -13,7 +13,7 @@ const NEWS = [
   {
     icon: WandSparkles,
     title: "Prompt+",
-    text: "Turn on Prompt+ next to Quality: from a short idea in any language, the model writes a detailed prompt first (for edits it looks at your photo). You watch it being written. No extra download.",
+    text: "Turn on Prompt+ next to Quality: from a short idea in any language, the model writes a detailed prompt first (for edits it looks at your photo). You watch it being written. No second model to download.",
   },
   {
     icon: Layers,

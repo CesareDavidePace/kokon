@@ -5,15 +5,22 @@ import voice from "./voice-0.10.json";
 import { FPS, type Cue, type Lines, sentenceAt, type VoiceSet } from "./timeline";
 
 // Music: `src` from `from` seconds; its beats fall every BEAT seconds from BEAT0 (seconds into
-// the video). public/music-0.10.m4a (audio/make_update_music.py, from ACE-Step take
-// update-20261020-175836-1): the drop on beat 26 (the hatch), a dead stop at 37.607 s.
-export const MUSIC = { src: "music-0.10.m4a", from: 0 };
+// the video). Both cuts come from audio/make_update_music.py (ACE-Step takes): the drop on beat
+// 26 (the hatch), the music silent by `stop` (seconds), before the last words.
+const MUSICS = {
+  /** Take 1: a quiet build, the drop, a dead stop. */
+  take1: { src: "music-0.10.m4a", from: 0, stop: 37.607 },
+  /** Take 3: groove, a near-silent break under the logo, the drop, a second hit on the LoRA
+   * part, an ending bar. */
+  take3: { src: "music-0.10-take3.m4a", from: 0, stop: 37.7 },
+};
+export const MUSIC = MUSICS.take3;
 const BEAT = 60 / 118;
 const BEAT0 = 0;
 /** Frame of beat `k` of the video. */
 export const beat = (k: number) => Math.round((BEAT0 + k * BEAT) * FPS);
 /** Where the music stops dead, before the last words. */
-export const STOP = Math.round(37.607 * FPS);
+export const STOP = Math.round(MUSIC.stop * FPS);
 
 /** Shot starts (frames), each on a beat. */
 export const SHOT = {

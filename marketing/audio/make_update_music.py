@@ -1,51 +1,68 @@
-"""The music of the "Kokon 0.10" update video, cut from ACE-Step take update-20261020-175836-1.
+"""The music of the "Kokon 0.10" update video, cut from an ACE-Step take (gen_music.py update).
 
-    D:/AI/tts/.venv/Scripts/python make_update_music.py   -> ../video/public/music-0.10.m4a
+    D:/AI/tts/.venv/Scripts/python make_update_music.py [1|3]   -> ../video/public/<out>
 
-The take (118 BPM, measured with librosa: beats every 0.50849 s, drop on the bar line at 16.252 s)
-builds quietly, drops, plays 8 bars and stops dead. The video needs the drop on its beat 26 (the
-image hatching) and about 12 bars after it, so: start 26 beats before the drop, play bars 1-7,
-repeat bars 4-7, then bar 8 with the stop and the take's quiet tail. Every join is on a bar line,
-with a 10 ms crossfade. The stop lands 37.63 s into the video (STOP in timeline010.ts).
+Both takes are 118 BPM (beats every 0.50849 s, grids measured with librosa). The video needs the
+take's drop on its beat 26 (the image hatching) and about 12 bars after it, then a stop for the
+last words. Each plan lists the take's bars to play (bar 0 = the take's first bar line); every
+join is on a bar line with a 10 ms crossfade.
+
+- Take 1 (music-0.10.m4a): quiet build, drop on bar line 16.252 s, 8 bars, dead stop. Plays the
+  26 beats before the drop, bars 1-7, bars 4-7 again, bar 8 with the stop.
+- Take 3 (music-0.10-take3.m4a): groove from the start, thinning, a build, a near-silent break,
+  the drop at 24.44 s (bar 12), 4 bars, an ending bar. Two beats of silence, then bars 6-11 (the
+  break under the logo forming), the drop, bars 12-15, the drop again (on the LoRA part), bars
+  13-15 and the ending bar.
 """
 import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
 
 HERE = Path(__file__).parent
-TAKE = HERE / "takes" / "update-20261020-175836-1.wav"
-OUT = HERE.parent / "video" / "public" / "music-0.10.m4a"
 BEAT = 60 / 118
-DROP = 16.252
 BAR = 4 * BEAT
 FADE = 0.010
 
+PLANS = {
+    # first: time of the take's bar 0; lead: beats of silence first; bars: [from, to) bar ranges;
+    # tail: seconds kept after the last bar (the take's own decay).
+    1: {"take": "update-20261020-175836-1.wav", "out": "music-0.10.m4a", "first": 16.252 - 8 * BAR,
+        "lead": 0, "bars": [(1.5, 15), (11, 15), (15, 16)], "tail": 3.5},
+    3: {"take": "update-20261020-175836-3.wav", "out": "music-0.10-take3.m4a", "first": 0.0287,
+        "lead": 2, "bars": [(6, 16), (12, 16), (13, 17)], "tail": 2.5},
+}
 
-def main() -> None:
-    y, sr = sf.read(TAKE, dtype="float32", always_2d=True)
+
+def main(n: int) -> None:
+    plan = PLANS[n]
+    y, sr = sf.read(HERE / "takes" / plan["take"], dtype="float32", always_2d=True)
     at = lambda t: int(round(t * sr))
-    bar = lambda i: DROP + i * BAR  # start of groove bar i (0-based)
-    start = DROP - 26 * BEAT
-    parts = [
-        y[at(start):at(bar(7))],  # the build and bars 1-7
-        y[at(bar(3)):at(bar(7))],  # bars 4-7 again
-        y[at(bar(7)):at(bar(8) + 3.5)],  # bar 8, the stop, the tail
-    ]
-    n = at(FADE)
-    ramp = np.linspace(0, 1, n, dtype=np.float32)[:, None]
+    bar = lambda i: plan["first"] + i * BAR
+    parts = [np.zeros((at(plan["lead"] * BEAT), y.shape[1]), np.float32)] if plan["lead"] else []
+    last = len(plan["bars"]) - 1
+    for k, (a, b) in enumerate(plan["bars"]):
+        end = bar(b) + (plan["tail"] if k == last else 0)
+        parts.append(y[at(bar(a)):at(end)])
+    n_f = at(FADE)
+    ramp = np.linspace(0, 1, n_f, dtype=np.float32)[:, None]
     out = parts[0]
     for p in parts[1:]:
         # The tail of what came before overlaps the head of the next part.
-        mixed = out[-n:] * (1 - ramp) + p[:n] * ramp
-        out = np.concatenate([out[:-n], mixed, p[n:]])
-    wav = HERE / "takes" / "music-0.10.wav"
+        mixed = out[-n_f:] * (1 - ramp) + p[:n_f] * ramp
+        out = np.concatenate([out[:-n_f], mixed, p[n_f:]])
+    wav = HERE / "takes" / Path(plan["out"]).with_suffix(".wav").name
     sf.write(wav, out, sr)
-    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(wav), "-c:a", "aac", "-b:a", "192k", str(OUT)], check=True)
-    stop = (bar(8) - start) - 2 * FADE + 4 * BAR
-    print(f"{OUT}: {len(out) / sr:.2f} s, drop at {DROP - start:.3f} s, stop at {stop:.3f} s")
+    dst = HERE.parent / "video" / "public" / plan["out"]
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(wav), "-c:a", "aac", "-b:a", "192k", str(dst)], check=True)
+    # Where the music falls silent: the last 50 ms window above -40 dB.
+    mono = np.abs(out).max(axis=1)
+    win = at(0.05)
+    loud = [i for i in range(0, len(mono) - win, win) if mono[i:i + win].max() > 0.01]
+    print(f"{dst}: {len(out) / sr:.2f} s, music silent from {(loud[-1] + win) / sr:.2f} s")
 
 
 if __name__ == "__main__":
-    main()
+    main(int(sys.argv[1]) if len(sys.argv) > 1 else 1)

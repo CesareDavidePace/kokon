@@ -4,6 +4,7 @@ import { urls } from "../lib/api";
 import { timeAgo } from "../lib/logic";
 import { deleteProject, newProject, renameProject, setState, switchProject, useStore } from "../lib/store";
 import { IconButton, NameField } from "./ui";
+import { KokonMark } from "./Welcome";
 
 /** Navigation: start something new, browse every image, or go back to a project. */
 export function Sidebar() {
@@ -17,6 +18,10 @@ export function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="side-head">
+        <span className="wordmark">
+          <KokonMark size={18} />
+          Kokon
+        </span>
         <IconButton title="Hide sidebar" onClick={() => setState({ sidebar: false })}>
           <PanelLeftClose size={18} />
         </IconButton>

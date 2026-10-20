@@ -267,6 +267,23 @@ export function Cocoon({ src, pct, form, dim }: { src?: string; pct: number; for
   );
 }
 
+/** The cocoon in small, for the status capsule and the timeline: silk threads winding round a
+ * capsule (the logo's stem). `fill` (0..1) fills the capsule from the bottom, like the job's
+ * percentage; without it the capsule stays faint. `size` is the height in px. */
+export function SilkSpin({ size = 18, fill }: { size?: number; fill?: number }) {
+  const f = fill === undefined ? null : clamp01(fill);
+  return (
+    <svg className="silk-spin" width={(size * 2) / 3} height={size} viewBox="0 0 16 24" aria-hidden>
+      <rect x="4.5" y="3.5" width="7" height="17" rx="3.5" fill="currentColor" opacity="0.16" />
+      {f !== null && <rect className="silk-fill" x="4.5" y={3.5 + 17 * (1 - f)} width="7" height={17 * f} rx="3.5" fill="currentColor" opacity="0.5" />}
+      <ellipse cx="8" cy="12" rx="4.6" ry="9.6" strokeWidth="0.9" />
+      <ellipse cx="8" cy="12" rx="4" ry="9.9" strokeWidth="0.7" />
+      <ellipse cx="8" cy="12" rx="5.1" ry="9.2" strokeWidth="0.7" />
+      <ellipse cx="8" cy="12" rx="3.6" ry="10" strokeWidth="0.6" />
+    </svg>
+  );
+}
+
 // ---------------------------------------------------------------------------------------
 // Hatching: a result made a moment ago comes out of the logo once, when first shown.
 // ---------------------------------------------------------------------------------------

@@ -6,6 +6,7 @@ import { native } from "./lib/native";
 import {
   addExampleProjects, addInputs, closeStarPrompt, dismissToast, getState, initStarPrompt, isMissingModel, newProject, openModelSetup, redoVersion, refreshLoras, refreshStatus, selectItem, setPrivateMode, setState, startEvents, startTour, submitComposer, toastError, toastInfo, undoKey, undoVersion, useStore,
 } from "./lib/store";
+import { SilkSpin } from "./components/Cocoon";
 import { Composer, importPaths } from "./components/Composer";
 import { ExpandEditor } from "./components/ExpandEditor";
 import { Gallery } from "./components/Gallery";
@@ -65,7 +66,7 @@ function StatusIndicator() {
         else if (server.state === "stopped" && connected) api.startBackend().then(refreshStatus, toastError);
       }}
     >
-      <span className={cls} />
+      {cls === "dot busy" || (cls === "dot ready" && busy) ? <SilkSpin size={18} /> : <span className={cls} />}
       <span style={{ maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{text}</span>
     </button>
   );

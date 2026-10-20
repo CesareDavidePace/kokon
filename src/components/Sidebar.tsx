@@ -17,8 +17,8 @@ export function Sidebar() {
 
   return (
     <aside className="sidebar">
-      <div className="side-head">
-        <span className="wordmark">
+      <div className="side-head" data-tauri-drag-region>
+        <span className="wordmark" data-tauri-drag-region>
           <KokonMark size={18} />
           Kokon
         </span>

@@ -36,6 +36,12 @@ export const native = {
   isFullscreen: () => getCurrentWindow().isFullscreen(),
   setFullscreen: (on: boolean) => getCurrentWindow().setFullscreen(on),
   setTheme: async (theme: "light" | "dark" | null) => getCurrentWindow().setTheme(theme),
+  // Kokon's own title bar (the system one is off on Windows and Linux).
+  minimize: () => getCurrentWindow().minimize(),
+  toggleMaximize: () => getCurrentWindow().toggleMaximize(),
+  close: () => getCurrentWindow().close(),
+  isMaximized: () => getCurrentWindow().isMaximized(),
+  onResized: (f: () => void) => getCurrentWindow().onResized(f),
   saveAs: (defaultName: string) =>
     save({
       defaultPath: defaultName,

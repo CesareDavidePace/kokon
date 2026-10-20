@@ -23,6 +23,7 @@ import { Shortcuts } from "./components/Shortcuts";
 import { WhatsNew, whatsNewDue } from "./components/WhatsNew";
 import { UpscalerCompare } from "./components/Upscalers";
 import { KokonMark, Welcome } from "./components/Welcome";
+import { BareTitleBar, WindowControls } from "./components/TitleBar";
 import { autoCheckForUpdate, installUpdate } from "./lib/updates";
 
 const IMAGE_EXT = /\.(png|jpe?g|webp|bmp|gif|tiff?|heic|heif)$/i;
@@ -350,6 +351,7 @@ export default function App() {
   if (boot !== "ok") {
     return (
       <div className="app" style={{ display: "grid", placeItems: "center" }}>
+        <BareTitleBar />
         {boot === "connecting" ? (
           <BootSplash />
         ) : (
@@ -369,8 +371,8 @@ export default function App() {
     <div className="app">
       {sidebar && !needsSetup && <Sidebar />}
       <div className="workspace">
-        <div className="topbar">
-          <div className="brand">
+        <div className="topbar" data-tauri-drag-region>
+          <div className="brand" data-tauri-drag-region>
             {!sidebar && !needsSetup && (
               <>
                 <IconButton title="Show sidebar" onClick={() => setState({ sidebar: true })}>
@@ -383,7 +385,7 @@ export default function App() {
             )}
             {overlay === "gallery" ? <span className="project-title">All images</span> : !needsSetup && <ProjectTitle />}
           </div>
-          <div className="toolbar">
+          <div className="toolbar" data-tauri-drag-region>
             {!needsSetup && <HistoryButtons />}
             <UpdatePill />
             {!needsSetup && <PrivateToggle />}
@@ -395,6 +397,7 @@ export default function App() {
               <Settings size={18} />
             </IconButton>
           </div>
+          <WindowControls />
         </div>
         <div className="main">
           {needsSetup ? <Setup /> : <Stage />}

@@ -1053,7 +1053,11 @@ CPU	Apple M2 Pro
         let pid = child.id();
         child.kill().unwrap();
         std::thread::sleep(Duration::from_millis(300));
-        assert!(process_alive(pid), "the dead, unreaped server still looks alive by pid (zombie)");
+        // The bug itself: on Linux the zombie keeps its name under its pid. macOS reports no name
+        // for a zombie, so there it never looked alive; the checks below hold on both.
+        if cfg!(target_os = "linux") {
+            assert!(process_alive(pid), "the dead, unreaped server still looks alive by pid (zombie)");
+        }
         let m = ServerManager::new(dir.clone());
         m.set_state(|g| {
             g.owned = true;

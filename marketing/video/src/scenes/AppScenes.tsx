@@ -33,13 +33,11 @@ const proj = (n: number, cover: string) => ({ projects: withProject(n, cover), p
 
 const SEND: [number, number] = [1232, 857];
 /** The composer, close: a macro shot past the window's bottom edge, sharp on the composer only. */
-const COMPOSER_CAM: Cam = { x: 850, y: 742, s: 1.8 };
-const COMPOSER_FOCUS: [number, number] = [520, 830];
+const COMPOSER_CAM: Cam = { x: 850, y: 630, s: 1.8 };
+const COMPOSER_FOCUS: [number, number] = [690, 1010];
 /** The empty project's composer is shorter and lower: centre it. */
-const PROMPT_CAM: Cam = { x: 850, y: 650, s: 1.7 };
-/** Composer shots look at the window from slightly below and to the side. */
-const ANGLE = { x: 16, y: -14 };
-const PROMPT_FOCUS: [number, number] = [780, 1000];
+const PROMPT_CAM: Cam = { x: 850, y: 615, s: 1.7 };
+const PROMPT_FOCUS: [number, number] = [800, 1050];
 /** Where the stage image sits once a result is selected (window px), to fly into it. */
 const STAGE_IMG = { x: 850, y: 319, w: 820 };
 
@@ -135,7 +133,7 @@ export function Create() {
   // Sharp on the composer while typing; the whole window on the card.
   const dof = onCard ? 0 : prog(f, 70, 20);
   const app = (
-    <Camera cam={cam} tilt={(1 - enter) * 16} lift={(1 - enter) * 260} opacity={enter} free={f > 60 && !onCard} turn={{ x: ANGLE.x * dof, y: ANGLE.y * dof }}>
+    <Camera cam={cam} tilt={(1 - enter) * 16} lift={(1 - enter) * 260} opacity={enter} free={f > 60 && !onCard}>
       {view(f)}
       {!onCard && (
         <Pointer
@@ -153,14 +151,15 @@ export function Create() {
       )}
     </Camera>
   );
-  const full = prog(f, C.full - 6, 8, inOut);
+  // A hard cut on the beat: the window's small image and the full frame never overlap.
+  const full = f >= C.full ? 1 : 0;
   const words = cues.find((c) => c.from === 4)!;
   return (
     <AbsoluteFill>
       <Backdrop />
       {dof > 0.01 ? <DepthOfField focus={PROMPT_FOCUS} blur={7 * dof}>{app}</DepthOfField> : app}
-      {f >= C.full - 6 && (
-        <div style={{ position: "absolute", inset: 0, opacity: full }}>
+      {full > 0 && (
+        <div style={{ position: "absolute", inset: 0 }}>
           <FullImage before="street" push={1 + prog(f, C.full, LENGTH.create - C.full, (x) => x) * 0.05} dim={0.25 * prog(f, C.promises - 8, 12)} />
         </div>
       )}
@@ -244,7 +243,7 @@ export function Region() {
     const cam = { ...COMPOSER_CAM, s: COMPOSER_CAM.s + t * 0.0006 };
     return (
       <DepthOfField focus={COMPOSER_FOCUS}>
-        <Camera cam={cam} free turn={ANGLE}>
+        <Camera cam={cam} free>
           <AppWindow state={state} width={1440} height={900} />
           <Pointer
             path={[
@@ -290,7 +289,7 @@ export function Region() {
       {(f >= R.removeCut && f < R.removeShot) || (f >= R.addCut && f < R.addShot) ? (
         <>
           <Vignette strength={0.55} side="top" reach={0.6} />
-          <Vignette strength={1} reach={0.42} />
+          <Vignette strength={0.6} reach={0.15} />
         </>
       ) : null}
       <Tag text="Paint." start={R.paint} end={R.removeCut} />

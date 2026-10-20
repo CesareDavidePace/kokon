@@ -190,23 +190,23 @@ const glass: CSSProperties = {
 function OneModel() {
   const f = useCurrentFrame();
   const t0 = SHOT.model;
-  const show = (at: number, dur = 18) => prog(f, at, dur);
+  const show = (at: number, dur = 26) => prog(f, at, dur);
   const rise = (p: number): CSSProperties => ({ opacity: p, transform: `translateY(${(1 - p) * 24}px)`, filter: `blur(${(1 - p) * 8}px)` });
   const reads = word(3, 1, "reads");
   const writes = word(3, 1, "writes");
   const none = said(3, 2);
   const a = show(t0 + 2);
-  const b = show(t0 + 8);
-  const thIn = prog(f, t0 + 6, 20, inOut);
-  const thRead = prog(f, reads, 18, inOut);
-  const thWrite = prog(f, writes, 18, inOut);
+  const b = show(t0 + 12);
+  const thIn = prog(f, t0 + 8, 30, inOut);
+  const thRead = prog(f, reads, 28, inOut);
+  const thWrite = prog(f, writes, 28, inOut);
   const newGlow = Math.min(prog(f, writes + 12, 10), 1 - 0.6 * prog(f, writes + 30, 30));
   const s = push(f, t0, SHOT.settings, 1, 1.035);
   return (
     <AbsoluteFill style={{ fontFamily: font }}>
       <Backdrop glow={0.9} />
       <div style={{ position: "absolute", inset: 0, transform: `scale(${s})` }}>
-        <div style={{ position: "absolute", top: 96, left: 0, right: 0, textAlign: "center", fontSize: 76, fontWeight: 660, letterSpacing: "-0.045em", color: "#f4f4f2", ...rise(show(t0, 14)) }}>One model. Two jobs.</div>
+        <div style={{ position: "absolute", top: 96, left: 0, right: 0, textAlign: "center", fontSize: 76, fontWeight: 660, letterSpacing: "-0.045em", color: "#f4f4f2", ...rise(show(t0, 18)) }}>One model. Two jobs.</div>
         <svg width={1920} height={1080} style={{ position: "absolute", inset: 0, overflow: "visible" }}>
           <Thread x0={460} y0={540} x1={640} y1={540} p={thIn} />
           <Thread x0={1120} y0={500} x1={1250} y1={400} p={thRead} />
@@ -237,7 +237,7 @@ function OneModel() {
           </div>
           <div style={{ fontSize: 20, color: "rgba(247,246,242,0.6)", marginTop: 6 }}>a full prompt from your few words</div>
         </div>
-        <div style={{ position: "absolute", top: 880, left: 0, right: 0, textAlign: "center", fontSize: 50, fontWeight: 640, letterSpacing: "-0.03em", color: "#f4f4f2", ...rise(show(none - 2, 16)) }}>
+        <div style={{ position: "absolute", top: 880, left: 0, right: 0, textAlign: "center", fontSize: 50, fontWeight: 640, letterSpacing: "-0.03em", color: "#f4f4f2", ...rise(show(none - 2, 24)) }}>
           No second model to download.
         </div>
       </div>

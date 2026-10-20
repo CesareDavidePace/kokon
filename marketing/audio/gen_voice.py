@@ -255,6 +255,11 @@ def splice(n: int, keep: dict[int, int], pick: dict[int, int], src: Path) -> Non
 # The "Kokon 0.10" update video (voiceover-0.10.md): each line's model settings, as in FINAL.
 UPDATE = {"script": "voiceover-0.10.md", "dir": OUT / "update-0.10", "public": "voice-0.10", "json": "voice-0.10.json"}
 UPDATE_TAKES = {1: "calmer", 2: "expressive", 3: "expressive", 4: "expressive", 5: "calmer", 6: "expressive"}
+# build: seconds between a line's sentences where not 0.4 (line 3, Prompt+'s model, read slower),
+# and silences put inside a sentence ("LINE.SENTENCE": [(seconds into the take, seconds)]): the
+# micro-pause in "One model, two jobs." falls in the take's own silence before "two".
+UPDATE_PAUSES = {3: 0.7}
+UPDATE_SPLITS = {"3.0": [(0.93, 0.35)]}
 
 
 def audition(seeds: int, base: int) -> None:
@@ -276,7 +281,7 @@ def audition(seeds: int, base: int) -> None:
 
 def build(src: Path, pick: dict[str, int]) -> None:
     """The update's lines from the picked sentence takes (`pick` "LINE.SENTENCE" -> seed), 0.4 s
-    between sentences, mastered like the launch take (-16 LUFS over all lines). Each build goes to
+    between sentences (UPDATE_PAUSES, UPDATE_SPLITS), mastered like the launch take (-16 LUFS over all lines). Each build goes to
     a new folder; the video gets the files and their sentence spans."""
     lines = script_lines(UPDATE["script"])
     missing = [f"{n}.{i}" for n, l in enumerate(lines, 1) for i in range(len(sentences(l))) if f"{n}.{i}" not in pick]
@@ -292,11 +297,13 @@ def build(src: Path, pick: dict[str, int]) -> None:
         for i in range(len(parts)):
             c, sr = sf.read(src / f"{n:02d}-s{i}-seed{pick[f'{n}.{i}']}.raw.wav", dtype="float32")
             assert sr == SR
+            for t, gap in sorted(UPDATE_SPLITS.get(f"{n}.{i}", []), reverse=True):
+                c = np.concatenate([c[:int(t * SR)], np.zeros(int(gap * SR), dtype=np.float32), c[int(t * SR):]])
             chunks.append(c)
             marks.append([round(pos / SR, 3), round((pos + c.size) / SR, 3)])
             pos += c.size
             if i < len(parts) - 1:
-                chunks.append(np.zeros(int(SENTENCE_PAUSE * SR), dtype=np.float32))
+                chunks.append(np.zeros(int(UPDATE_PAUSES.get(n, SENTENCE_PAUSE) * SR), dtype=np.float32))
                 pos += chunks[-1].size
         spans[n] = {"dur": round(pos / SR, 3), "sentences": marks}
         raw = folder / "raw" / f"{n:02d}.wav"

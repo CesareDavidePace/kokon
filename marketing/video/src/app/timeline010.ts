@@ -10,11 +10,13 @@ import { FPS, type Cue, type Lines, sentenceAt, type VoiceSet } from "./timeline
 const MUSICS = {
   /** Take 1: a quiet build, the drop, a dead stop. */
   take1: { src: "music-0.10.m4a", from: 0, stop: 37.607 },
+  /** Take 1 with one more groove bar, for the longer Prompt+ model part (the cut in use). */
+  take1long: { src: "music-0.10-long.m4a", from: 0, stop: 39.641 },
   /** Take 3: groove, a near-silent break under the logo, the drop, a second hit on the LoRA
    * part, an ending bar. */
   take3: { src: "music-0.10-take3.m4a", from: 0, stop: 37.7 },
 };
-export const MUSIC = MUSICS.take3;
+export const MUSIC = MUSICS.take1long;
 const BEAT = 60 / 118;
 const BEAT0 = 0;
 /** Frame of beat `k` of the video. */
@@ -31,16 +33,17 @@ export const SHOT = {
   making: 0,
   logo: beat(24),
   hatch: beat(26), // the drop
-  model: beat(30),
-  settings: beat(42),
+  // "One model. Two jobs." over the image, then the diagram, read slowly.
+  model: beat(32),
+  settings: beat(46),
   /** On the beat before "Turn it on with one click." (set below, from the voice). */
   pill: 0,
-  look: beat(56),
-  bar: beat(59),
-  silk: beat(62),
-  end: beat(66),
+  look: beat(60),
+  bar: beat(63),
+  silk: beat(66),
+  end: beat(70),
 };
-export const UPDATE_FRAMES = beat(80);
+export const UPDATE_FRAMES = beat(84);
 
 // Voice-over: public/voice-0.10/NN.wav and voice-0.10.json from `gen_voice.py build`. Until the
 // takes exist the json holds estimated spans ("_provisional"): the cues still time the
@@ -51,7 +54,7 @@ export const UPDATE_VOICE: VoiceSet = { dir: "voice-0.10", lines: json };
 
 const cue = (line: number, at: number, from = 0, to = from): Cue => ({ line, from, to, at, set: UPDATE_VOICE });
 /** Seconds into a sentence where a word starts (Whisper word times of the picked takes). */
-export const WORD = { two: 1.25, reads: 0.72, writes: 1.58, load: 0.21, click: 1.07, spun: 1.67 };
+export const WORD = { two: 1.6, reads: 0.72, writes: 1.58, load: 0.21, click: 1.07, spun: 1.67 };
 const all = (line: number, at: number): Cue => cue(line, at, 0, UPDATE_VOICE.lines[String(line)].sentences.length - 1);
 const span = (line: number, i: number) => UPDATE_VOICE.lines[String(line)].sentences[i];
 

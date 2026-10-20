@@ -1,6 +1,6 @@
 """The music of the "Kokon 0.10" update video, cut from an ACE-Step take (gen_music.py update).
 
-    D:/AI/tts/.venv/Scripts/python make_update_music.py [1|3]   -> ../video/public/<out>
+    D:/AI/tts/.venv/Scripts/python make_update_music.py [1|1b|3]   -> ../video/public/<out>
 
 Both takes are 118 BPM (beats every 0.50849 s, grids measured with librosa). The video needs the
 take's drop on its beat 26 (the image hatching) and about 12 bars after it, then a stop for the
@@ -31,12 +31,16 @@ PLANS = {
     # tail: seconds kept after the last bar (the take's own decay).
     1: {"take": "update-20261020-175836-1.wav", "out": "music-0.10.m4a", "first": 16.252 - 8 * BAR,
         "lead": 0, "bars": [(1.5, 15), (11, 15), (15, 16)], "tail": 3.5},
+    # Take 1 with one more groove bar (bars 3-7 repeated): the video's Prompt+ model part is a bar
+    # longer. Stop at 39.64 s.
+    "1b": {"take": "update-20261020-175836-1.wav", "out": "music-0.10-long.m4a", "first": 16.252 - 8 * BAR,
+           "lead": 0, "bars": [(1.5, 15), (10, 15), (15, 16)], "tail": 3.5},
     3: {"take": "update-20261020-175836-3.wav", "out": "music-0.10-take3.m4a", "first": 0.0287,
         "lead": 2, "bars": [(6, 16), (12, 16), (13, 17)], "tail": 2.5},
 }
 
 
-def main(n: int) -> None:
+def main(n: int | str) -> None:
     plan = PLANS[n]
     y, sr = sf.read(HERE / "takes" / plan["take"], dtype="float32", always_2d=True)
     at = lambda t: int(round(t * sr))
@@ -65,4 +69,5 @@ def main(n: int) -> None:
 
 
 if __name__ == "__main__":
-    main(int(sys.argv[1]) if len(sys.argv) > 1 else 1)
+    arg = sys.argv[1] if len(sys.argv) > 1 else "1"
+    main(arg if arg in PLANS else int(arg))

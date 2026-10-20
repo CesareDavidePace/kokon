@@ -350,6 +350,7 @@ function InfoPanel({ g }: { g: GenerationRecord }) {
     ["Sampler", `${g.sampler}${g.scheduler ? ` / ${g.scheduler}` : ""}`],
     ...(g.strength != null ? ([["Strength", String(g.strength)]] as [string, string][]) : []),
     ["References", String(g.references.length)],
+    ...(g.loras?.length ? ([["LoRA", g.loras.map((l) => `${l.name} (${Math.round(l.weight * 100)} %)`).join(", ")]] as [string, string][]) : []),
     ["Model", g.model],
     ["Time", formatDuration(g.duration_ms / 1000)],
     ["Created", new Date(g.created_at).toLocaleString()],

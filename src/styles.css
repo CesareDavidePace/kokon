@@ -194,6 +194,9 @@ svg { display: block; flex: none; }
 }
 .stage-meta .enhanced-mark { flex: none; display: inline-flex; color: var(--text-2); }
 .pill.enhance.on { background: var(--surface-2); }
+.pill.lora.on { background: var(--surface-2); }
+.lora-name { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.popover .opt:disabled { opacity: 0.5; cursor: default; }
 .failed { display: flex; flex-direction: column; align-items: center; gap: 10px; max-width: 460px; text-align: center; color: var(--text-2); }
 .failed strong { color: var(--text); font-weight: 600; }
 
@@ -746,3 +749,14 @@ kbd { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; display
 .repair-option .muted { font-size: 12px; overflow-wrap: anywhere; }
 .model-files summary { cursor: pointer; font-size: 12px; color: var(--text-2); margin-top: 4px; }
 .model-files span { display: block; font-size: 11px; color: var(--text-3); overflow-wrap: anywhere; }
+
+/* Settings → LoRA */
+.lora-card { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; }
+.lora-head { display: flex; gap: 8px; align-items: center; }
+.lora-head .input { flex: 1; font-weight: 600; }
+.lora-strength { display: flex; align-items: center; gap: 10px; }
+.lora-strength input[type="range"] { width: 180px; }
+.lora-strength .muted { width: 44px; text-align: right; font-variant-numeric: tabular-nums; }
+.lora-warn { display: flex; gap: 6px; align-items: flex-start; font-size: 12px; color: var(--text-2); }
+.lora-warn svg { flex: none; margin-top: 2px; }
+.lora-meta { font-size: 12px; word-break: break-all; }

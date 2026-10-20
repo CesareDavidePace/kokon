@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, configure } from "./lib/api";
 import { native } from "./lib/native";
 import {
-  addExampleProjects, addInputs, closeStarPrompt, dismissToast, getState, initStarPrompt, isMissingModel, newProject, openModelSetup, redoVersion, refreshStatus, selectItem, setPrivateMode, setState, startEvents, startTour, submitComposer, toastError, toastInfo, undoKey, undoVersion, useStore,
+  addExampleProjects, addInputs, closeStarPrompt, dismissToast, getState, initStarPrompt, isMissingModel, newProject, openModelSetup, redoVersion, refreshLoras, refreshStatus, selectItem, setPrivateMode, setState, startEvents, startTour, submitComposer, toastError, toastInfo, undoKey, undoVersion, useStore,
 } from "./lib/store";
 import { Composer, importPaths } from "./components/Composer";
 import { ExpandEditor } from "./components/ExpandEditor";
@@ -236,6 +236,7 @@ export default function App() {
         startEvents();
         const cfg = await api.config();
         const st = await refreshStatus();
+        refreshLoras();
         // First launch: the welcome screen, once (Settings → General shows it again).
         const ui = (cfg.ui ?? {}) as Record<string, unknown>;
         const welcomeSeen = !!ui.welcomeSeen;

@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  activeOverrides, buildRequest, jobPercent, compareBase, composerFromRecord, enhancerApplies, diffPixels, emptyComposer, expansionPixels, expansionPreset, jobLabel, jobSecondsLeft, lutInfo, moveRef, needsPrompt, normalizeQuality, persistentAdvanced, pipelineSummary,
+  activeLoras, activeOverrides, buildRequest, toggleLora, MAX_LORAS, jobPercent, compareBase, composerFromRecord, enhancerApplies, diffPixels, emptyComposer, expansionPixels, expansionPreset, jobLabel, jobSecondsLeft, lutInfo, moveRef, needsPrompt, normalizeQuality, persistentAdvanced, pipelineSummary,
   planPipeline, remainingSeconds, sizeForWidth, timeAgo, upscaleRequest, upscaleTargets, versionLabels, type JobClock, type Ref,
   neighbourAfterRemoval, previewIndex, starPromptDue, STAR_PROMPT_AFTER, formatBytes, formatDuration, installItemShort, installItemText, installProgress, installStep, installTimeLeft, timelineLinks, undoTarget, aspectLabel, parseRatio, sizeForRatio, expandToRatio, expandToSize, arcLayout,
 } from "./logic";
-import type { GenerationRecord, InstallItem, JobView, Plan } from "./types";
+import type { GenerationRecord, InstallItem, JobView, LoraItem, Plan } from "./types";
 
 const ref = (n: number): Ref => ({ key: `k${n}`, source: `input:${n}`, width: 100, height: 100, name: `r${n}` });
 
@@ -116,6 +116,28 @@ describe("buildRequest", () => {
     expect([c.prompt, c.enhance]).toEqual(["un gatto", true]);
     const plain = composerFromRecord({ ...g, original_prompt: null }, { ...emptyComposer(), enhance: true });
     expect([plain.prompt, plain.enhance]).toEqual(["A tabby cat sleeping on a sunlit windowsill.", false]);
+  });
+});
+
+describe("LoRA", () => {
+  const l = (id: string, onByDefault = false, available = true) => ({ id, name: id, onByDefault, available, weight: 1 }) as LoraItem;
+  const all = [l("film", true), l("angles"), l("gone", true, false), l("a"), l("b")];
+  it("a new project uses the ones on by default that are still there", () => {
+    expect(activeLoras({ loras: null }, all)).toEqual(["film"]);
+    expect(activeLoras({ loras: [] }, all)).toEqual([]);
+    expect(activeLoras({ loras: ["angles", "removed", "gone"] }, all)).toEqual(["angles"]);
+  });
+  it("switches one on or off, at most MAX_LORAS", () => {
+    expect(toggleLora({ loras: null }, all, "film")).toEqual([]);
+    expect(toggleLora({ loras: null }, all, "angles")).toEqual(["film", "angles"]);
+    const full = ["film", "angles", "a"];
+    expect(full.length).toBe(MAX_LORAS);
+    expect(toggleLora({ loras: full }, all, "b")).toEqual(full);
+  });
+  it("reusing settings brings back the LoRAs the image was made with", () => {
+    const g = { prompt: "x", references: [], mask_input_id: null, outpaint: null, quality: "fast", request: null, loras: [{ id: "film", name: "Film", weight: 0.7 }] } as unknown as GenerationRecord;
+    expect(composerFromRecord(g, emptyComposer()).loras).toEqual(["film"]);
+    expect(composerFromRecord({ ...g, loras: undefined }, { ...emptyComposer(), loras: ["a"] }).loras).toEqual([]);
   });
 });
 

@@ -8,8 +8,8 @@
 import { useSyncExternalStore } from "react";
 import { markFresh } from "../components/Cocoon";
 import { api, ApiError, setPrivateInputs, subscribe } from "./api";
-import { buildRequest, emptyComposer, needsPrompt, newKey, persistentAdvanced, refFromGen, refFromInput, starPromptDue, timelineLinks, undoTarget, versionLabels, type CompareMode, type Composer, type Ref } from "./logic";
-import type { AppErrorBody, GenerationRecord, GenerationRequest, InputRecord, JobView, ServerState, StatusResponse } from "./types";
+import { activeLoras, buildRequest, emptyComposer, needsPrompt, newKey, persistentAdvanced, refFromGen, refFromInput, starPromptDue, timelineLinks, undoTarget, versionLabels, type CompareMode, type Composer, type Ref } from "./logic";
+import type { AppErrorBody, GenerationRecord, GenerationRequest, InputRecord, JobView, LoraItem, ServerState, StatusResponse } from "./types";
 
 export type Overlay = null | "gallery" | "settings" | "inpaint" | "expand" | "welcome" | "whats-new" | "prompt-tips" | "shortcuts";
 
@@ -88,6 +88,10 @@ export interface State {
   tour: number | null;
   /** The one-time "star on GitHub" card is on screen (App.tsx). */
   starPrompt: boolean;
+  /** The user's LoRAs (Settings → LoRA). */
+  loras: LoraItem[];
+  /** Tab Settings opens on (then cleared). */
+  settingsTab: string | null;
 }
 
 const PREFS_KEY = "qls.prefs.v1";
@@ -131,6 +135,8 @@ interface ProjectData {
   meta: ProjectMeta;
   items: StoredItem[];
   selected: string | null;
+  /** LoRAs switched on in the project (absent = the ones on by default). */
+  loras?: string[];
 }
 
 const projects: Record<string, ProjectData> = (() => {
@@ -228,6 +234,7 @@ function syncProject(prev: State) {
     },
     items,
     selected: state.selected,
+    loras: state.composer.loras ?? undefined,
   };
   state = { ...state, projects: projectList() };
   persistProjects();
@@ -293,6 +300,8 @@ let state: State = {
   redo: [],
   tour: null,
   starPrompt: false,
+  loras: [],
+  settingsTab: null,
 };
 
 const listeners = new Set<() => void>();
@@ -573,7 +582,32 @@ export async function switchProject(id: string, selectKey?: string) {
   if (token !== switching) return;
   const keep = (k: string | null | undefined) => (k && session.some((i) => i.key === k) ? k : null);
   const selected = keep(selectKey) ?? keep(data.selected) ?? session[session.length - 1]?.key ?? null;
-  setState((s) => ({ projectId: id, session, selected, overlay: null, redo: [], composer: composerFor(s.composer, session, selected) }));
+  setState((s) => ({ projectId: id, session, selected, overlay: null, redo: [], composer: { ...composerFor(s.composer, session, selected), loras: data.loras ?? null } }));
+}
+
+/** Switches the project's LoRAs (the composer's LoRA badge); new projects start with the ones
+ * on by default. */
+export function setProjectLoras(ids: string[]) {
+  setState((s) => ({ composer: { ...s.composer, loras: ids } }));
+  const p = projects[state.projectId];
+  if (p && !state.privateMode) {
+    p.loras = ids;
+    persistProjects();
+  }
+}
+
+/** Reloads the LoRA list from the service. */
+export async function refreshLoras() {
+  try {
+    setState({ loras: (await api.loras()).items });
+  } catch {
+    /* service not reachable: keep the last list */
+  }
+}
+
+/** Opens Settings on one of its tabs. */
+export function openSettings(tab: string) {
+  setState({ overlay: "settings", settingsTab: tab });
 }
 
 /** Adds the example projects that ship with Kokon (made by Kokon itself), except the ones
@@ -874,7 +908,7 @@ export async function submitComposer() {
   const s = getState();
   const target = s.composer.refs[0]?.source;
   const parent = target?.startsWith("gen:") ? target.slice(4) : null;
-  const req = buildRequest(s.composer, parent);
+  const req: GenerationRequest = { ...buildRequest(s.composer, parent), loras: activeLoras(s.composer, s.loras) };
   if (!req.prompt && needsPrompt(s.composer)) {
     toastInfo("Describe what to create or change.");
     return;

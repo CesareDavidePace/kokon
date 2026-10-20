@@ -3,7 +3,7 @@
 
 import type {
   GpuBackend,
-  AppConfig, AppErrorBody, GenerationRecord, GenerationRequest, HardwareReport, InputRecord, InstallStatus, JobView, LutEntry, ModelFileInfo, ModelScan, ModelSlot, ModelsStatus, Plan,
+  AppConfig, AppErrorBody, GenerationRecord, GenerationRequest, HardwareReport, InputRecord, InstallStatus, JobView, LoraItem, LutEntry, ModelFileInfo, ModelScan, ModelSlot, ModelsStatus, Plan,
   ServiceEvent, SetupReport, StatusResponse, UpscalerItem,
 } from "./types";
 
@@ -120,6 +120,13 @@ export const api = {
   deleteGeneration: (id: string) => call<{ deleted: string }>(`/gallery/${id}`, { method: "DELETE" }),
   /** Adds the bundled example projects to the gallery (idempotent) and lists them. */
   installExamples: () => call<{ projects: { title: string; generations: string[] }[] }>("/examples", { method: "POST" }),
+  loras: () => call<{ items: LoraItem[]; dir: string; max_active: number }>("/loras"),
+  /** Checks a LoRA file against the image model and loads Kokon's copy of it. */
+  addLora: (path: string) => call<LoraItem>("/loras", { method: "POST", body: json({ path }) }),
+  updateLora: (id: string, patch: Partial<Pick<LoraItem, "name" | "weight" | "triggerWords" | "onByDefault">>) =>
+    call<LoraItem>(`/loras/${encodeURIComponent(id)}`, { method: "PATCH", body: json(patch) }),
+  /** Removes the LoRA and Kokon's copy (the user's file stays). */
+  removeLora: (id: string) => call<{ removed: string }>(`/loras/${encodeURIComponent(id)}`, { method: "DELETE" }),
   luts: () => call<{ items: LutEntry[] }>("/luts"),
   /** Adds a .cube file to the list (copied into Kokon's data folder). */
   importLut: (path: string) => call<LutEntry>("/luts/import", { method: "POST", body: json({ path }) }),

@@ -1,4 +1,4 @@
-import { Activity, Copy, Cpu, Download, FolderOpen, HardDrive, RefreshCw, RotateCcw, Settings2, Trash2, X } from "lucide-react";
+import { Activity, Copy, Cpu, Download, FolderOpen, HardDrive, Layers, RefreshCw, RotateCcw, Settings2, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { api } from "../lib/api";
@@ -6,13 +6,15 @@ import { native } from "../lib/native";
 import { getState, openModelSetup, refreshStatus, setState, startTour, toastError, toastInfo, useStore } from "../lib/store";
 import { formatBytes } from "../lib/logic";
 import { setThemeChoice, themeChoice, type ThemeChoice } from "../lib/theme";
+import { LoraSettings } from "./LoraSettings";
 import { UpscalerControls } from "./Upscalers";
 import { WHATS_NEW_VERSION } from "./WhatsNew";
 import type { AppConfig, Check, ModelProfile, ModelsStatus, SetupReport, TextEncoderPlacement } from "../lib/types";
 import { IconButton, Seg, Switch } from "./ui";
 import { autoCheckEnabled, checkForUpdate } from "../lib/updates";
 
-type Tab = "general" | "models" | "performance" | "diagnostics";
+type Tab = "general" | "models" | "lora" | "performance" | "diagnostics";
+const TABS: Tab[] = ["general", "models", "lora", "performance", "diagnostics"];
 
 function PathField(props: { label: string; value: string; onChange: (v: string) => void; folder?: boolean; extensions?: string[] }) {
   return (
@@ -114,7 +116,12 @@ function Diagnostics() {
 }
 
 export function Settings() {
-  const [tab, setTab] = useState<Tab>("general");
+  // Opened on a tab by `openSettings` (e.g. the LoRA badge), else General.
+  const [tab, setTab] = useState<Tab>(() => {
+    const t = getState().settingsTab as Tab | null;
+    return t && TABS.includes(t) ? t : "general";
+  });
+  useEffect(() => setState({ settingsTab: null }), []);
   const [cfg, setCfg] = useState<AppConfig | null>(null);
   const [devices, setDevices] = useState<[string, string][]>([]);
   const [upscaler, setUpscaler] = useState<Check | null>(null);
@@ -225,6 +232,7 @@ export function Settings() {
   const nav: [Tab, string, React.ReactNode][] = [
     ["general", "General", <Settings2 size={16} key="g" />],
     ["models", "Models", <HardDrive size={16} key="m" />],
+    ["lora", "LoRA", <Layers size={16} key="l" />],
     ["performance", "Performance", <Cpu size={16} key="p" />],
     ["diagnostics", "Diagnostics", <Activity size={16} key="d" />],
   ];
@@ -239,7 +247,7 @@ export function Settings() {
             </button>
           ))}
           <span style={{ flex: 1 }} />
-          {tab !== "diagnostics" && (
+          {tab !== "diagnostics" && tab !== "lora" && (
             <button className="btn primary" style={{ justifyContent: "center" }} disabled={!dirty} onClick={save}>
               Save
             </button>
@@ -614,6 +622,7 @@ export function Settings() {
             </>
           )}
 
+          {tab === "lora" && <LoraSettings />}
           {tab === "diagnostics" && <Diagnostics />}
         </div>
       </div>

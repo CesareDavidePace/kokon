@@ -1,6 +1,6 @@
 // Pure UI logic (unit-tested in logic.test.ts).
 
-import type { Advanced, GenerationRecord, GenerationRequest, InpaintAction, InputRecord, InstallItem, JobView, LutInfo, Mode, OutpaintSpec, Plan, Quality, ResolutionMode, Size } from "./types";
+import type { Advanced, GenerationRecord, GenerationRequest, InpaintAction, InputRecord, InstallItem, JobView, LoraItem, LutInfo, Mode, OutpaintSpec, Plan, Quality, ResolutionMode, Size } from "./types";
 
 export interface Ref {
   key: string;
@@ -31,6 +31,8 @@ export interface Composer {
   advanced: Advanced;
   /** Prompt enhancer on (remembered; used only where `enhancerApplies`). */
   enhance: boolean;
+  /** LoRAs switched on in this project; null = the ones on by default (`activeLoras`). */
+  loras: string[] | null;
 }
 
 /** A preset name from any version: older ones also had "turbo" (now Fast) and "ultra" (now Quality). */
@@ -56,7 +58,26 @@ export const emptyComposer = (prefs?: Partial<Composer>): Composer => ({
   seed: null,
   advanced: newChatAdvanced(prefs?.advanced),
   enhance: prefs?.enhance === true,
+  loras: null,
 });
+
+/** LoRAs one image can use at once (`lora::MAX_ACTIVE`). */
+export const MAX_LORAS = 3;
+
+/** The LoRAs a request from this composer uses: the project's choice, else the ones on by
+ * default; only loaded ones whose copy is there, at most `MAX_LORAS`. */
+export function activeLoras(c: Pick<Composer, "loras">, all: LoraItem[]): string[] {
+  const usable = new Set(all.filter((l) => l.available).map((l) => l.id));
+  const chosen = c.loras ?? all.filter((l) => l.onByDefault).map((l) => l.id);
+  return chosen.filter((id) => usable.has(id)).slice(0, MAX_LORAS);
+}
+
+/** The project's LoRA choice after switching `id` on or off. */
+export function toggleLora(c: Pick<Composer, "loras">, all: LoraItem[], id: string): string[] {
+  const now = activeLoras(c, all);
+  if (now.includes(id)) return now.filter((x) => x !== id);
+  return now.length < MAX_LORAS ? [...now, id] : now;
+}
 
 /** Advanced settings a new chat starts with: everything kept except Reference detail, which
  * every chat starts at the standard 1 MP. */
@@ -182,6 +203,8 @@ export function composerFromRecord(g: GenerationRecord, base: Composer): Compose
     aspect: req?.aspect_ratio ?? "auto",
     seed: null,
     advanced: cleanAdvanced(req?.advanced ?? {}),
+    // The LoRAs it was made with (none for images made before LoRAs or without them).
+    loras: (g.loras ?? []).map((l) => l.id),
   };
   if (req?.width && req?.height) {
     c.customWidth = req.width;

@@ -1,10 +1,10 @@
-import { ArrowUp, Brush, ChevronDown, Expand, FolderOpen, Gauge, ImagePlus, Lightbulb, Maximize, Pencil, SlidersHorizontal, Sparkles, WandSparkles, X } from "lucide-react";
+import { ArrowUp, Brush, Check, ChevronDown, Expand, FolderOpen, Gauge, ImagePlus, Layers, Lightbulb, Maximize, Pencil, Settings2, SlidersHorizontal, Sparkles, WandSparkles, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, urls } from "../lib/api";
-import { activeOverrides, aspectLabel, buildRequest, enhancerApplies, expansionPixels, formatDuration, hasOutpaint, imageName, moveRef, needsPrompt, parseRatio, type Ref } from "../lib/logic";
+import { activeLoras, activeOverrides, aspectLabel, buildRequest, enhancerApplies, expansionPixels, formatDuration, hasOutpaint, imageName, MAX_LORAS, moveRef, needsPrompt, parseRatio, toggleLora, type Ref } from "../lib/logic";
 import { native } from "../lib/native";
 import {
-  addAsReference, addInputs, editShownImage, enhancerAvailable, getState, itemSource, selectedItem, sessionLabels, setState, startNewImage, submitComposer, toastError, updateComposer, useStore, type SessionItem,
+  addAsReference, addInputs, editShownImage, enhancerAvailable, getState, itemSource, openSettings, selectedItem, sessionLabels, setProjectLoras, setState, startNewImage, submitComposer, toastError, updateComposer, useStore, type SessionItem,
 } from "../lib/store";
 import type { InpaintAction, Plan, Quality } from "../lib/types";
 import { AdvancedPanel } from "./Advanced";
@@ -282,6 +282,79 @@ function usePlanPreview(): { plan: Plan | null; error: string | null } {
   return res;
 }
 
+const weightLabel = (w: number) => `${Math.round(w * 100)} %`;
+
+/** The project's LoRAs: shown once any LoRA is loaded in Settings. With one LoRA a click turns
+ * it on or off; with more, a list with one switch each. */
+function LoraBadge() {
+  const all = useStore((s) => s.loras);
+  const choice = useStore((s) => s.composer.loras);
+  if (all.length === 0) return null;
+  const on = activeLoras({ loras: choice }, all);
+  const names = all.filter((l) => on.includes(l.id)).map((l) => `${l.name} (${weightLabel(l.weight)})`);
+  const title = on.length ? `LoRA on in this project: ${names.join(", ")}` : "LoRA: none on in this project";
+  const label = on.length === 1 ? all.find((l) => l.id === on[0])?.name ?? "LoRA" : on.length > 1 ? `LoRA · ${on.length}` : "LoRA";
+  const toggle = (id: string) => setProjectLoras(toggleLora({ loras: choice }, all, id));
+  if (all.length === 1) {
+    const l = all[0];
+    return (
+      <button
+        className={`pill lora ${on.length ? "on" : ""}`}
+        role="switch"
+        aria-checked={on.length > 0}
+        disabled={!l.available}
+        onClick={() => toggle(l.id)}
+        title={l.available ? `${title}. Click to turn ${on.length ? "off" : "on"}.` : "This LoRA's file is missing: load it again in Settings → LoRA."}
+      >
+        <Layers size={15} />
+        <span className="lora-name">{label}</span>
+      </button>
+    );
+  }
+  return (
+    <Popover
+      trigger={(open, toggleOpen) => (
+        <button className={`pill lora ${on.length || open ? "on" : ""}`} onClick={toggleOpen} title={title}>
+          <Layers size={15} />
+          <span className="lora-name">{label}</span>
+          <ChevronDown size={13} />
+        </button>
+      )}
+    >
+      {(close) => (
+        <>
+          <div className="label">LoRA in this project · up to {MAX_LORAS}</div>
+          {all.map((l) => {
+            const active = on.includes(l.id);
+            const full = !active && on.length >= MAX_LORAS;
+            return (
+              <button
+                key={l.id}
+                className="opt"
+                role="menuitemcheckbox"
+                aria-checked={active}
+                disabled={!l.available || full}
+                onClick={() => toggle(l.id)}
+                title={!l.available ? "This LoRA's file is missing: load it again in Settings → LoRA." : full ? `At most ${MAX_LORAS} LoRAs at once.` : l.triggerWords ? `Adds: ${l.triggerWords}` : undefined}
+              >
+                <span className="check">{active && <Check size={15} />}</span>
+                <span className="lora-name">{l.name}</span>
+                <span className="sub">{l.available ? weightLabel(l.weight) : "missing"}</span>
+              </button>
+            );
+          })}
+          <button className="opt" onClick={() => (close(), openSettings("lora"))}>
+            <span className="check">
+              <Settings2 size={15} />
+            </span>
+            <span>Manage LoRAs…</span>
+          </button>
+        </>
+      )}
+    </Popover>
+  );
+}
+
 export function Composer() {
   const c = useStore((s) => s.composer);
   const hasProject = useStore((s) => s.session.length > 0);
@@ -458,6 +531,8 @@ export function Composer() {
               Enhance
             </button>
           )}
+
+          <LoraBadge />
 
           <button className="icon-btn" onClick={() => setState({ overlay: "prompt-tips" })} title="Prompt tips" aria-label="Prompt tips">
             <Lightbulb size={17} />

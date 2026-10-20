@@ -61,6 +61,8 @@ export interface GenerationRequest {
   private?: boolean;
   /** Prompt enhancer: the model's language model rewrites the prompt first (new images, edits, combines). */
   enhance?: boolean;
+  /** LoRA ids to use; omitted = the ones on by default. */
+  loras?: string[] | null;
 }
 
 export interface WorkingCanvas { source: Size; content: Size; canvas: Size; content_offset: [number, number]; scale: number }
@@ -123,6 +125,8 @@ export interface GenerationRecord {
   prompt: string;
   /** The user's own prompt, when the prompt enhancer rewrote it. */
   original_prompt?: string | null;
+  /** LoRAs the image was made with. */
+  loras?: AppliedLora[];
   negative_prompt: string;
   seed: number;
   width: number;
@@ -149,6 +153,26 @@ export interface GenerationRecord {
   notes: string[];
   request: GenerationRequest | null;
   pipeline?: PipelineRecord | null;
+}
+
+/** A LoRA as an image used it. */
+export interface AppliedLora { id: string; name: string; weight: number; trigger_words?: string }
+
+/** One of the user's LoRAs (Settings → LoRA); Kokon's prepared copy is `<dir>/<id>.safetensors`. */
+export interface LoraItem {
+  id: string;
+  name: string;
+  /** The file the user picked. */
+  source: string;
+  weight: number;
+  triggerWords: string;
+  onByDefault: boolean;
+  size: number;
+  warning: string | null;
+  notes: string[];
+  addedAt: string;
+  /** Kokon's copy is still in its LoRA folder. */
+  available: boolean;
 }
 
 /** A .cube LUT in Kokon's list (the user's, most recently used first, then Kokon's presets). */

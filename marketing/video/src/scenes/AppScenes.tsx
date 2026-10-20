@@ -10,7 +10,7 @@ import { FullImage } from "../app/FullImage";
 import { imageBox, InpaintOverlay, strokePoints } from "../app/InpaintOverlay";
 import { Backdrop, type Cam, Camera, camAt, camSpeed, Caption, DepthOfField, Dissolve, inOut, kf, Pointer, prog, typed, typingDone, Vignette } from "../app/motion";
 import { Send, Sfx } from "../app/sound";
-import { CREATE, FPS, LENGTH, REGION, sceneCues, sentenceAt } from "../app/timeline";
+import { CREATE, FPS, GPU_WORDS, LENGTH, REGION, sceneCues, sentenceAt } from "../app/timeline";
 import { CardMotionContext, type CardMotion } from "../mocks/card";
 import { Hatch } from "../mocks/Cocoon";
 import type { State } from "../mocks/store";
@@ -159,6 +159,11 @@ export function Create() {
   // image hatches out of it full frame (the app's hatching, on the frame instead of the stage).
   const full = f >= C.hatch ? 1 : 0;
   const words = cues.find((c) => c.from === 3)!;
+  // The captions follow the voice: "Prompt Plus writes the full prompt," then "and your graphics
+  // card makes it."
+  const prompting = cues.find((c) => c.from === 1)!;
+  const writesAt = sentenceAt(prompting, 2);
+  const gpuAt = writesAt + Math.round(GPU_WORDS * FPS);
   return (
     <AbsoluteFill>
       <Backdrop />
@@ -174,8 +179,8 @@ export function Create() {
         </div>
       )}
       <Vignette strength={onCard && f < C.closer ? 0.7 : 0} />
-      <Tag text="Prompt+ writes the prompt." start={C.write - 2} end={C.leave + 12} />
-      <Caption title="Made on your own GPU." sub="Qwen-Image 2.1 Turbo · Prompt+ ~2 s, then 2752×1536 in 38 s on an RTX 5070 Ti (sped up here)" start={C.leave + 14} end={C.hatch} size={48} />
+      <Tag text="Prompt+ writes the prompt." start={writesAt} end={gpuAt - 2} />
+      <Caption title="Made on your own GPU." sub="Qwen-Image 2.1 Turbo · Prompt+ ~2 s, then 2752×1536 in 38 s on an RTX 5070 Ti (sped up here)" start={gpuAt} end={C.hatch} y={930} size={48} />
       <Words
         items={[
           { text: "No cloud.", at: sentenceAt(words, 3) },

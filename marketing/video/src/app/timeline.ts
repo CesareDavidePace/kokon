@@ -79,7 +79,9 @@ const all = (scene: SceneName, line: number, local: number): Cue => cue(scene, l
 // Create with Prompt+: a few words typed, Prompt+ on, Send on beat 10 and a cut to the card; it
 // writes the prompt and fades to the percentage (a closer shot on beat 17); the logo forms, and
 // from it the image hatches full frame.
-export const CREATE = { ask: 100, pill: 150, send: 172, writes: 178, job: 173, write: 180, written: 244, leave: 256, form: 278, closer: 279, done: 294, hatch: 300, full: 355, promises: 360 };
+/** Seconds into line 3's sentence 2 where "and your graphics card" starts (Whisper word times). */
+export const GPU_WORDS = 1.68;
+export const CREATE = { ask: 100, pill: 150, send: 172, job: 173, write: 180, written: 244, leave: 256, form: 278, closer: 279, done: 294, hatch: 300, full: 355, promises: 360 };
 // Shot changes (removeCut, removeShot, addCut, addShot) and the scene's end sit on beats.
 export const REGION = { paint: 46, paint1: 130, removeCut: 138, remove: 150, removeSend: 177, removeShot: 185, addCut: 246, add: 256, addSend: 298, addShot: 307, same: 344 };
 export const MONTAGE_EDIT = 91.5; // 1.5 bars
@@ -92,8 +94,8 @@ export const CUES: Cue[] = [
   all("intro", 1, 38),
   all("hook", 2, 15),
   cue("create", 3, 12, 0),
-  cue("create", 3, CREATE.ask, 1),
-  cue("create", 3, CREATE.writes, 2),
+  // The two Prompt+ sentences in one cue: the take's own 0.4 s pause between them.
+  cue("create", 3, CREATE.ask, 1, 2),
   cue("create", 3, CREATE.promises, 3, 5),
   cue("region", 4, 6, 0),
   cue("region", 4, 58, 1),

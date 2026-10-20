@@ -5,20 +5,23 @@ import voice from "./voice-0.10.json";
 import { FPS, type Cue, type Lines, sentenceAt, type VoiceSet } from "./timeline";
 
 // Music: `src` from `from` seconds; its beats fall every BEAT seconds from BEAT0 (seconds into
-// the video). Placeholder until the new take: the launch track's tail (beat 76 of its grid at
-// 47.09 s), so its drop (60.3 s) lands on beat 26, the hatch.
-export const MUSIC = { src: "music.m4a", from: 8.45 + 76 * (60 / 118) };
+// the video). public/music-0.10.m4a (audio/make_update_music.py, from ACE-Step take
+// update-20261020-175836-1): the drop on beat 26 (the hatch), a dead stop at 37.607 s.
+export const MUSIC = { src: "music-0.10.m4a", from: 0 };
 const BEAT = 60 / 118;
 const BEAT0 = 0;
 /** Frame of beat `k` of the video. */
 export const beat = (k: number) => Math.round((BEAT0 + k * BEAT) * FPS);
+/** Where the music stops dead, before the last words. */
+export const STOP = Math.round(37.607 * FPS);
 
 /** Shot starts (frames), each on a beat. */
 export const SHOT = {
   title: 0,
   composer: beat(6),
   card: beat(10),
-  making: beat(18),
+  /** On the beat before "Then Kokon makes the image." (set below, from the voice). */
+  making: 0,
   logo: beat(24),
   hatch: beat(26), // the drop
   model: beat(30),
@@ -40,6 +43,8 @@ export const VOICE_READY = !json._provisional;
 export const UPDATE_VOICE: VoiceSet = { dir: "voice-0.10", lines: json };
 
 const cue = (line: number, at: number, from = 0, to = from): Cue => ({ line, from, to, at, set: UPDATE_VOICE });
+/** Seconds into a sentence where a word starts (Whisper word times of the picked takes). */
+export const WORD = { two: 1.25, reads: 0.72, writes: 1.58, load: 0.21, click: 1.07, spun: 1.67 };
 const all = (line: number, at: number): Cue => cue(line, at, 0, UPDATE_VOICE.lines[String(line)].sentences.length - 1);
 const span = (line: number, i: number) => UPDATE_VOICE.lines[String(line)].sentences[i];
 
@@ -51,20 +56,26 @@ export const CUES_010: Cue[] = [
   all(2, WRITE - Math.round(span(2, 1)[0] * FPS)),
   all(3, SHOT.hatch + 10),
   all(4, SHOT.settings + 6),
-  all(5, SHOT.look + 6),
-  all(6, SHOT.end + 12),
+  // "...spun from silk." as the silk shot comes in.
+  all(5, SHOT.silk - Math.round(WORD.spun * FPS)),
+  cue(6, SHOT.end + 12, 0),
+  // "Get it at kokon dot app." right after the music stops.
+  cue(6, STOP + 8, 1),
 ];
-export const LINE = (n: number) => CUES_010[n - 1];
-export const said = (n: number, i: number) => sentenceAt(LINE(n), i);
+const cueOf = (n: number, i: number) => CUES_010.find((c) => c.line === n && c.from <= i && i <= c.to)!;
+/** Frame where sentence `i` of line `n` starts, and where a word of it starts. */
+export const said = (n: number, i: number) => sentenceAt(cueOf(n, i), i);
+export const word = (n: number, i: number, w: keyof typeof WORD) => said(n, i) + Math.round(WORD[w] * FPS);
 /** Frame where sentence `i` of line `n` ends. */
-export const saidEnd = (n: number, i: number) => LINE(n).at + Math.round((span(n, i)[1] - span(n, 0)[0]) * FPS);
+export const saidEnd = (n: number, i: number) => said(n, i) + Math.round((span(n, i)[1] - span(n, i)[0]) * FPS);
 /** The last beat at or before frame `f`. */
 const beatBefore = (f: number) => beat(Math.floor((f / FPS - BEAT0) / BEAT));
 SHOT.pill = Math.min(beatBefore(said(4, 2) + 2), SHOT.look - 45);
+SHOT.making = beatBefore(said(2, 2) + 4);
 
 /** LoRA: "Load a LoRA…" clicked as the voice says "Load one in Settings.", the pill on "one
  * click" (but before the cut to the new look). */
-export const LORA_CLICK = { load: said(4, 1) + 6, pill: Math.min(saidEnd(4, 2) - 8, SHOT.look - 14) };
+export const LORA_CLICK = { load: word(4, 1, "load") + 4, pill: Math.min(word(4, 2, "click"), SHOT.look - 14) };
 
 /** The Prompt+ shots (frames of the video), in the shape Create uses (scenes/AppScenes.tsx). */
 export const PROMPT = {
@@ -74,8 +85,8 @@ export const PROMPT = {
   send: SHOT.card - 1,
   job: SHOT.card,
   write: WRITE,
-  written: SHOT.making - 14,
-  leave: SHOT.making - 6,
+  written: SHOT.making - 24,
+  leave: SHOT.making - 21,
   form: SHOT.logo - 1,
   done: SHOT.hatch - 6,
   hatch: SHOT.hatch,

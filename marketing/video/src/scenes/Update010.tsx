@@ -13,7 +13,7 @@ import { Mark, MARK_PATHS } from "../app/Mark";
 import { Backdrop, type Cam, Camera, Caption, DepthOfField, Dissolve, inOut, prog, Pointer, typingDone, Vignette } from "../app/motion";
 import { Music, Send, Sfx, Voice } from "../app/sound";
 import { FPS } from "../app/timeline";
-import { beat, CUES_010, LORA_CLICK, MUSIC, PROMPT, said, SHOT, UPDATE_FRAMES, VOICE_READY } from "../app/timeline010";
+import { beat, CUES_010, LORA_CLICK, MUSIC, PROMPT, said, SHOT, STOP, UPDATE_FRAMES, VOICE_READY, word } from "../app/timeline010";
 import { CardMotionContext, type CardMotion } from "../mocks/card";
 import { Hatch } from "../mocks/Cocoon";
 import type { State } from "../mocks/store";
@@ -151,7 +151,7 @@ function Hatched() {
       <Words
         items={[
           { text: "One model.", at: said(3, 0) },
-          { text: "Two jobs.", at: said(3, 0) + 22 },
+          { text: "Two jobs.", at: word(3, 0, "two") },
         ]}
         end={SHOT.model + 6}
       />
@@ -192,8 +192,8 @@ function OneModel() {
   const t0 = SHOT.model;
   const show = (at: number, dur = 18) => prog(f, at, dur);
   const rise = (p: number): CSSProperties => ({ opacity: p, transform: `translateY(${(1 - p) * 24}px)`, filter: `blur(${(1 - p) * 8}px)` });
-  const reads = said(3, 1);
-  const writes = reads + 30;
+  const reads = word(3, 1, "reads");
+  const writes = word(3, 1, "writes");
   const none = said(3, 2);
   const a = show(t0 + 2);
   const b = show(t0 + 8);
@@ -392,7 +392,8 @@ function Sounds() {
       <Sfx name="reveal" at={loaded + 2} variant={1} gain={0.6} />
       <Sfx name="click" at={clickPill} />
       <Sfx name="whoosh" at={SHOT.look} gain={0.5} />
-      <Sfx name="hit" at={SHOT.end} gain={0.8} />
+      <Sfx name="hit" at={SHOT.end} gain={0.5} />
+      <Sfx name="hit" at={STOP} gain={0.7} />
     </>
   );
 }

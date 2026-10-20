@@ -1,19 +1,24 @@
 /* The app follows the system theme; videos are rendered in its dark theme. */
 :root {
-  --bg: #161616;
-  --surface: #222222;
-  --surface-2: #2c2c2c;
-  --surface-3: #383838;
-  --border: #2c2c2c;
-  --text: #ececec;
-  --text-2: #a3a3a3;
-  --text-3: #6f6f6f;
-  --invert-bg: #ececec;
-  --invert-text: #111111;
-  --scrim: rgba(22, 22, 22, 0.85);
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 28px rgba(0, 0, 0, 0.45);
-  --checker: #1f1f1f;
-  --sidebar: #1d1d1d;
+  --ground: #0f0f0e;
+  --bg: #1a1a18;
+  --surface: #232321;
+  --surface-2: #2c2c29;
+  --surface-3: #383834;
+  --border: rgba(242, 241, 237, 0.08);
+  --border-2: rgba(242, 241, 237, 0.15);
+  --text: #f2f1ed;
+  --text-2: #b4b2ac;
+  --text-3: #8a8884;
+  --invert-bg: #f2f1ed;
+  --invert-text: #0f0f0e;
+  --scrim: rgba(15, 15, 14, 0.85);
+  --lift: inset 0 1px 0 rgba(255, 255, 255, 0.045), 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 28px -12px rgba(0, 0, 0, 0.6);
+  --shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 0 1px rgba(242, 241, 237, 0.07), 0 24px 60px -18px rgba(0, 0, 0, 0.75);
+  --print: 0 2px 6px rgba(0, 0, 0, 0.4), 0 34px 70px -24px rgba(0, 0, 0, 0.85);
+  --glow: rgba(247, 246, 242, 0.055);
+  --checker: #1d1d1b;
+  --sidebar: transparent;
   color-scheme: dark;
 }
 html, body, #root { height: auto; }
@@ -21,7 +26,7 @@ body { background: #000; }
 /* No CSS animations in rendered frames: they would not follow the frame clock. */
 .kokon-window *, .kokon-window *::before, .kokon-window *::after { animation-play-state: paused !important; transition: none !important; }
 
-.kokon-window { position: relative; overflow: hidden; border-radius: 12px; background: var(--bg); color: var(--text); font-family: var(--font);
+.kokon-window { position: relative; overflow: hidden; border-radius: 12px; background: var(--ground); color: var(--text); font-family: var(--font);
   box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 40px 120px rgba(0,0,0,0.6), 0 12px 40px rgba(0,0,0,0.5); display: flex; flex-direction: column; }
 .win-titlebar { height: 34px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 0 0 12px; background: #1b1b1b; color: #cfcfcf; font-size: 12.5px; }
 .win-titlebar .win-icon { width: 16px; height: 16px; border-radius: 4px; background: #f7f6f2; display: grid; place-items: center; }

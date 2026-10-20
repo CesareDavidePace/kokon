@@ -100,5 +100,11 @@ if __name__ == "__main__":
     # A style must be named: running every style would write over the launch takes.
     if not sys.argv[1:]:
         raise SystemExit(f"usage: python gen_music.py STYLE [...]   ({', '.join(STYLES)})")
+    try:
+        urllib.request.urlopen(API, timeout=5).close()
+    except urllib.error.HTTPError:
+        pass  # the server answered
+    except OSError:
+        raise SystemExit(f"ACE-Step API not reachable at {API}: start it first (cd D:/AI/ACE-Step-1.5; uv run acestep-api) and wait until it listens")
     for s in sys.argv[1:]:
         generate(s)

@@ -36,7 +36,7 @@ NVIDIA cards need the proprietary driver (the CUDA runtime comes with Kokon). AM
 
 | File | SHA-256 |
 |---|---|
-| `Kokon_0.10.0_x64-setup.exe` (Windows) | `<sha256>` |
-| `Kokon_0.10.0_aarch64.dmg` (Mac, macOS 15+) | `<sha256>` |
-| `Kokon_0.10.0_amd64.deb` (Ubuntu, Debian, Mint) | `<sha256>` |
-| `Kokon-0.10.0-1.x86_64.rpm` (Fedora) | `<sha256>` |
+| `Kokon_0.10.0_x64-setup.exe` (Windows) | `df9702218d595c7c2df89410112f15b6b101f5a55aa693c2b5aaa4e8223d6860` |
+| `Kokon_0.10.0_aarch64.dmg` (Mac, macOS 15+) | `9605d10a71dc7e1d40fb0f05f78cf4f211d490d8cf14674a22ceffe2b3d60852` |
+| `Kokon_0.10.0_amd64.deb` (Ubuntu, Debian, Mint) | `f55c6fea1ede350db4782823144e911e3754f0bb6dfbd5ed46c0b200eab7f998` |
+| `Kokon-0.10.0-1.x86_64.rpm` (Fedora) | `cf8207312f356e6bf319c7b3cdcddbe06c1e41d80467070642976b8815be0175` |

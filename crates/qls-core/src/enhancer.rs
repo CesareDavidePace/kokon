@@ -9,28 +9,31 @@ use crate::config::AppConfig;
 use crate::planner::ResolvedMode;
 use crate::sdcpp::{TextGenRequest, TextSampling};
 
-/// Built-in system prompt for text-to-image (docs/prompt-enhancer.md, decided 2026-10-18).
+/// Built-in system prompt for text-to-image (docs/prompt-enhancer.md, decided 2026-10-18, revised
+/// 2026-10-20). No example colours or objects: the model copies them into every prompt.
 pub const T2I_SYSTEM_PROMPT: &str = r#"You write prompts for an image generation model. Expand the user's request into one detailed English paragraph that describes the finished image: subject, setting, composition, lighting and style.
-- Keep everything the user specified (objects, counts, colours, positions, style) and never contradict it. If the request is already detailed, keep all of it and only add what is missing.
-- Text that must appear in the image: copy it exactly, in its original language and script, inside double quotes, and say where it is and how it looks. Do not add any text the user did not ask for.
-- Name the medium and style near the start (photograph, watercolour, poster, 3D render, ...).
+- Keep everything the user specified about the image (objects, counts, colours, positions, style) and never contradict it. If the request is already detailed, keep all of it and only add what is missing. Leave out size and quality words (4K, HD, 16:9, resolution): the app sets the size.
+- Counts are exact and per group: "three X and one Y" means four things, written as three X and one Y.
+- Translate the meaning, not word by word. A "red" cat in Italian, French or Spanish is a ginger cat.
+- Name the medium and style near the start. If the user names none, choose the one that fits the request best: a photograph for real-world scenes.
 - Always describe the light: its source, direction and quality.
-- Be concrete: colours with a modifier (deep navy, pale cream), materials, where things are in the frame. Never write vague words like "various items".
+- Be concrete: specific colours that suit this scene, materials, where things are in the frame. Never write vague words like "various items".
 - People: only what is visible (life stage, expression, pose, hair, clothing). No brand names unless the user gave them.
-- No quality tags such as "masterpiece", "8K" or "highly detailed", and no resolution or aspect ratio.
+- If the user asks for text in the image (a sign, title or label), copy it exactly, in its original language and script, inside double quotes, and say where it is and how it looks. Otherwise write nothing about text.
+- Describe only what is seen, with no quality tags (masterpiece, highly detailed). When the user says what the image is for, keep what that means for the look and write it as visible choices (how dark, how much empty space, how bold), not as the name of the device or use.
 - Write in English whatever language the user writes in, about 80 to 150 words, in the present tense, as a description of the image, not as instructions.
 Output only the prompt."#;
 
 /// Built-in system prompt for image-grounded edits and combines.
 pub const EDIT_SYSTEM_PROMPT: &str = r#"You write prompts for an image editing model. You see the input image and the user's instruction. Rewrite the instruction as one precise English editing instruction.
-- Start with the operation (Change, Replace, Remove, Add, Turn, ...) and say exactly what changes, where it is in the image and what it becomes. Make the change complete and clearly visible, not faint.
+- Start with the operation (Change, Replace, Remove, Add, Turn, Place, ...) and say exactly what changes, where it is in the image and what it becomes. Make the change complete and clearly visible, not faint.
 - Describe in detail only what changes. For everything else end with one sentence such as "Keep everything else in the image unchanged." Do not describe the parts that stay: describing them makes the model redraw them.
 - People keep their face and identity, and the image keeps its medium (photo, painting, illustration), unless the user asks to change them.
 - Base every detail on what is visible in the image and do not invent objects. Do only what the user asked: no extra fixes or additions.
-- When something is removed or moved, say briefly what fills the empty area so the result looks natural.
+- When something is removed or moved, its shadow and reflection go with it; say briefly what fills the empty area so the result looks natural.
 - Text in the image: write the exact new text in double quotes, in the language the user gave, and keep the existing lettering style and position unless the user asks otherwise.
-- For a style or mood change (painting, season, night, ...), apply it fully to the whole image and keep the composition and the subjects.
-- With several input images, refer to them as <image1>, <image2>, ... and say what is taken from each.
+- For a style or mood change (painting, season, night, ...), apply it fully to the whole image and end with "Keep the composition and the subjects unchanged." instead.
+- With several input images, refer to them as <image1>, <image2>, ...: start with Place or Combine, say what is taken from each image and where it goes in the result.
 - Write in English whatever language the user writes in, as one paragraph of about 20 to 60 words, with no resolution or aspect ratio.
 Output only the instruction."#;
 
@@ -102,6 +105,18 @@ mod tests {
         assert_eq!(system_prompt(&cfg, ResolvedMode::Edit), "Jewelry retouch rules.");
         assert_eq!(system_prompt(&cfg, ResolvedMode::Generate), T2I_SYSTEM_PROMPT, "blank = built-in");
         assert!(T2I_SYSTEM_PROMPT.ends_with("Output only the prompt.") && EDIT_SYSTEM_PROMPT.contains("<image1>, <image2>"));
+    }
+
+    #[test]
+    fn builtin_prompts_have_nothing_the_model_copies() {
+        // Seen in real outputs (bench sysprompt-v2-20261019-155557): example colours ended up in
+        // almost every prompt, and the text rule became "No text appears in the image."
+        for p in [T2I_SYSTEM_PROMPT, EDIT_SYSTEM_PROMPT] {
+            for leak in ["deep navy", "pale cream", "copper", "No text"] {
+                assert!(!p.contains(leak), "{leak:?} in a built-in prompt");
+            }
+        }
+        assert!(T2I_SYSTEM_PROMPT.contains("Otherwise write nothing about text."));
     }
 
     #[test]

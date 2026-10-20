@@ -298,24 +298,25 @@ function LoraBadge() {
     const l = all[0];
     return (
       <button
-        className={`icon-btn ${on.length ? "active" : ""}`}
+        className={`pill toggle ${on.length ? "on" : ""}`}
         role="switch"
         aria-checked={on.length > 0}
-        aria-label={`LoRA ${l.name}`}
         disabled={!l.available}
         onClick={() => toggle(l.id)}
         title={l.available ? `${title}. Click to turn ${on.length ? "off" : "on"}.` : "This LoRA's file is missing: load it again in Settings → LoRA."}
       >
-        <Layers size={17} />
+        <Layers size={15} />
+        LoRA
       </button>
     );
   }
   return (
     <Popover
       trigger={(open, toggleOpen) => (
-        <button className={`icon-btn has-badge ${on.length || open ? "active" : ""}`} onClick={toggleOpen} title={title} aria-label={`LoRA, ${on.length} on`}>
-          <Layers size={17} />
-          {on.length > 0 && <span className="lora-count">{on.length}</span>}
+        <button className={`pill toggle ${on.length || open ? "on" : ""}`} onClick={toggleOpen} title={title}>
+          <Layers size={15} />
+          LoRA{on.length > 0 && <span className="lora-count">{on.length}</span>}
+          <ChevronDown size={13} />
         </button>
       )}
     >
@@ -497,20 +498,22 @@ export function Composer() {
 
           {canEnhance && (
             <button
-              className={`icon-btn ${c.enhance ? "active" : ""}`}
+              className={`pill toggle ${c.enhance ? "on" : ""}`}
               role="switch"
               aria-checked={c.enhance}
-              aria-label="Prompt enhancer"
               onClick={() => updateComposer({ enhance: !c.enhance })}
               title={
                 c.enhance
-                  ? "Prompt enhancer on: before making the image, the model rewrites your prompt as a detailed English description (looking at your image for edits). You see it being written; the result keeps both. Click to turn off."
-                  : "Prompt enhancer: let the model rewrite a short prompt, in any language, as a detailed English description before making the image. Adds a few seconds."
+                  ? "Prompt+ on: before making the image, the model rewrites your prompt as a detailed English description (looking at your image for edits). You see it being written; the result keeps both. Click to turn off."
+                  : "Prompt+: let the model rewrite a short prompt, in any language, as a detailed English description before making the image. Adds a few seconds."
               }
             >
-              <WandSparkles size={17} />
+              <WandSparkles size={15} />
+              Prompt+
             </button>
           )}
+
+          <LoraBadge />
 
           <Popover
             placement="top-start"
@@ -534,8 +537,6 @@ export function Composer() {
           <button className="icon-btn" onClick={() => setState({ overlay: "prompt-tips" })} title="Prompt tips" aria-label="Prompt tips">
             <Lightbulb size={17} />
           </button>
-
-          <LoraBadge />
 
           <span className="spacer" />
           <span className="plan-hint" title={hintTitle}>

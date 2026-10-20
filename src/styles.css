@@ -193,7 +193,8 @@ svg { display: block; flex: none; }
   .shimmer { color: var(--text-3); background: none; }
 }
 .stage-meta .enhanced-mark { flex: none; display: inline-flex; color: var(--text-2); }
-.lora-count { position: absolute; top: 2px; right: 1px; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px; background: var(--text); color: var(--bg); font-size: 10px; font-weight: 600; line-height: 14px; text-align: center; box-shadow: 0 0 0 2px var(--bg); }
+.pill.toggle.on { background: var(--surface-2); }
+.lora-count { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--text); color: var(--bg); font-size: 10px; font-weight: 600; line-height: 16px; text-align: center; }
 .lora-name { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .popover .opt:disabled { opacity: 0.5; cursor: default; }
 .failed { display: flex; flex-direction: column; align-items: center; gap: 10px; max-width: 460px; text-align: center; color: var(--text-2); }

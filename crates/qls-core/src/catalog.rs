@@ -872,6 +872,28 @@ mod tests {
     }
 
     #[test]
+    fn published_engine_json_matches_the_built_in_pins() {
+        // engine.json on master and the app's pins name the same release and the same files, so a
+        // release never ships pins its own manifest disagrees with.
+        let m: EngineManifest = serde_json::from_str(include_str!("../../../engine.json")).unwrap();
+        let k = m.kokon.expect("engine.json has a kokon entry");
+        assert_eq!(k.tag, ENGINE_TAG);
+        assert!(version_tuple(env!("CARGO_PKG_VERSION")) >= version_tuple(&k.min_app), "min_app {} above this app", k.min_app);
+        assert_eq!((k.macos.size, k.macos.sha256.as_str()), (MACOS_METAL_SIZE, MACOS_METAL_SHA256));
+        assert_eq!(k.macos.url, ENGINE_METAL.url);
+        #[cfg(not(target_os = "linux"))]
+        {
+            assert_eq!((k.win_cuda.url.as_str(), k.win_cuda.size, k.win_cuda.sha256.as_str()), (ENGINE_CUDA.url, WIN_CUDA_SIZE, WIN_CUDA_SHA256));
+            assert_eq!((k.win_vulkan.url.as_str(), k.win_vulkan.size, k.win_vulkan.sha256.as_str()), (ENGINE_VULKAN.url, WIN_VULKAN_SIZE, WIN_VULKAN_SHA256));
+        }
+        #[cfg(target_os = "linux")]
+        {
+            assert_eq!((k.linux_cuda.url.as_str(), k.linux_cuda.size, k.linux_cuda.sha256.as_str()), (ENGINE_CUDA.url, LINUX_CUDA_SIZE, LINUX_CUDA_SHA256));
+            assert_eq!((k.linux_vulkan.url.as_str(), k.linux_vulkan.size, k.linux_vulkan.sha256.as_str()), (ENGINE_VULKAN.url, LINUX_VULKAN_SIZE, LINUX_VULKAN_SHA256));
+        }
+    }
+
+    #[test]
     fn engines_of_another_release_need_updating() {
         let dir = tempfile::tempdir().unwrap();
         for f in ENGINE_CUDA.provides.iter().chain(CUDA_RUNTIME.provides) {

@@ -226,6 +226,8 @@ export interface StatusResponse {
     state: ServerState; owned: boolean; pid: number | null; port: number; model: string | null; model_loaded: boolean; error: AppErrorBody | null;
     /** The loaded engine can write prompts (prompt enhancer); null while no model is loaded. */
     text_generation?: boolean | null;
+    /** The engine can run an upscaler model (null: not running). */
+    upscale?: boolean | null;
   };
   profile: { id: string; display_name: string; source: ProfileSource };
   gpu: { name: string; vendor: string; unified: boolean; memory_total_mib: number; memory_used_mib: number; memory_free_mib: number; driver_version: string } | null;

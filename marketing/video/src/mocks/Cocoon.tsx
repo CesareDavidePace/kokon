@@ -58,8 +58,9 @@ export function Cocoon({ src, pct, dim }: { src?: string; pct: number; form?: bo
   );
 }
 
-/** The result hatching from the formed logo, at the card's `hatchMs`; a plain frame otherwise. */
-export function Hatch({ aspect, children }: { id?: string; aspect: number; children: React.ReactNode }) {
+/** The result hatching from the formed logo, at the card's `hatchMs`; a plain frame otherwise.
+ * `fill`: over a whole positioned box (the video's full frame) instead of a flex layout. */
+export function Hatch({ aspect, children, fill }: { id?: string; aspect: number; children: React.ReactNode; fill?: boolean }) {
   const c = useCard();
   const ms = c.hatchMs ?? null;
   const running = ms !== null && ms < hatchEnd(FORM_MS);
@@ -70,6 +71,15 @@ export function Hatch({ aspect, children }: { id?: string; aspect: number; child
   const veilBox = useRef<HTMLDivElement>(null);
   const veil = useRef<SVGSVGElement>(null);
   const veilPath = useRef<SVGPathElement>(null);
+  // The frame may be laid out only after the first commit: paint again once it has a size.
+  const [, setSized] = useState(0);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setSized((n) => n + 1));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   useLayoutEffect(() => {
     const el = ref.current;
@@ -80,9 +90,9 @@ export function Hatch({ aspect, children }: { id?: string; aspect: number; child
   });
 
   return (
-    <div className="hatch" ref={ref}>
+    <div className="hatch" ref={ref} style={fill ? { position: "absolute", inset: 0 } : undefined}>
       {running && <div className="hatch-canvas" ref={canvasBox} />}
-      <div className="hatch-body" ref={body}>
+      <div className="hatch-body" ref={body} style={fill ? { position: "absolute", inset: 0 } : undefined}>
         {children}
       </div>
       {running && (

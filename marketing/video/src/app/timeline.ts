@@ -77,9 +77,9 @@ const all = (scene: SceneName, line: number, local: number): Cue => cue(scene, l
 
 // Scene-local frames where things happen that the voice names. Scenes import these too.
 // Create with Prompt+: a few words typed, Prompt+ on, Send on beat 10 and a cut to the card; it
-// writes the prompt, fades to the percentage, the result hatches, and the full-frame image
-// arrives on beat 22.
-export const CREATE = { ask: 100, pill: 150, writes: 158, send: 172, job: 173, write: 180, written: 244, leave: 256, rest: 264, form: 278, done: 294, hatch: 300, full: 355, promises: 360 };
+// writes the prompt and fades to the percentage (a closer shot on beat 17); the logo forms, and
+// from it the image hatches full frame.
+export const CREATE = { ask: 100, pill: 150, send: 172, job: 173, write: 180, written: 244, leave: 256, form: 278, closer: 279, done: 294, hatch: 300, full: 355, promises: 360 };
 // Shot changes (removeCut, removeShot, addCut, addShot) and the scene's end sit on beats.
 export const REGION = { paint: 46, paint1: 130, removeCut: 138, remove: 150, removeSend: 177, removeShot: 185, addCut: 246, add: 256, addSend: 298, addShot: 307, same: 344 };
 export const MONTAGE_EDIT = 91.5; // 1.5 bars
@@ -93,9 +93,7 @@ export const CUES: Cue[] = [
   all("hook", 2, 15),
   cue("create", 3, 12, 0),
   cue("create", 3, CREATE.ask, 1),
-  cue("create", 3, CREATE.writes, 2),
-  cue("create", 3, CREATE.rest, 3),
-  cue("create", 3, CREATE.promises, 4, 6),
+  cue("create", 3, CREATE.promises, 2, 4),
   cue("region", 4, 6, 0),
   cue("region", 4, 58, 1),
   cue("region", 4, REGION.remove, 2),

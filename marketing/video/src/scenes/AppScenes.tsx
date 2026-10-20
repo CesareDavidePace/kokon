@@ -11,7 +11,8 @@ import { imageBox, InpaintOverlay, strokePoints } from "../app/InpaintOverlay";
 import { Backdrop, type Cam, Camera, camAt, camSpeed, Caption, DepthOfField, Dissolve, inOut, kf, Pointer, prog, typed, typingDone, Vignette } from "../app/motion";
 import { Send, Sfx } from "../app/sound";
 import { CREATE, FPS, LENGTH, REGION, sceneCues, sentenceAt } from "../app/timeline";
-import type { CardMotion } from "../mocks/card";
+import { CardMotionContext, type CardMotion } from "../mocks/card";
+import { Hatch } from "../mocks/Cocoon";
 import type { State } from "../mocks/store";
 
 const inpaintReq = (prompt: string, from: string, action: "remove" | "add") => ({
@@ -76,9 +77,12 @@ const Tag = ({ text, start, end }: { text: string; start: number; end: number })
 // ---------------------------------------------------------------------------------------
 export const CREATE_FRAMES = LENGTH.create;
 
-/** The card's shot: the stage, still (a slow push only). */
-// Zoomed so the window just fills the width (the camera then holds it edge to edge).
-const CARD_CAM: Cam = { x: 720, y: 400, s: 1.34 };
+/** The card in two still shots: the whole card while Prompt+ writes (a slow push), then, from
+ * the percentage on, closer, with the logo where the full-frame logo the image hatches from
+ * sits (same centre and size, measured), so the cut between them reads as one logo. */
+const CARD_CAM: Cam = { x: 852, y: 360, s: 1.55 };
+const CARD_CAM_END = 1.6;
+const LOGO_CAM: Cam = { x: 848, y: 364, s: 1.756 };
 const PILL: [number, number] = [840, 853];
 
 /** The job's percentage at scene frame `f`: the image starts while Prompt+ is still on screen. */
@@ -129,7 +133,7 @@ export function Create() {
     [C.send, { ...PROMPT_CAM, s: 1.86 }],
   ]);
   const onCard = f >= C.job;
-  const cam = onCard ? { ...CARD_CAM, s: CARD_CAM.s + (f - C.job) * 0.0004 } : typingCam;
+  const cam = !onCard ? typingCam : f >= C.closer ? LOGO_CAM : { ...CARD_CAM, s: CARD_CAM.s + (CARD_CAM_END - CARD_CAM.s) * prog(f, C.job, C.closer - C.job, (x) => x) };
   // Sharp on the composer while typing; the whole window on the card.
   const dof = onCard ? 0 : prog(f, 70, 20);
   const app = (
@@ -151,26 +155,32 @@ export function Create() {
       )}
     </Camera>
   );
-  // A hard cut on the beat: the window's small image and the full frame never overlap.
-  const full = f >= C.full ? 1 : 0;
-  const words = cues.find((c) => c.from === 4)!;
+  // Once the card has formed the logo: a hard cut to the same logo filling the frame, and the
+  // image hatches out of it full frame (the app's hatching, on the frame instead of the stage).
+  const full = f >= C.hatch ? 1 : 0;
+  const words = cues.find((c) => c.from === 2)!;
   return (
     <AbsoluteFill>
       <Backdrop />
-      {dof > 0.01 ? <DepthOfField focus={PROMPT_FOCUS} blur={7 * dof}>{app}</DepthOfField> : app}
+      {!full && (dof > 0.01 ? <DepthOfField focus={PROMPT_FOCUS} blur={7 * dof}>{app}</DepthOfField> : app)}
       {full > 0 && (
-        <div style={{ position: "absolute", inset: 0 }}>
-          <FullImage before="street" push={1 + prog(f, C.full, LENGTH.create - C.full, (x) => x) * 0.05} dim={0.25 * prog(f, C.promises - 8, 12)} />
+        // Its own stacking context: the hatch layers (z-index 1-2) stay under the words.
+        <div style={{ position: "absolute", inset: 0, isolation: "isolate" }}>
+          <CardMotionContext.Provider value={card}>
+            <Hatch aspect={1920 / 1080} fill>
+              <FullImage before="street" push={1 + prog(f, C.full, LENGTH.create - C.full, (x) => x) * 0.05} dim={0.25 * prog(f, C.promises - 8, 12)} />
+            </Hatch>
+          </CardMotionContext.Provider>
         </div>
       )}
-      <Vignette strength={(onCard ? 0.7 : 0) * (1 - full)} />
+      <Vignette strength={onCard && f < C.closer ? 0.7 : 0} />
       <Tag text="Prompt+ writes the prompt." start={C.write - 2} end={C.leave + 12} />
-      <Caption title="Made on your own GPU." sub="Qwen-Image 2.1 Turbo · Prompt+ ~2 s, then 2752×1536 in 38 s on an RTX 5070 Ti (sped up here)" start={C.leave + 14} end={C.full - 4} size={48} />
+      <Caption title="Made on your own GPU." sub="Qwen-Image 2.1 Turbo · Prompt+ ~2 s, then 2752×1536 in 38 s on an RTX 5070 Ti (sped up here)" start={C.leave + 14} end={C.hatch} size={48} />
       <Words
         items={[
-          { text: "No cloud.", at: sentenceAt(words, 4) },
-          { text: "No account.", at: sentenceAt(words, 5) },
-          { text: "No subscription.", at: sentenceAt(words, 6) },
+          { text: "No cloud.", at: sentenceAt(words, 2) },
+          { text: "No account.", at: sentenceAt(words, 3) },
+          { text: "No subscription.", at: sentenceAt(words, 4) },
         ]}
         end={LENGTH.create - 4}
       />

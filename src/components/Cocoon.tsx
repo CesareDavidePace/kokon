@@ -349,9 +349,11 @@ export function paintHatch(e: HatchEls, aspect: number, tl: number, formFrom: nu
   r = { ...r, h: r.w / aspect, x: (W - r.w) / 2, y: (H - r.w / aspect) / 2 };
   const shown = b.querySelector<HTMLElement>(".image-box, .compare-box");
   if (shown && shown.offsetWidth > 0) {
+    // Client rects include any scaling of an ancestor; the styles set below are layout pixels.
     const a = shown.getBoundingClientRect();
     const o = el.getBoundingClientRect();
-    r = { w: a.width, h: a.height, x: a.left - o.left, y: a.top - o.top };
+    const k = el.offsetWidth > 0 ? o.width / el.offsetWidth : 1;
+    r = { w: a.width / k, h: a.height / k, x: (a.left - o.left) / k, y: (a.top - o.top) / k };
   }
   const { w: iw, h: ih, x: ox, y: oy } = r;
   const m = markLayout(iw, ih);

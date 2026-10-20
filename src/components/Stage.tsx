@@ -1,17 +1,18 @@
 import {
-  Brush, ClipboardPaste, Combine, Copy, Download, Ellipsis, Expand, FolderOpen, Heart, ImageUpscale, Info, Loader2, MousePointerClick, Palette, Pencil, RefreshCw, RotateCcw, SlidersHorizontal, Square, TextCursorInput, Trash2, Wand2, X,
+  Brush, ClipboardPaste, Combine, Copy, Download, Ellipsis, Expand, FolderOpen, Heart, ImageUpscale, Info, Loader2, MousePointerClick, Palette, Pencil, RefreshCw, RotateCcw, SlidersHorizontal, Square, TextCursorInput, Trash2, Wand2, WandSparkles, X,
 } from "lucide-react";
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, urls } from "../lib/api";
 import {
-  compareBase, composerFromRecord, formatDuration, jobFraction, jobLabel, lutInfo, lutLabel, MAX_UPSCALE_AREA, MAX_UPSCALE_SIDE, MODE_LABEL, pipelineSummary, remainingSeconds, sizeForWidth, upscaleRequest, arcLayout,
+  compareBase, composerFromRecord, formatDuration, jobLabel, jobPercent, type JobClock, lutInfo, lutLabel, MAX_UPSCALE_AREA, MAX_UPSCALE_SIDE, MODE_LABEL, pipelineSummary, remainingSeconds, sizeForWidth, upscaleRequest, arcLayout,
   upscalerLabel, upscaleTargets, variationRequest, imageName, type LinkKind, type TimelineLink,
 } from "../lib/logic";
 import { native } from "../lib/native";
 import {
   addAsReference, addResult, cancelJob, focusPrompt, getState, itemSource, removeSessionItem, reusePrompt, selectedItem, selectItem, sessionLabels, sessionLinks, setState, submitRequest, toastError, toastInfo, useStore, type SessionItem,
 } from "../lib/store";
-import type { GenerationRecord, JobView, LutEntry, Mode, Size } from "../lib/types";
+import type { GenerationRecord, GenerationRequest, JobView, LutEntry, Mode, Size } from "../lib/types";
+import { Cocoon, Hatch, reducedMotion } from "./Cocoon";
 import { CompareFrame, CompareFullscreen } from "./Compare";
 import { LutBar, LutButton, LutOverlay } from "./Lut";
 import { IconButton, Popover, useFit } from "./ui";
@@ -62,14 +63,13 @@ function Empty() {
   );
 }
 
-/** A version in progress: the image it starts from, dimmed, with live progress on top. */
+/** A version in progress. With the prompt enhancer, the prompt it writes first takes the whole
+ * frame, appearing word by word; a couple of seconds after the last word it fades and the
+ * completion percentage takes over, over the cocoon (components/Cocoon.tsx). */
 function Pending({ job, item, labels }: { job: JobView; item: SessionItem; labels: Record<string, string> }) {
   const o = job.plan?.output;
   const { ref, box } = useFit(o ? o.width / o.height : 1);
   const session = useStore((s) => s.session);
-  const frac = jobFraction(job);
-  const remain = remainingSeconds(job);
-  const canCancel = !["done", "failed", "cancelled"].includes(job.status);
   const src = item.request?.mode === "generate" ? undefined : item.request?.images?.[0];
   const from = src ? session.find((i) => itemSource(i) === src) : undefined;
   const mode = job.plan?.mode;
@@ -77,30 +77,229 @@ function Pending({ job, item, labels }: { job: JobView; item: SessionItem; label
   const title = [imageName(labels[item.key]), mode && `${MODE_DOING[mode]}${from && mode !== "multi_reference" ? ` ${imageName(labels[from.key]).toLowerCase()}` : ""}`].filter(Boolean).join(" · ");
   // The source keeps its own shape inside an expansion; elsewhere it fills the frame.
   const outpaint = item.request?.outpaint;
+  const { pct, clock } = useJobPercent(job, item.request, true);
+  const [promptGone, setPromptGone] = useState(false);
+  const promptPhase = job.enhanced_prompt != null && !promptGone;
   return (
     <div className="stage-frame" ref={ref}>
-      <div className="pending" style={{ width: box.w, height: box.h }}>
-        {src && !outpaint && <img className="pending-src" src={urls.source(src)} alt="" draggable={false} />}
-        <div className="pending-info">
-          <span className="pending-title">{title}</span>
-          <div className={`progress ${frac === null ? "indeterminate" : ""}`}>
-            <i style={frac !== null ? { width: `${Math.round(frac * 100)}%` } : undefined} />
-          </div>
-          <span>
-            {jobLabel(job)}
-            {o ? ` · ${o.width}×${o.height}` : ""}
-            {remain !== null ? ` · ${formatDuration(remain)} left` : ""}
-          </span>
-          {job.notes.length > 0 && <span className="notes">{job.notes.join(" ")}</span>}
-          {canCancel && (
-            <button className="btn" onClick={() => cancelJob(job.id)} title="Cancel">
-              <Square size={13} /> Stop
-            </button>
-          )}
-        </div>
+      <div className={`pending ${promptPhase ? "prompt-phase" : ""}`} style={{ width: box.w, height: box.h }}>
+        <Cocoon src={src && !outpaint ? urls.source(src) : undefined} pct={pct} form={pct >= 92} dim={promptPhase} />
+        {promptPhase ? (
+          <PromptPhase
+            title={title}
+            text={job.enhanced_prompt!}
+            streaming={job.status === "enhancing_prompt"}
+            withImage={!!src}
+            budget={job.plan?.estimated_seconds || null}
+            onCancel={() => cancelJob(job.id)}
+            onGone={() => setPromptGone(true)}
+          />
+        ) : (
+          <ProgressPhase job={job} title={title} pct={pct} clock={clock} />
+        )}
       </div>
     </div>
   );
+}
+
+/** This machine's pace for the phases the plan cannot estimate (model load, prompt enhancer),
+ * remembered between jobs; a per-viewer convenience, so defaults when storage is unavailable. */
+const PROGRESS_KEY = "kokon.progress";
+interface ProgressMemory { loadSeconds: number; enhancerSecondsPerWord: number }
+function progressMemory(): ProgressMemory {
+  const d: ProgressMemory = { loadSeconds: 20, enhancerSecondsPerWord: 0.015 };
+  try {
+    const v = JSON.parse(localStorage.getItem(PROGRESS_KEY) || "{}");
+    return { loadSeconds: v.loadSeconds > 0 ? v.loadSeconds : d.loadSeconds, enhancerSecondsPerWord: v.enhancerSecondsPerWord > 0 ? v.enhancerSecondsPerWord : d.enhancerSecondsPerWord };
+  } catch {
+    return d;
+  }
+}
+function rememberProgress(m: Partial<ProgressMemory>) {
+  try {
+    localStorage.setItem(PROGRESS_KEY, JSON.stringify({ ...progressMemory(), ...m }));
+  } catch {
+    /* storage unavailable: the defaults stay */
+  }
+}
+
+const ENHANCED_MODES = new Set(["generate", "edit", "multi_reference"]);
+
+/** Live percentage of a whole job (`jobPercent`), computed a few times a second, only ever going
+ * up, and eased so it counts up smoothly. Tracks when the job and each phase started; `learn`
+ * (the main card only) remembers how long the model load and the prompt enhancer took. */
+function useJobPercent(job: JobView, request: GenerationRequest | null | undefined, learn = false): { pct: number; clock: JobClock } {
+  const enhance = !!request?.enhance && ENHANCED_MODES.has(job.plan?.mode ?? request?.mode ?? "");
+  const [shown, setShown] = useState<{ pct: number; clock: JobClock }>(() => ({ pct: 0, clock: { elapsed: 0, inPhase: 0, inRunning: 0, sinceStep: 0, enhance, ...progressMemory() } }));
+  const live = useRef({ job, enhance });
+  live.current = { job, enhance };
+  useEffect(() => {
+    const mem = progressMemory();
+    let startedAt: number | null = null;
+    let runningAt: number | null = null;
+    let phase = { key: "", at: performance.now() };
+    let step = { key: "", at: performance.now() };
+    let target = 0;
+    let value = 0;
+    const id = window.setInterval(() => {
+      const { job: j, enhance: e } = live.current;
+      const now = performance.now();
+      if (startedAt === null && j.status !== "queued") startedAt = now;
+      if (runningAt === null && j.status === "running") runningAt = now;
+      const key = `${j.status}|${j.stage ?? ""}`;
+      if (key !== phase.key) {
+        // Learn the phases the plan does not estimate, when they end.
+        const took = (now - phase.at) / 1000;
+        const was = phase.key.split("|")[0];
+        if (learn && was === "starting_backend" && took > 1) rememberProgress({ loadSeconds: took });
+        if (learn && was === "enhancing_prompt" && j.enhanced_prompt) {
+          const words = j.enhanced_prompt.split(/\s+/).filter(Boolean).length;
+          if (words >= 5) rememberProgress({ enhancerSecondsPerWord: took / words });
+        }
+        phase = { key, at: now };
+      }
+      const stepKey = j.step ? `${j.stage}|${j.step[0]}/${j.step[1]}` : "";
+      if (stepKey !== step.key) step = { key: stepKey, at: now };
+      const clock: JobClock = {
+        elapsed: startedAt === null ? 0 : (now - startedAt) / 1000,
+        inPhase: (now - phase.at) / 1000,
+        inRunning: runningAt === null ? 0 : (now - runningAt) / 1000,
+        sinceStep: (now - step.at) / 1000,
+        enhance: e,
+        ...mem,
+      };
+      target = Math.max(target, jobPercent(j, clock));
+      value += (target - value) * (reducedMotion() ? 1 : 0.18);
+      if (target - value < 0.05) value = target;
+      setShown({ pct: value, clock });
+    }, 60);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return shown;
+}
+
+function ProgressPhase({ job, title, pct, clock }: { job: JobView; title: string; pct: number; clock: JobClock }) {
+  const o = job.plan?.output;
+  const remain = remainingSeconds(job, clock);
+  const canCancel = !["done", "failed", "cancelled"].includes(job.status);
+  return (
+    <div className="progress-phase">
+      <span className="pending-title">{title}</span>
+      {canCancel && (
+        <button className="btn ghost stop-corner" onClick={() => cancelJob(job.id)} title="Cancel">
+          <Square size={12} /> Stop
+        </button>
+      )}
+      {/* The cocoon fills the middle; the percentage sits under it. */}
+      <div className="progress-foot">
+        <span className="job-pct" aria-label={`${Math.floor(pct)} percent`}>
+          {Math.floor(pct)}
+          <small>%</small>
+        </span>
+        <div className="progress">
+          <i style={{ width: `${pct}%` }} />
+        </div>
+        <span>
+          {jobLabel(job)}
+          {o ? ` · ${o.width}×${o.height}` : ""}
+          {remain !== null ? ` · ${formatDuration(remain)} left` : ""}
+        </span>
+        {job.notes.length > 0 && <span className="notes">{job.notes.join(" ")}</span>}
+      </div>
+    </div>
+  );
+}
+
+/** How long the finished prompt stays on screen before the percentage takes over (ms). */
+const PROMPT_HOLD_MS = 2200;
+const PROMPT_FADE_MS = 700;
+
+/** The prompt enhancer's text over the whole frame, revealed word by word at a calm pace. The
+ * model writes it in a second or two and the image starts right away, so the text keeps
+ * appearing while the image is made: reading it fills the wait. It never runs ahead of the text
+ * that has arrived. */
+function PromptPhase(props: { title: string; text: string; streaming: boolean; withImage: boolean; budget: number | null; onCancel: () => void; onGone: () => void }) {
+  const { text, streaming } = props;
+  const shown = useTypewriter(text, streaming, props.budget);
+  const ref = useRef<HTMLDivElement>(null);
+  const words = useMemo(() => text.split(/(\s+)/), [text]);
+  const writing = streaming || shown < text.length;
+  const [leaving, setLeaving] = useState(false);
+  const onGone = useRef(props.onGone);
+  onGone.current = props.onGone;
+  useEffect(() => {
+    if (writing || !text) return;
+    const hold = window.setTimeout(() => setLeaving(true), PROMPT_HOLD_MS);
+    const gone = window.setTimeout(() => onGone.current(), PROMPT_HOLD_MS + PROMPT_FADE_MS);
+    return () => (window.clearTimeout(hold), window.clearTimeout(gone));
+  }, [writing, text]);
+  // Whole words up to the revealed length; each new one fades in once (stable keys).
+  const visible: React.ReactNode[] = [];
+  let at = 0;
+  for (let i = 0; i < words.length && at < shown; i++) {
+    const w = words[i];
+    visible.push(/^\s+$/.test(w) ? w : <span key={i} className="w">{w}</span>);
+    at += w.length;
+  }
+  useEffect(() => {
+    const el = ref.current;
+    if (el && writing) el.scrollTop = el.scrollHeight;
+  }, [visible.length, writing]);
+  return (
+    <div className={`prompt-stage ${leaving ? "leaving" : ""}`} style={{ transitionDuration: `${PROMPT_FADE_MS}ms` }}>
+      <span className={`enhanced-label ${writing ? "shimmer" : ""}`}>
+        <WandSparkles size={13} /> {writing ? "Writing the prompt" : "The prompt"} · {props.title}
+      </span>
+      <div className="prompt-text" ref={ref} aria-live="polite">
+        <div className="prompt-flow">
+          {text ? visible : <span className="enhanced-wait shimmer">{props.withImage ? "Looking at your image…" : "Reading your idea…"}</span>}
+          {writing && text && <i className="caret" />}
+        </div>
+      </div>
+      <button className="btn ghost" onClick={props.onCancel} title="Cancel">
+        <Square size={12} /> Stop
+      </button>
+    </div>
+  );
+}
+
+/** Calm reading pace of the prompt (characters a second). */
+const TYPE_CHARS_PER_S = 32;
+
+/** How many characters of `text` to show now: ~32 a second, faster when needed to finish in
+ * 4-12 s (and in half the time a quick image takes), never past `text`. */
+function useTypewriter(text: string, streaming: boolean, budget: number | null): number {
+  const [shown, setShown] = useState(() => (reducedMotion() ? text.length : 0));
+  const target = useRef({ text, streaming, budget });
+  target.current = { text, streaming, budget };
+  const start = useRef<number | null>(null);
+  useEffect(() => {
+    if (reducedMotion()) return;
+    let raf = 0;
+    let last = performance.now();
+    let n = 0;
+    const tick = (now: number) => {
+      const { text: t, streaming: s, budget: b } = target.current;
+      const dt = Math.min(0.1, (now - last) / 1000);
+      last = now;
+      if (t.length > 0 && start.current === null) start.current = now;
+      if (n < t.length) {
+        const cap = Math.max(4, Math.min(12, b ? b * 0.5 : 12));
+        const total = Math.min(cap, Math.max(4, t.length / TYPE_CHARS_PER_S));
+        const left = Math.max(0.4, total - (now - (start.current ?? now)) / 1000);
+        const speed = Math.max(s ? 20 : TYPE_CHARS_PER_S, (t.length - n) / left);
+        n = Math.min(t.length, n + speed * dt);
+        setShown(n);
+      }
+      // Done once everything has arrived and is on screen.
+      if (s || n < t.length) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return reducedMotion() ? text.length : shown;
 }
 
 function Failed({ job, item }: { job: JobView; item: SessionItem }) {
@@ -151,13 +350,19 @@ function InfoPanel({ g }: { g: GenerationRecord }) {
     ["Sampler", `${g.sampler}${g.scheduler ? ` / ${g.scheduler}` : ""}`],
     ...(g.strength != null ? ([["Strength", String(g.strength)]] as [string, string][]) : []),
     ["References", String(g.references.length)],
+    ...(g.loras?.length ? ([["LoRA", g.loras.map((l) => `${l.name} (${Math.round(l.weight * 100)} %)`).join(", ")]] as [string, string][]) : []),
     ["Model", g.model],
     ["Time", formatDuration(g.duration_ms / 1000)],
     ["Created", new Date(g.created_at).toLocaleString()],
   ];
   return (
     <div style={{ width: 340, padding: 8, display: "flex", flexDirection: "column", gap: 6 }}>
-      <div style={{ fontSize: 13, userSelect: "text", maxHeight: 120, overflow: "auto" }}>{g.prompt}</div>
+      <div style={{ fontSize: 13, userSelect: "text", maxHeight: 160, overflow: "auto" }}>{g.prompt}</div>
+      {g.original_prompt && (
+        <div className="muted" style={{ userSelect: "text", maxHeight: 80, overflow: "auto" }}>
+          <WandSparkles size={11} style={{ verticalAlign: -1 }} /> Written by the prompt enhancer from: “{g.original_prompt}”
+        </div>
+      )}
       {g.negative_prompt && <div className="muted">Negative: {g.negative_prompt}</div>}
       <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "4px 12px", fontSize: 12 }}>
         {rows.map(([k, v]) => (
@@ -388,9 +593,11 @@ function InputActions({ item, onLut }: { item: SessionItem; onLut: (lut: LutEntr
 
 /** A result or input fitted to the stage (never enlarged past its own size), with the
  * full-screen button in its top-right corner. */
-function PlainFrame({ src, alt, w, h, maskSrc, overlay, onFullscreen }: { src: string; alt: string; w: number; h: number; maskSrc?: string; overlay?: React.ReactNode; onFullscreen: () => void }) {
+/** `fill`: enlarged to fill the frame like the card it replaces (a result); otherwise never shown
+ * wider than it is. */
+function PlainFrame({ src, alt, w, h, maskSrc, overlay, fill, onFullscreen }: { src: string; alt: string; w: number; h: number; maskSrc?: string; overlay?: React.ReactNode; fill?: boolean; onFullscreen: () => void }) {
   const { ref, box } = useFit(w / h);
-  const bw = Math.min(box.w, w);
+  const bw = fill ? box.w : Math.min(box.w, w);
   return (
     <div className="stage-frame" ref={ref}>
       <div className="image-box" style={{ width: bw, height: bw * (h / w) }}>
@@ -417,8 +624,13 @@ function StageBar(props: { item: SessionItem; label: string; showOriginal: boole
       <div className="stage-meta">
         <span className="ver">{imageName(label)}</span>
         {g && <span className="mode">{MODE_LABEL[g.mode]}</span>}
-        <span className="stage-prompt" title={g?.prompt ?? name}>
-          {g ? g.prompt || (g.mode === "upscale" ? `${g.references[0]?.width ?? "?"}×${g.references[0]?.height ?? "?"} → ${w}×${h}` : lut ? `${lutLabel(lut)} · ${Math.round(lut.intensity * 100)} %` : "") : name}
+        {g?.original_prompt && (
+          <span className="enhanced-mark" title="The prompt enhancer wrote this image's prompt">
+            <WandSparkles size={13} />
+          </span>
+        )}
+        <span className="stage-prompt" title={g?.original_prompt ? `${g.prompt}\n\nYour prompt: ${g.original_prompt}` : g?.prompt ?? name}>
+          {g ? g.original_prompt || g.prompt || (g.mode === "upscale" ? `${g.references[0]?.width ?? "?"}×${g.references[0]?.height ?? "?"} → ${w}×${h}` : lut ? `${lutLabel(lut)} · ${Math.round(lut.intensity * 100)} %` : "") : name}
         </span>
         {from && !props.lutBar ? (
           <span className="seg dims-seg" role="radiogroup" aria-label="Which image to show">
@@ -449,9 +661,11 @@ function safeDecode(s: string) {
 }
 
 /** Arcs above the thumbnails join a version to the earlier ones it was made from: one level
- * per arc that spans another, `LANE` px apart, rounded corners of `R` px. */
+ * per arc that spans another, `LANE` px apart, rounded corners of `R` px; they stop `GAP` px
+ * above the thumbnails, clear of the ring or outline round them. */
 const LANE = 9;
 const R = 5;
+const GAP = 9;
 
 /** What joins a version to the one before it: a line when it continues from it (dashed for a
  * new seed of it), a break when it starts something new, a plain gap when it comes from
@@ -459,6 +673,7 @@ const R = 5;
 function Joint({ kind, hot }: { kind: LinkKind; hot: boolean }) {
   if (kind === "start") return <span className="joint break" aria-hidden />;
   if (kind === "branch" || kind === "combine") return <span className="joint gap" aria-hidden />;
+  // A straight line between the thumbnails, ending where a ring or outline round them sits.
   return <span className={`joint link ${kind === "variant" ? "dashed" : ""} ${hot ? "hot" : ""}`} aria-hidden />;
 }
 
@@ -541,9 +756,9 @@ function Timeline({ labels }: { labels: Record<string, string> }) {
     })
     .filter((a) => centers[a.from] !== undefined && centers[a.to] !== undefined);
   const places = arcLayout(arcs.map((a) => ({ a: index.get(a.from)!, b: index.get(a.to)! })));
-  const band = arcs.length ? 10 + (Math.max(...places.map((p) => p.lane)) + 1) * LANE : 0;
+  const band = arcs.length ? 10 + GAP + (Math.max(...places.map((p) => p.lane)) + 1) * LANE : 0;
   const arcPath = (x1: number, x2: number, top: number) => {
-    const y = band - 1;
+    const y = band - GAP;
     const d = x2 > x1 ? 1 : -1;
     // Up from the source, across at its level, down into the result, with an arrowhead.
     return `M ${x1} ${y} L ${x1} ${top + R} Q ${x1} ${top} ${x1 + d * R} ${top} L ${x2 - d * R} ${top} Q ${x2} ${top} ${x2} ${top + R} L ${x2} ${y} M ${x2 - 3.5} ${y - 4.5} L ${x2} ${y} L ${x2 + 3.5} ${y - 4.5}`;
@@ -559,7 +774,7 @@ function Timeline({ labels }: { labels: Record<string, string> }) {
               .map((a, i) => ({ a, p: places[i] }))
               .sort((x, y) => Number(x.a.hot) - Number(y.a.hot))
               .map(({ a, p }) => (
-                <path key={`${a.from}-${a.to}`} className={a.hot ? "hot" : ""} d={arcPath(centers[a.from] + p.dx1, centers[a.to] + p.dx2, band - 8 - (p.lane + 1) * LANE)} />
+                <path key={`${a.from}-${a.to}`} className={a.hot ? "hot" : ""} d={arcPath(centers[a.from] + p.dx1, centers[a.to] + p.dx2, band - 8 - GAP - (p.lane + 1) * LANE)} />
               ))}
           </svg>
         )}
@@ -568,7 +783,8 @@ function Timeline({ labels }: { labels: Record<string, string> }) {
           const src = itemSource(it);
           const pending = it.kind === "job";
           const failed = pending && job && ["failed", "cancelled"].includes(job.status);
-          const frac = pending && job ? jobFraction(job) : null;
+          // Being made: a thread runs round its thumbnail (the shown version has a still ring).
+          const making = pending && !failed;
           const mode: Mode | "lut" | undefined = it.gen?.mode ?? job?.plan?.mode;
           const link = links[it.key];
           const pendingSrc = pending && it.request?.mode !== "generate" ? it.request?.images?.[0] : undefined;
@@ -616,14 +832,11 @@ function Timeline({ labels }: { labels: Record<string, string> }) {
                 }}
                 onPointerCancel={endDrag}
               >
+                <span className="frame-box">
                 <span className="frame-img">
                   {src && <img src={urls.sourceThumb(src)} alt="" draggable={false} />}
                   {pendingSrc && <img className="dim" src={urls.sourceThumb(pendingSrc)} alt="" draggable={false} />}
-                  {pending && !failed && (
-                    <span className="frame-state">
-                      {frac !== null ? <Ring frac={frac} /> : <Loader2 className="spin" size={16} />}
-                    </span>
-                  )}
+                  {pending && !failed && job && job.status !== "queued" && <JobPercent job={job} request={it.request} />}
                   {failed && (
                     <span className="frame-state">
                       <X size={16} />
@@ -634,6 +847,13 @@ function Timeline({ labels }: { labels: Record<string, string> }) {
                       <Pencil size={10} />
                     </span>
                   )}
+                </span>
+                {(making || selected === it.key) && (
+                  <svg className={`frame-silk ${making ? "making" : ""}`} viewBox="0 0 60 60" aria-hidden>
+                    <rect className="ring" x="1" y="1" width="58" height="58" rx="17" />
+                    {making && <rect className="run" x="1" y="1" width="58" height="58" rx="17" pathLength={200} />}
+                  </svg>
+                )}
                 </span>
                 <span className="frame-label">
                   {mode && MODE_ICON[mode]}
@@ -649,14 +869,14 @@ function Timeline({ labels }: { labels: Record<string, string> }) {
   );
 }
 
-function Ring({ frac }: { frac: number }) {
-  const r = 8;
-  const c = 2 * Math.PI * r;
+/** The whole job's progress in the timeline: the same percentage as its card. */
+function JobPercent({ job, request }: { job: JobView; request?: GenerationRequest | null }) {
+  const { pct } = useJobPercent(job, request);
   return (
-    <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden>
-      <circle cx="10" cy="10" r={r} fill="none" stroke="currentColor" strokeOpacity="0.25" strokeWidth="2.5" />
-      <circle cx="10" cy="10" r={r} fill="none" stroke="currentColor" strokeWidth="2.5" strokeDasharray={c} strokeDashoffset={c * (1 - frac)} strokeLinecap="round" transform="rotate(-90 10 10)" />
-    </svg>
+    <span className="frame-pct">
+      {Math.floor(pct)}
+      <small>%</small>
+    </span>
   );
 }
 
@@ -825,6 +1045,7 @@ export function Stage() {
     );
     view = (
       <>
+        <Hatch key={item.key} id={g?.id} aspect={w / h}>
         {lutActive ? (
           <PlainFrame
             key={src}
@@ -840,8 +1061,9 @@ export function Stage() {
         ) : item.gen && base ? (
           <CompareFrame key={`compare-${item.gen.id}`} g={item.gen} base={base} maskSrc={maskSrc} onFullscreen={openFull} />
         ) : (
-          <PlainFrame key={src} src={src} alt={item.gen?.prompt ?? item.input?.original_name ?? ""} w={w} h={h} maskSrc={maskSrc} onFullscreen={openFull} />
+          <PlainFrame key={src} src={src} alt={item.gen?.prompt ?? item.input?.original_name ?? ""} w={w} h={h} maskSrc={maskSrc} fill={!!item.gen} onFullscreen={openFull} />
         )}
+        </Hatch>
         <StageBar item={item} label={labels[item.key]} showOriginal={showOriginal} setShowOriginal={(on) => setOriginalOf(on && g ? g.id : null)} lutBar={lutBar} onLut={startLut} />
       </>
     );

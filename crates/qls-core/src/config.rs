@@ -21,7 +21,8 @@ pub const DEFAULT_SERVICE_PORT: u16 = 39151;
 /// and ESRGAN tile sizes reset to automatic.
 /// Schema 9 (2026-10-16, #14): profiles record their model and source; model paths edited by
 /// hand on the official profile move to a profile of the user's own files.
-const SCHEMA_VERSION: u32 = 9;
+/// Schema 10 (2026-10-19): the 8 GB preset's VRAM reserve 1 -> 1.5 GiB (unless set by hand).
+const SCHEMA_VERSION: u32 = 10;
 /// `upscaler_model` value for a plain Lanczos resize (no model).
 pub const LANCZOS: &str = "lanczos";
 /// Upscalers offered in Settings: (file stem, label). Superscale-SP is a setup download, MoSR is
@@ -334,6 +335,13 @@ pub struct AppConfig {
     /// Plan as if the GPU had this much VRAM (MiB); 0 = use the detected size. For testing
     /// smaller cards on a larger one, together with a VRAM ballast (scripts/dev).
     pub vram_override_mib: u64,
+    /// System prompts of the prompt enhancer for text-to-image and for edits; "" = the
+    /// built-in ones (`enhancer::T2I_SYSTEM_PROMPT`, `enhancer::EDIT_SYSTEM_PROMPT`).
+    pub enhancer_t2i_prompt: String,
+    pub enhancer_edit_prompt: String,
+    /// The user's LoRAs (Settings → LoRA), each a copy in `lora_dir`. Changed only through the
+    /// LoRA endpoints: a whole-config save keeps the current list (`Engine::set_config`).
+    pub loras: Vec<LoraEntry>,
     /// Opaque UI preferences (last quality, resolution mode, aspect...).
     pub ui: serde_json::Value,
 }
@@ -369,8 +377,47 @@ impl Default for AppConfig {
             setup_complete: false,
             hardware_preset: crate::catalog::DEFAULT_PRESET.into(),
             vram_override_mib: 0,
+            enhancer_t2i_prompt: String::new(),
+            enhancer_edit_prompt: String::new(),
+            loras: vec![],
             ui: serde_json::json!({}),
         }
+    }
+}
+
+/// A LoRA the user loaded. Kokon's copy is `<lora_dir>/<id>.safetensors` (see `lora.rs`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct LoraEntry {
+    /// File stem of the copy; also how requests name it.
+    pub id: String,
+    /// Shown in the app (the original file's name until the user renames it).
+    pub name: String,
+    /// The file the user picked (never changed by Kokon).
+    pub source: PathBuf,
+    pub weight: f32,
+    /// Added in front of the prompt when the LoRA is used.
+    pub trigger_words: String,
+    /// On in every new project of the app (MCP never uses LoRAs).
+    pub on_by_default: bool,
+    /// Size of the copy in bytes.
+    pub size: u64,
+    /// From the check: the LoRA works only in part.
+    pub warning: Option<String>,
+    /// What the copy changed (split layers, alpha).
+    pub notes: Vec<String>,
+    pub added_at: String,
+}
+
+impl Default for LoraEntry {
+    fn default() -> Self {
+        Self { id: String::new(), name: String::new(), source: PathBuf::new(), weight: 1.0, trigger_words: String::new(), on_by_default: false, size: 0, warning: None, notes: vec![], added_at: String::new() }
+    }
+}
+
+impl LoraEntry {
+    pub fn file_name(&self) -> String {
+        format!("{}.safetensors", self.id)
     }
 }
 
@@ -500,6 +547,9 @@ impl AppConfig {
                         }
                         c.keep_hand_edited_paths();
                     }
+                    if c.schema_version < 10 && c.hardware_preset == "8gb" && c.vram_reserve_gib == 1.0 {
+                        c.vram_reserve_gib = c.preset().vram_reserve_gib;
+                    }
                     // The official weights are always available as a profile, built for the
                     // configured folder and preset; the active one stays as it is.
                     c.normalize();
@@ -544,6 +594,12 @@ impl AppConfig {
     /// the official files of the configured folder and preset (its tuning is kept), every
     /// other profile is the user's, and the active profile exists.
     pub fn normalize(&mut self) {
+        // A prompt equal to the built-in one is saved as "" so it follows future defaults.
+        for (custom, default) in [(&mut self.enhancer_t2i_prompt, crate::enhancer::T2I_SYSTEM_PROMPT), (&mut self.enhancer_edit_prompt, crate::enhancer::EDIT_SYSTEM_PROMPT)] {
+            if custom.trim().is_empty() || custom.trim() == default {
+                custom.clear();
+            }
+        }
         for p in &mut self.profiles {
             p.source = if p.id == OFFICIAL_PROFILE_ID { ProfileSource::Official } else { ProfileSource::User };
             if p.model.trim().is_empty() {
@@ -682,6 +738,7 @@ impl AppConfig {
     pub fn apply_preset(&mut self, preset: &crate::catalog::Preset) {
         self.hardware_preset = preset.id.into();
         self.text_encoder_placement = preset.text_encoder_placement;
+        self.vram_reserve_gib = preset.vram_reserve_gib;
         self.normalize();
     }
 
@@ -719,6 +776,12 @@ impl AppConfig {
     }
 
     /// Folder of the upscaler (`--hires-upscalers-dir`).
+    /// Kokon's copies of the user's LoRAs (`--lora-model-dir`). Not `models/loras`, where users
+    /// and tools keep their own files: the engine would list those too.
+    pub fn lora_dir(&self) -> PathBuf {
+        self.sdcpp_dir.join("models").join("kokon-loras")
+    }
+
     pub fn upscalers_dir(&self) -> PathBuf {
         crate::catalog::join_rel(&self.sdcpp_dir, crate::catalog::UPSCALERS_SUBDIR)
     }
@@ -770,6 +833,10 @@ impl AppConfig {
         if self.vram_override_mib != 0 && !(4096..=196_608).contains(&self.vram_override_mib) {
             return Err(AppError::new(ErrorCode::InvalidConfig, "Simulated VRAM must be between 4096 and 196608 MiB (or 0 to detect it)."));
         }
+        let max = crate::enhancer::MAX_SYSTEM_PROMPT_CHARS;
+        if self.enhancer_t2i_prompt.chars().count() > max || self.enhancer_edit_prompt.chars().count() > max {
+            return Err(AppError::new(ErrorCode::InvalidConfig, format!("Prompt enhancer instructions can be at most {max} characters.")));
+        }
         Ok(())
     }
 }
@@ -800,6 +867,25 @@ mod tests {
     fn own_files(dir: &Path) -> ModelProfile {
         let m = dir.join("ComfyUI").join("models");
         ModelProfile::user(m.join("diffusion_models").join("turbo_int8.safetensors"), m.join("vae").join("vae.safetensors"), m.join("text_encoders").join("qwen3vl_fused.safetensors"), None)
+    }
+
+    #[test]
+    fn enhancer_prompts_default_blank_and_are_capped() {
+        let mut c = AppConfig::default();
+        assert!(c.enhancer_t2i_prompt.is_empty() && c.enhancer_edit_prompt.is_empty(), "built-in by default");
+        // Older settings files have no such keys.
+        let old: AppConfig = serde_json::from_str(r#"{"schemaVersion":9}"#).unwrap();
+        assert!(old.enhancer_edit_prompt.is_empty());
+        // A restored default is saved blank, so it follows future defaults; a custom one stays.
+        c.enhancer_t2i_prompt = format!("{}\n", crate::enhancer::T2I_SYSTEM_PROMPT);
+        c.enhancer_edit_prompt = "Retouch jewelry only.".into();
+        c.normalize();
+        assert_eq!((c.enhancer_t2i_prompt.as_str(), c.enhancer_edit_prompt.as_str()), ("", "Retouch jewelry only."));
+        let v = serde_json::to_value(&c).unwrap();
+        assert_eq!(v["enhancerEditPrompt"], "Retouch jewelry only.");
+        assert!(c.validate().is_ok());
+        c.enhancer_edit_prompt = "x".repeat(crate::enhancer::MAX_SYSTEM_PROMPT_CHARS + 1);
+        assert!(c.validate().is_err());
     }
 
     #[test]
@@ -1081,6 +1167,25 @@ mod tests {
         // Older config files without the new fields keep loading with defaults.
         let old: AppConfig = serde_json::from_str(r#"{"serverPort": 41000, "vaeTileSize": 512}"#).unwrap();
         assert_eq!(old.profile().recommended_settings.area_quality, 2048 * 2048);
+    }
+
+    #[test]
+    fn eight_gb_preset_reserves_more_vram() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let load = |json: &str| {
+            std::fs::write(&path, json).unwrap();
+            AppConfig::load_from(&path).vram_reserve_gib
+        };
+        assert_eq!(load(r#"{"schemaVersion": 9, "hardwarePreset": "8gb", "vramReserveGib": 1.0}"#), 1.5);
+        assert_eq!(load(r#"{"schemaVersion": 9, "hardwarePreset": "8gb", "vramReserveGib": 2.0}"#), 2.0, "set by hand");
+        assert_eq!(load(r#"{"schemaVersion": 9, "hardwarePreset": "16gb", "vramReserveGib": 1.0}"#), 1.0);
+        assert_eq!(load(r#"{"schemaVersion": 10, "hardwarePreset": "8gb", "vramReserveGib": 1.0}"#), 1.0, "chosen after the migration");
+        let mut c = AppConfig::default();
+        c.apply_preset(crate::catalog::preset("8gb").unwrap());
+        assert_eq!(c.vram_reserve_gib, 1.5);
+        c.apply_preset(crate::catalog::preset("12gb").unwrap());
+        assert_eq!(c.vram_reserve_gib, 1.0);
     }
 
     #[test]

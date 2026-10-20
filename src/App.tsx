@@ -4,15 +4,16 @@ import { useEffect, useRef, useState } from "react";
 import { api, configure } from "./lib/api";
 import { native } from "./lib/native";
 import {
-  addExampleProjects, addInputs, closeStarPrompt, dismissToast, getState, initStarPrompt, isMissingModel, newProject, openModelSetup, redoVersion, refreshStatus, selectItem, setPrivateMode, setState, startEvents, startTour, submitComposer, toastError, toastInfo, undoKey, undoVersion, useStore,
+  addExampleProjects, addInputs, closeStarPrompt, dismissToast, getState, initStarPrompt, isMissingModel, newProject, openModelSetup, redoVersion, refreshLoras, refreshStatus, selectItem, setPrivateMode, setState, startEvents, startTour, submitComposer, toastError, toastInfo, undoKey, undoVersion, useStore,
 } from "./lib/store";
+import { SilkSpin } from "./components/Cocoon";
 import { Composer, importPaths } from "./components/Composer";
 import { ExpandEditor } from "./components/ExpandEditor";
 import { Gallery } from "./components/Gallery";
 import { InpaintEditor } from "./components/InpaintEditor";
 import { Settings as SettingsDialog } from "./components/Settings";
 import { Setup } from "./components/Setup";
-import { ProjectTitle, Sidebar } from "./components/Sidebar";
+import { ProjectTitle, Sidebar, Wordmark } from "./components/Sidebar";
 import { Stage } from "./components/Stage";
 import { Tour } from "./components/Tour";
 import { IconButton } from "./components/ui";
@@ -22,6 +23,7 @@ import { Shortcuts } from "./components/Shortcuts";
 import { WhatsNew, whatsNewDue } from "./components/WhatsNew";
 import { UpscalerCompare } from "./components/Upscalers";
 import { KokonMark, Welcome } from "./components/Welcome";
+import { BareTitleBar, WindowControls } from "./components/TitleBar";
 import { autoCheckForUpdate, installUpdate } from "./lib/updates";
 
 const IMAGE_EXT = /\.(png|jpe?g|webp|bmp|gif|tiff?|heic|heif)$/i;
@@ -65,7 +67,7 @@ function StatusIndicator() {
         else if (server.state === "stopped" && connected) api.startBackend().then(refreshStatus, toastError);
       }}
     >
-      <span className={cls} />
+      {cls === "dot busy" || (cls === "dot ready" && busy) ? <SilkSpin size={18} /> : <span className={cls} />}
       <span style={{ maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{text}</span>
     </button>
   );
@@ -236,6 +238,7 @@ export default function App() {
         startEvents();
         const cfg = await api.config();
         const st = await refreshStatus();
+        refreshLoras();
         // First launch: the welcome screen, once (Settings → General shows it again).
         const ui = (cfg.ui ?? {}) as Record<string, unknown>;
         const welcomeSeen = !!ui.welcomeSeen;
@@ -348,6 +351,7 @@ export default function App() {
   if (boot !== "ok") {
     return (
       <div className="app" style={{ display: "grid", placeItems: "center" }}>
+        <BareTitleBar />
         {boot === "connecting" ? (
           <BootSplash />
         ) : (
@@ -367,8 +371,9 @@ export default function App() {
     <div className="app">
       {sidebar && !needsSetup && <Sidebar />}
       <div className="workspace">
-        <div className="topbar">
-          <div className="brand">
+        <div className="topbar" data-tauri-drag-region>
+          <div className="brand" data-tauri-drag-region>
+            {(!sidebar || needsSetup) && <Wordmark />}
             {!sidebar && !needsSetup && (
               <>
                 <IconButton title="Show sidebar" onClick={() => setState({ sidebar: true })}>
@@ -381,18 +386,22 @@ export default function App() {
             )}
             {overlay === "gallery" ? <span className="project-title">All images</span> : !needsSetup && <ProjectTitle />}
           </div>
-          <div className="toolbar">
+          <div className="toolbar" data-tauri-drag-region>
             {!needsSetup && <HistoryButtons />}
             <UpdatePill />
-            {!needsSetup && <PrivateToggle />}
             <StatusIndicator />
+            {!needsSetup && <PrivateToggle />}
             <IconButton title="Shortcuts (?)" onClick={() => setState({ overlay: "shortcuts" })}>
               <CircleHelp size={18} />
             </IconButton>
-            <IconButton title="Settings" onClick={() => setState({ overlay: "settings" })}>
-              <Settings size={18} />
-            </IconButton>
+            {/* Settings lives at the foot of the sidebar; here only while the sidebar is hidden. */}
+            {(!sidebar || needsSetup) && (
+              <IconButton title="Settings" onClick={() => setState({ overlay: "settings" })}>
+                <Settings size={18} />
+              </IconButton>
+            )}
           </div>
+          <WindowControls />
         </div>
         <div className="main">
           {needsSetup ? <Setup /> : <Stage />}

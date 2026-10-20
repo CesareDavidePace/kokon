@@ -130,6 +130,20 @@ pub fn inspect(path: &Path) -> std::io::Result<FileInfo> {
     Ok(info)
 }
 
+/// Name -> shape (PyTorch order) of every tensor in a diffusion model file (.gguf or
+/// .safetensors), without the `model.diffusion_model.` / `diffusion_model.` prefix.
+pub fn diffusion_tensor_shapes(path: &Path) -> std::io::Result<HashMap<String, Vec<u64>>> {
+    let ext = path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    let (tensors, _) = if ext == "gguf" { read_gguf(path)? } else { read_safetensors(path)? };
+    Ok(tensors
+        .into_iter()
+        .map(|t| {
+            let name = t.name.strip_prefix("model.diffusion_model.").or_else(|| t.name.strip_prefix("diffusion_model.")).unwrap_or(&t.name).to_string();
+            (name, t.shape)
+        })
+        .collect())
+}
+
 /// `name-00001-of-00004.safetensors`
 fn is_shard(name: &str) -> bool {
     let stem = name.trim_end_matches(".safetensors");

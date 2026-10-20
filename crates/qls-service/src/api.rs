@@ -20,7 +20,7 @@ use qls_core::{
     catalog,
     config::{AppConfig, GpuBackend, OFFICIAL_PROFILE_ID, USER_PROFILE_ID},
     diagnostics,
-    engine::{APP_VERSION, JobView},
+    engine::{APP_VERSION, JobView, LoraPatch},
     error::{AppError, ErrorCode},
     geometry::{ExpansionUnits, Size, aspect_label},
     imaging, installer,
@@ -74,6 +74,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/upscalers", get(list_upscalers))
         .route("/upscalers/{name}/download", post(download_upscaler))
         .route("/config", get(get_config).put(put_config))
+        .route("/enhancer/defaults", get(enhancer_defaults))
         .route("/backend/start", post(backend_start))
         .route("/backend/stop", post(backend_stop))
         .route("/backend/restart", post(backend_restart))
@@ -102,6 +103,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/gallery/{id}/original", get(gallery_original))
         .route("/gallery/{id}/export", post(gallery_export))
         .route("/image-info", post(image_info))
+        .route("/loras", get(loras_list).post(loras_add))
+        .route("/loras/{id}", delete(loras_remove).patch(loras_update))
         .route("/luts", get(luts_list))
         .route("/luts/import", post(luts_import))
         .route("/luts/{name}", delete(luts_remove))
@@ -202,13 +205,14 @@ async fn status(State(s): St) -> Json<Value> {
     Json(json!({
         "service": { "version": APP_VERSION, "pid": std::process::id(), "uptime_s": s.started.elapsed().as_secs() },
         "server": {
-            "state": srv.state, "owned": srv.owned, "pid": srv.pid, "port": cfg.server_port,
+            "state": srv.state, "owned": srv.owned, "pid": srv.pid, "port": if srv.port > 0 { srv.port } else { cfg.server_port },
             "model": srv.model, "model_loaded": srv.state == qls_core::process::ServerState::Ready,
             "error": srv.error,
             "cancel_generating": srv.capabilities.as_ref().map(|c| c.img_feature("cancel_generating")),
             "samplers": srv.capabilities.as_ref().map(|c| c.samplers.clone()).unwrap_or_default(),
             "schedulers": srv.capabilities.as_ref().map(|c| c.schedulers.clone()).unwrap_or_default(),
             "upscale": srv.capabilities.as_ref().map(|c| c.upscale),
+            "text_generation": srv.capabilities.as_ref().map(|c| c.text_generation),
         },
         "upscaler": { "model": cfg.upscaler().map(|u| u.0).unwrap_or_else(|| cfg.upscaler_model.clone()), "available": cfg.upscaler_file().is_some() },
         "engine": { "release": catalog::engine_tag(), "update_needed": engine_update },
@@ -469,6 +473,12 @@ async fn get_config(State(s): St) -> Json<AppConfig> {
     Json(s.engine.config())
 }
 
+/// The prompt enhancer's built-in system prompts (Settings shows them for "" and restores them).
+async fn enhancer_defaults() -> Json<Value> {
+    use qls_core::enhancer;
+    Json(json!({ "t2i": enhancer::T2I_SYSTEM_PROMPT, "edit": enhancer::EDIT_SYSTEM_PROMPT, "max_chars": enhancer::MAX_SYSTEM_PROMPT_CHARS }))
+}
+
 async fn put_config(State(s): St, Json(cfg): Json<AppConfig>) -> ApiResult<Json<Value>> {
     let restart = s.engine.set_config(cfg)?;
     let st = s.engine.server.status();
@@ -535,7 +545,7 @@ async fn diagnostics_json(State(s): St) -> ApiResult<Json<Value>> {
             .map(|d| d.installed_tag(&cfg.sdcpp_dir).unwrap_or_else(|| "none".into()))
             .collect();
         let _ = writeln!(text, "Engine release: {} (expected {})", tags.join(", "), catalog::engine_tag());
-        let _ = writeln!(text, "State: {:?}, owned: {}, pid: {:?}, port: {}", srv.state, srv.owned, srv.pid, cfg.server_port);
+        let _ = writeln!(text, "State: {:?}, owned: {}, pid: {:?}, port: {}", srv.state, srv.owned, srv.pid, srv.port);
         if let Some(e) = &srv.error {
             let _ = writeln!(text, "Last error: {} {}", e.message, e.detail.clone().unwrap_or_default());
         }
@@ -870,6 +880,33 @@ async fn serve_file(path: &Path, content_type: Option<&str>) -> ApiResult<Respon
         .header(header::CACHE_CONTROL, "private, max-age=31536000, immutable")
         .body(Body::from(bytes))
         .unwrap())
+}
+
+async fn loras_list(State(s): St) -> Json<Value> {
+    let cfg = s.engine.config();
+    Json(json!({ "items": s.engine.loras(), "dir": cfg.lora_dir(), "max_active": qls_core::lora::MAX_ACTIVE }))
+}
+
+/// Loads a LoRA file the user picked: checked against the image model, then copied into
+/// Kokon's LoRA folder (the user's file stays as it is).
+async fn loras_add(State(s): St, Json(b): Json<PathBody>) -> ApiResult<Json<Value>> {
+    let p = PathBuf::from(&b.path);
+    if !p.is_absolute() || !p.is_file() {
+        return Err(AppError::new(ErrorCode::InvalidInput, "Choose a LoRA file (.safetensors).").into());
+    }
+    let engine = s.engine.clone();
+    let entry = tokio::task::spawn_blocking(move || engine.add_lora(&p)).await.map_err(AppError::internal)??;
+    Ok(Json(serde_json::to_value(entry).unwrap()))
+}
+
+async fn loras_update(State(s): St, AxPath(id): AxPath<String>, Json(b): Json<LoraPatch>) -> ApiResult<Json<Value>> {
+    let entry = s.engine.update_lora(&id, b)?;
+    Ok(Json(serde_json::to_value(entry).unwrap()))
+}
+
+async fn loras_remove(State(s): St, AxPath(id): AxPath<String>) -> ApiResult<Json<Value>> {
+    s.engine.remove_lora(&id)?;
+    Ok(Json(json!({ "removed": id })))
 }
 
 async fn luts_list(State(s): St) -> Json<Value> {

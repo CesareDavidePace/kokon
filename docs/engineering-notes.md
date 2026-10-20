@@ -141,14 +141,18 @@ merged upstream as PR #2128 on 2026-10-12; since 0.9.2 the engine is the officia
 
 #### Engine updates (`engine.json`)
 
-`engine.json` at the repository root names the newest official release tested with Kokon
-(tag, `min_app`, URL + size + SHA-256 of the CUDA, Vulkan and Metal zips). The service reads its
-cached copy at start and fetches it again when older than 2.5 days (`engine_manifest.rs`). A
-valid release newer than the built-in pin (`catalog::ENGINE_TAG`) replaces the engine
-downloads, so the status reports `engine.update_needed` and What's new offers the download.
-Only `https://github.com/leejet/stable-diffusion.cpp/releases/download/<tag>/` URLs are
-accepted. To ship an engine: test the release on Windows (CUDA + Vulkan) and a Mac, then edit
-`engine.json` on master (digests: `gh api repos/leejet/stable-diffusion.cpp/releases/tags/<tag>`).
+`engine.json` at the repository root names the newest engine release tested with Kokon. Since
+0.10 every engine is Kokon's own build (fork branch `kokon`, workflow `kokon.yml`, release
+`kokon-<n>-<commit>`; see docs/prompt-enhancer.md), listed under the `kokon` key: tag, `min_app`,
+URL + size + SHA-256 of `win_cuda`, `win_vulkan`, `linux_cuda`, `linux_vulkan`, `macos`. The
+file's other keys are an upstream release for apps up to 0.9.4, which ignore `kokon`. The service
+reads its cached copy at start and fetches it again when older than 2.5 days
+(`engine_manifest.rs`). A valid release newer than the built-in pin (`catalog::ENGINE_TAG`)
+replaces the engine downloads, so the status reports `engine.update_needed` and What's new offers
+the download. Only `sd-kokon-<commit>-bin-*.zip` files of that tag in the fork are accepted, and a
+manifest with any bad entry is ignored as a whole. To ship an engine: run the workflow with
+`create_release`, test on Windows (CUDA + Vulkan), Linux and a Mac, then edit `engine.json` on master
+(digests: `gh release view <tag> -R GabrieleLozupone/stable-diffusion.cpp --json assets`).
 Since master-964 `--fa` and `--diffusion-conv-direct` are deprecated aliases (still accepted, so
 older engines keep working); convolutions default to `auto`, which turns implicit-GEMM direct
 convolutions on for CUDA (RTX 20xx+) and Vulkan, VAE included.

@@ -157,6 +157,17 @@ pub fn effective_prompt(plan: &Plan, prompt: &str) -> String {
     }
 }
 
+/// The prompt sent for an enhanced job (text-to-image, edit, combine): the enhancer's text,
+/// wrapped for transparency when the user's own words asked for it (not the rewrite's, which
+/// may mention "transparent glass").
+pub fn enhanced_prompt(original: &str, enhanced: &str) -> String {
+    let p = enhanced.trim();
+    if wants_transparency(original) && !p.starts_with(RGBA_PREFIX) {
+        return format!("{RGBA_PREFIX} {}. {RGBA_SUFFIX}", p.trim_end_matches('.'));
+    }
+    p.to_string()
+}
+
 pub fn prepare(plan: &Plan, prompt: &str, seed: i64, images: &[LoadedImage], mask: Option<&GrayImage>, opts: &BackendOptions) -> AppResult<PreparedJob> {
     let first = plan.working;
     let mut req = ImgGenRequest {
@@ -184,6 +195,7 @@ pub fn prepare(plan: &Plan, prompt: &str, seed: i64, images: &[LoadedImage], mas
         hires: None,
         cache_mode: None,
         cache_option: None,
+        lora: Vec::new(),
         output_format: "png".into(),
         embed_image_metadata: false,
     };
@@ -526,6 +538,15 @@ pub fn tile_png_b64(input: &RgbaImage, tile: &Tile) -> AppResult<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enhanced_prompt_follows_the_users_words_for_transparency() {
+        assert_eq!(enhanced_prompt("un gatto", "  A tabby cat on a sill.\n"), "A tabby cat on a sill.");
+        assert_eq!(enhanced_prompt("a vase", "A transparent glass vase on oak."), "A transparent glass vase on oak.", "the rewrite's words do not ask for alpha");
+        let p = enhanced_prompt("a logo with transparent background", "A flat fox logo.");
+        assert_eq!(p, format!("{RGBA_PREFIX} A flat fox logo. {RGBA_SUFFIX}"));
+        assert_eq!(enhanced_prompt("transparent", &p), p, "not wrapped twice");
+    }
 
     #[test]
     fn prescale_and_blend() {

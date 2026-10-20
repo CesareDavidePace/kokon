@@ -1,6 +1,6 @@
 // Pure UI logic (unit-tested in logic.test.ts).
 
-import type { Advanced, GenerationRecord, GenerationRequest, InpaintAction, InputRecord, InstallItem, JobView, LutInfo, Mode, OutpaintSpec, Plan, Quality, ResolutionMode, Size } from "./types";
+import type { Advanced, GenerationRecord, GenerationRequest, InpaintAction, InputRecord, InstallItem, JobView, LoraItem, LutInfo, Mode, OutpaintSpec, Plan, Quality, ResolutionMode, Size } from "./types";
 
 export interface Ref {
   key: string;
@@ -29,6 +29,10 @@ export interface Composer {
   customHeight: number;
   seed: number | null;
   advanced: Advanced;
+  /** Prompt enhancer on (remembered; used only where `enhancerApplies`). */
+  enhance: boolean;
+  /** LoRAs switched on in this project; null = the ones on by default (`activeLoras`). */
+  loras: string[] | null;
 }
 
 /** A preset name from any version: older ones also had "turbo" (now Fast) and "ultra" (now Quality). */
@@ -53,7 +57,27 @@ export const emptyComposer = (prefs?: Partial<Composer>): Composer => ({
   customHeight: prefs?.customHeight ?? 1024,
   seed: null,
   advanced: newChatAdvanced(prefs?.advanced),
+  enhance: prefs?.enhance === true,
+  loras: null,
 });
+
+/** LoRAs one image can use at once (`lora::MAX_ACTIVE`). */
+export const MAX_LORAS = 3;
+
+/** The LoRAs a request from this composer uses: the project's choice, else the ones on by
+ * default; only loaded ones whose copy is there, at most `MAX_LORAS`. */
+export function activeLoras(c: Pick<Composer, "loras">, all: LoraItem[]): string[] {
+  const usable = new Set(all.filter((l) => l.available).map((l) => l.id));
+  const chosen = c.loras ?? all.filter((l) => l.onByDefault).map((l) => l.id);
+  return chosen.filter((id) => usable.has(id)).slice(0, MAX_LORAS);
+}
+
+/** The project's LoRA choice after switching `id` on or off. */
+export function toggleLora(c: Pick<Composer, "loras">, all: LoraItem[], id: string): string[] {
+  const now = activeLoras(c, all);
+  if (now.includes(id)) return now.filter((x) => x !== id);
+  return now.length < MAX_LORAS ? [...now, id] : now;
+}
 
 /** Advanced settings a new chat starts with: everything kept except Reference detail, which
  * every chat starts at the standard 1 MP. */
@@ -112,7 +136,15 @@ export function buildRequest(c: Composer, parentId?: string | null): GenerationR
     advanced: cleanAdvanced(c.advanced),
     client: "ui",
     parent_id: parentId ?? null,
+    ...(c.enhance && enhancerApplies(c) ? { enhance: true } : {}),
   };
+}
+
+/** The prompt enhancer works on new images, edits and combines; a painted area or an expansion
+ * wraps the prompt in its own instruction. */
+export function enhancerApplies(c: Composer): boolean {
+  const maskValid = c.mask && c.refs[0] && c.mask.refKey === c.refs[0].key;
+  return !maskValid && !hasOutpaint(c.outpaint);
 }
 
 /** False only for a removal in a painted area, which needs no description. */
@@ -157,7 +189,9 @@ export function composerFromRecord(g: GenerationRecord, base: Composer): Compose
   const refs: Ref[] = g.references.map((r) => ({ key: newKey(), source: `input:${r.input_id}`, width: r.width, height: r.height, name: `Image ${r.index + 1}` }));
   const c: Composer = {
     ...base,
-    prompt: g.prompt,
+    // An enhanced result is the user's prompt with the enhancer on (Reuse prompt takes its text).
+    prompt: g.original_prompt ?? g.prompt,
+    enhance: !!g.original_prompt,
     refs,
     mask: g.mask_input_id && refs[0] ? { inputId: g.mask_input_id, refKey: refs[0].key } : null,
     inpaintAction: req?.inpaint_action ?? "edit",
@@ -169,6 +203,8 @@ export function composerFromRecord(g: GenerationRecord, base: Composer): Compose
     aspect: req?.aspect_ratio ?? "auto",
     seed: null,
     advanced: cleanAdvanced(req?.advanced ?? {}),
+    // The LoRAs it was made with (none for images made before LoRAs or without them).
+    loras: (g.loras ?? []).map((l) => l.id),
   };
   if (req?.width && req?.height) {
     c.customWidth = req.width;
@@ -317,6 +353,8 @@ export function jobLabel(j: JobView): string {
       return "Loading model";
     case "preparing":
       return "Preparing";
+    case "enhancing_prompt":
+      return "Writing the prompt";
     case "saving":
       return "Saving";
     case "done":
@@ -337,7 +375,7 @@ export function jobLabel(j: JobView): string {
         case "generating":
           return j.step ? `Generating · ${j.step[0]}/${j.step[1]}${batch}` : `Generating${batch}`;
         case "upscaling":
-          return "Upscaling";
+          return j.step ? `Upscaling · ${j.step[0]}/${j.step[1]}${batch}` : `Upscaling${batch}`;
         case "refining":
           return j.step ? `Refining · ${j.step[0]}/${j.step[1]}${batch}` : `Refining${batch}`;
         case "decoding":
@@ -351,18 +389,111 @@ export function jobLabel(j: JobView): string {
   }
 }
 
-/** 0..1 when the backend reports steps, else null (indeterminate). */
-export function jobFraction(j: JobView): number | null {
-  if (j.status !== "running") return null;
-  if (j.stage === "generating" && j.step) return j.step[0] / Math.max(1, j.step[1]);
-  if (j.stage === "decoding" || j.stage === "finishing") return 1;
-  return null;
+/** What the progress knows besides the job (seconds): time since the job left the queue,
+ * time in the current phase (status and stage), since the job started running and since the
+ * last step or tile; whether the prompt enhancer runs for it; and this machine's remembered
+ * speeds (`progressMemory`). */
+export interface JobClock {
+  elapsed: number;
+  inPhase: number;
+  inRunning: number;
+  sinceStep: number;
+  enhance: boolean;
+  /** Seconds the model took to load the last time. */
+  loadSeconds: number;
+  /** Seconds the prompt enhancer took per word the last time. */
+  enhancerSecondsPerWord: number;
 }
 
-export function remainingSeconds(j: JobView): number | null {
+/** About how many words the built-in enhancer prompts ask for. */
+const ENHANCER_WORDS = { generate: 110, edit: 35 };
+const SAVE_SECONDS = 1;
+
+/** Time left of a phase estimated at `est` seconds, `t` seconds in. Past ~80 % of the
+ * estimate it keeps shrinking without reaching 0, so an overrun slows the bar instead of
+ * stopping it. */
+function phaseLeft(est: number, t: number): number {
+  if (est <= 0) return 0;
+  return t < 0.8 * est ? est - t : (0.16 * est * est) / t;
+}
+
+/** Estimated seconds until the job is done: what is left of the current phase, measured where
+ * the engine reports progress (steps, tiles, the enhancer's words), plus every phase still to
+ * come (model load, enhancer, generation, decoding, upscaler, saving). */
+export function jobSecondsLeft(j: JobView, c: JobClock): number {
+  const p = j.plan;
+  const quick = p?.mode === "upscale";
+  // The plan's split of the time; without a measured speed, a typical job (corrected live by the
+  // steps and tiles as they come).
+  const total = p && p.estimated_seconds > 0 ? p.estimated_seconds : quick ? 8 : 30;
+  const share = quick ? 1 : Math.min(0.95, Math.max(0, p?.upscale_share ?? 0));
+  const upS = total * share;
+  const genS = total - upS;
+  const decodeS = genS * 0.1;
+  const batch = Math.max(1, p?.batch_count ?? 1);
+  const imagesAfter = j.image && j.image[1] > 1 ? j.image[1] - j.image[0] : 0;
+  const words = ENHANCER_WORDS[p?.mode === "generate" ? "generate" : "edit"];
+  const enhanceS = c.enhance ? 0.5 + words * c.enhancerSecondsPerWord : 0;
+  const fromGeneration = genS + upS + SAVE_SECONDS;
+  switch (j.status) {
+    case "queued":
+    case "starting_backend":
+      return phaseLeft(c.loadSeconds, j.status === "queued" ? 0 : c.inPhase) + enhanceS + fromGeneration;
+    case "preparing":
+      return phaseLeft(0.5, c.inPhase) + enhanceS + fromGeneration;
+    case "enhancing_prompt": {
+      const written = (j.enhanced_prompt ?? "").split(/\s+/).filter(Boolean).length;
+      // Once it writes, its own pace says how long the rest takes.
+      const left = written >= 8 ? (Math.max(words - written, words * 0.05) * c.inPhase) / written : phaseLeft(enhanceS, c.inPhase);
+      return left + fromGeneration;
+    }
+    case "saving":
+      return phaseLeft(SAVE_SECONDS, c.inPhase);
+    case "done":
+    case "failed":
+    case "cancelled":
+      return 0;
+  }
+  switch (j.stage) {
+    case "upscaling": {
+      const perImage = upS / batch;
+      const after = (imagesAfter * upS) / batch + SAVE_SECONDS;
+      if (j.step && j.step[1] > 0) {
+        const perTile = j.seconds_per_step ?? perImage / j.step[1];
+        const within = Math.min(0.95, c.sinceStep / perTile);
+        return Math.max(0, j.step[1] - j.step[0] - within) * perTile + after;
+      }
+      return phaseLeft(perImage, c.inPhase) + after;
+    }
+    case "finishing":
+      return phaseLeft(0.5, c.inPhase) + upS + SAVE_SECONDS;
+    case "decoding":
+      return phaseLeft(decodeS / batch, c.inPhase) + (imagesAfter * genS) / batch + upS + SAVE_SECONDS;
+    case "generating":
+    case "refining":
+      if (j.step && j.step[1] > 0) {
+        const perStep = j.seconds_per_step ?? (0.85 * genS) / batch / j.step[1];
+        const within = Math.min(0.95, c.sinceStep / perStep);
+        return Math.max(0, j.step[1] - j.step[0] - within) * perStep + decodeS / batch + (imagesAfter * genS) / batch + upS + SAVE_SECONDS;
+      }
+  }
+  // Encoding, or a server that reports no steps: time against the generation estimate.
+  return phaseLeft(genS, c.inRunning) + upS + SAVE_SECONDS;
+}
+
+/** Completion (0..100) of the whole job, model load to saved file: the time it has taken over
+ * that time plus the time left (`jobSecondsLeft`). Short of 100 until the job is done. */
+export function jobPercent(j: JobView, c: JobClock): number {
+  if (j.status === "done") return 100;
+  if (j.status === "queued" || j.status === "failed" || j.status === "cancelled" || c.elapsed <= 0) return 0;
+  return Math.min(99, (100 * c.elapsed) / (c.elapsed + jobSecondsLeft(j, c)));
+}
+
+/** Time left to show, only once the engine's own pace is known (steps or tiles running). */
+export function remainingSeconds(j: JobView, c: JobClock): number | null {
   if (j.status !== "running" || !j.step || !j.seconds_per_step) return null;
-  if (j.stage !== "generating") return null;
-  return Math.max(0, (j.step[1] - j.step[0]) * j.seconds_per_step);
+  if (j.stage !== "generating" && j.stage !== "upscaling") return null;
+  return jobSecondsLeft(j, c);
 }
 
 // ---------------------------------------------------------------------------------------

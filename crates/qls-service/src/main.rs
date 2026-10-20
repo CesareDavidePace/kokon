@@ -77,6 +77,21 @@ fn load_or_create_token(dir: &std::path::Path) -> String {
     t
 }
 
+/// The port of a kokon-service that answers its ping at the port recorded in service.json.
+async fn running_service() -> Option<u16> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let info: ServiceInfo = serde_json::from_str(&std::fs::read_to_string(service_info_path()).ok()?).ok()?;
+    let ping = async {
+        let mut s = tokio::net::TcpStream::connect(("127.0.0.1", info.port)).await.ok()?;
+        s.write_all(b"GET /api/v1/ping HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n").await.ok()?;
+        let mut buf = vec![0u8; 256];
+        let n = s.read(&mut buf).await.ok()?;
+        let head = String::from_utf8_lossy(&buf[..n]);
+        (head.starts_with("HTTP/1.") && head.split(' ').nth(1) == Some("200")).then_some(info.port)
+    };
+    tokio::time::timeout(Duration::from_secs(2), ping).await.ok().flatten()
+}
+
 pub fn service_info_path() -> PathBuf {
     data_dir().join("service.json")
 }
@@ -115,15 +130,30 @@ async fn main() {
         .and_then(|p| p.parse().ok())
         .unwrap_or(cfg.service_port);
 
-    // Single instance: binding the port is the lock. Loopback only.
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let listener = match tokio::net::TcpListener::bind(addr).await {
+    // Single instance: a kokon-service answering at the port in service.json. Loopback only.
+    let listener = match tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port))).await {
         Ok(l) => l,
         Err(e) => {
-            tracing::info!("port {port} busy ({e}); another kokon-service is probably running — exiting");
-            return;
+            if let Some(other) = running_service().await {
+                tracing::info!("port {port} busy ({e}); kokon-service is already running on port {other} — exiting");
+                return;
+            }
+            // Reserved by Windows (Hyper-V/WSL/Docker excluded ranges, "access denied") or taken
+            // by another program: any free port. Clients find it in service.json.
+            match tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))).await {
+                Ok(l) => {
+                    tracing::warn!("port {port} cannot be opened ({e}); using {}", l.local_addr().map(|a| a.port()).unwrap_or(0));
+                    l
+                }
+                Err(e2) => {
+                    tracing::error!("port {port} cannot be opened ({e}) and no free port either ({e2}) — exiting");
+                    return;
+                }
+            }
         }
     };
+    let addr = listener.local_addr().unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], port)));
+    let port = addr.port();
 
     let engine = match Engine::new(cfg, &dir) {
         Ok(e) => e,

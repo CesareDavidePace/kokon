@@ -1,23 +1,24 @@
 /* The app follows the system theme; videos are rendered in its dark theme. */
 :root {
-  --ground: #0f0f0e;
-  --bg: #1a1a18;
-  --surface: #232321;
-  --surface-2: #2c2c29;
-  --surface-3: #383834;
-  --border: rgba(242, 241, 237, 0.08);
-  --border-2: rgba(242, 241, 237, 0.15);
-  --text: #f2f1ed;
-  --text-2: #b4b2ac;
-  --text-3: #8a8884;
-  --invert-bg: #f2f1ed;
-  --invert-text: #0f0f0e;
-  --scrim: rgba(15, 15, 14, 0.85);
-  --lift: inset 0 1px 0 rgba(255, 255, 255, 0.045), 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 28px -12px rgba(0, 0, 0, 0.6);
-  --shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 0 1px rgba(242, 241, 237, 0.07), 0 24px 60px -18px rgba(0, 0, 0, 0.75);
-  --print: 0 2px 6px rgba(0, 0, 0, 0.4), 0 34px 70px -24px rgba(0, 0, 0, 0.85);
-  --glow: rgba(247, 246, 242, 0.055);
-  --checker: #1d1d1b;
+  --ground: #0a0a0a;
+  --bg: #151515;
+  --surface: #1c1c1c;
+  --surface-2: #252525;
+  --surface-3: #313131;
+  --border: rgba(255, 255, 255, 0.07);
+  --border-2: rgba(255, 255, 255, 0.14);
+  --text: #f2f2f2;
+  --text-2: #a8a8a8;
+  --text-3: #858585;
+  --invert-bg: #f2f2f2;
+  --invert-text: #0a0a0a;
+  --scrim: rgba(10, 10, 10, 0.85);
+  --lift: inset 0 0 0 1px rgba(255, 255, 255, 0.05), 0 10px 28px -12px rgba(0, 0, 0, 0.7);
+  --shadow: 0 0 0 1px rgba(255, 255, 255, 0.07), 0 24px 60px -18px rgba(0, 0, 0, 0.8);
+  --print: 0 2px 6px rgba(0, 0, 0, 0.5), 0 34px 70px -24px rgba(0, 0, 0, 0.9);
+  --pick: 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --glow: rgba(255, 255, 255, 0.045);
+  --checker: #181818;
   --sidebar: transparent;
   color-scheme: dark;
 }

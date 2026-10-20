@@ -12,7 +12,7 @@ import {
   addAsReference, addResult, cancelJob, focusPrompt, getState, itemSource, removeSessionItem, reusePrompt, selectedItem, selectItem, sessionLabels, sessionLinks, setState, submitRequest, toastError, toastInfo, useStore, type SessionItem,
 } from "../lib/store";
 import type { GenerationRecord, GenerationRequest, JobView, LutEntry, Mode, Size } from "../lib/types";
-import { Cocoon, Hatch, reducedMotion, SilkSpin } from "./Cocoon";
+import { Cocoon, Hatch, reducedMotion } from "./Cocoon";
 import { CompareFrame, CompareFullscreen } from "./Compare";
 import { LutBar, LutButton, LutOverlay } from "./Lut";
 import { IconButton, Popover, useFit } from "./ui";
@@ -786,6 +786,8 @@ function Timeline({ labels }: { labels: Record<string, string> }) {
           const src = itemSource(it);
           const pending = it.kind === "job";
           const failed = pending && job && ["failed", "cancelled"].includes(job.status);
+          // Being made: a thread runs round its thumbnail (the shown version has a still ring).
+          const making = pending && !failed;
           const mode: Mode | "lut" | undefined = it.gen?.mode ?? job?.plan?.mode;
           const link = links[it.key];
           const pendingSrc = pending && it.request?.mode !== "generate" ? it.request?.images?.[0] : undefined;
@@ -837,11 +839,7 @@ function Timeline({ labels }: { labels: Record<string, string> }) {
                 <span className="frame-img">
                   {src && <img src={urls.sourceThumb(src)} alt="" draggable={false} />}
                   {pendingSrc && <img className="dim" src={urls.sourceThumb(pendingSrc)} alt="" draggable={false} />}
-                  {pending && !failed && (job && job.status !== "queued" ? <JobCocoon job={job} request={it.request} /> : (
-                    <span className="frame-state">
-                      <SilkSpin size={30} />
-                    </span>
-                  ))}
+                  {pending && !failed && job && job.status !== "queued" && <JobPercent job={job} request={it.request} />}
                   {failed && (
                     <span className="frame-state">
                       <X size={16} />
@@ -853,10 +851,10 @@ function Timeline({ labels }: { labels: Record<string, string> }) {
                     </span>
                   )}
                 </span>
-                {selected === it.key && (
-                  <svg className="frame-silk" viewBox="0 0 60 60" aria-hidden>
+                {(making || selected === it.key) && (
+                  <svg className={`frame-silk ${making ? "making" : ""}`} viewBox="0 0 60 60" aria-hidden>
                     <rect className="ring" x="1" y="1" width="58" height="58" rx="17" />
-                    <rect className="run" x="1" y="1" width="58" height="58" rx="17" pathLength={200} />
+                    {making && <rect className="run" x="1" y="1" width="58" height="58" rx="17" pathLength={200} />}
                   </svg>
                 )}
                 </span>
@@ -874,17 +872,14 @@ function Timeline({ labels }: { labels: Record<string, string> }) {
   );
 }
 
-/** The whole job's progress in the timeline, the same percentage as its card: a tiny cocoon
- * that fills as the job advances, with the number under it. */
-function JobCocoon({ job, request }: { job: JobView; request?: GenerationRequest | null }) {
+/** The whole job's progress in the timeline: the same percentage as its card. */
+function JobPercent({ job, request }: { job: JobView; request?: GenerationRequest | null }) {
   const { pct } = useJobPercent(job, request);
   return (
-    <>
-      <span className="frame-state">
-        <SilkSpin size={28} fill={pct / 100} />
-      </span>
-      <span className="frame-pct">{Math.floor(pct)}</span>
-    </>
+    <span className="frame-pct">
+      {Math.floor(pct)}
+      <small>%</small>
+    </span>
   );
 }
 

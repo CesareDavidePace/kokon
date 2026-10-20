@@ -195,7 +195,7 @@ def redo(n: int, keep: dict[int, int], seeds: int, take: str, base: int) -> None
             sf.write(raw, a, SR)
             master(raw, folder / f"{n:02d}-s{i}-seed{seed}.wav")
             print(f"{n:02d} s{i} seed {seed}  {a.size / SR:4.1f} s  {text}", flush=True)
-    print(f"takes in {folder}")
+    print(f"takes ({take}) in {folder}")
 
 
 def splice(n: int, keep: dict[int, int], pick: dict[int, int], src: Path) -> None:
@@ -251,11 +251,12 @@ if __name__ == "__main__":
     ap.add_argument("--keep", help="redo/splice: NEW:OLD sentence pairs reused from the approved take")
     ap.add_argument("--pick", help="splice: NEW:SEED, the take chosen for each new sentence")
     ap.add_argument("--seeds", type=int, default=6, help="redo: takes per new sentence")
-    ap.add_argument("--take", default="expressive")
+    ap.add_argument("--take", help="redo: model settings (default: the line's approved take in FINAL)")
     ap.add_argument("--from", dest="src", type=Path)
     a = ap.parse_args()
     if a.takes[:1] == ["redo"]:
-        raise SystemExit(redo(int(a.takes[1]), pairs(a.keep), a.seeds, a.take, a.seed))
+        n = int(a.takes[1])
+        raise SystemExit(redo(n, pairs(a.keep), a.seeds, a.take or FINAL[n][0], a.seed))
     if a.takes[:1] == ["splice"]:
         raise SystemExit(splice(int(a.takes[1]), pairs(a.keep), pairs(a.pick), a.src))
     for t in a.takes:

@@ -13,10 +13,12 @@ import type { AppConfig, Check, ModelProfile, ModelsStatus, SetupReport, TextEnc
 import { IconButton, Seg, Switch } from "./ui";
 import { autoCheckEnabled, checkForUpdate } from "../lib/updates";
 
+const REPO_URL = "https://github.com/GabrieleLozupone/kokon";
+
 type Tab = "general" | "models" | "lora" | "performance" | "diagnostics";
 const TABS: Tab[] = ["general", "models", "lora", "performance", "diagnostics"];
 
-function PathField(props: { label: string; value: string; onChange: (v: string) => void; folder?: boolean; extensions?: string[] }) {
+function PathField(props: { label: string; value: string; onChange: (v: string) => void; folder?: boolean; extensions?: string[]; open?: boolean }) {
   return (
     <label className="field">
       <span>{props.label}</span>
@@ -31,6 +33,11 @@ function PathField(props: { label: string; value: string; onChange: (v: string) 
         >
           Browse
         </button>
+        {props.open && (
+          <button className="btn" title="Open this folder" onClick={() => native.openFolder(props.value).catch(toastError)}>
+            <FolderOpen size={14} /> Open
+          </button>
+        )}
       </div>
     </label>
   );
@@ -263,7 +270,7 @@ export function Settings() {
 
           {tab === "general" && (
             <>
-              <PathField label="Save images to" value={cfg.outputDir} folder onChange={(v) => set({ outputDir: v })} />
+              <PathField label="Save images to" value={cfg.outputDir} folder open onChange={(v) => set({ outputDir: v })} />
               <div className="field">
                 <span>Appearance</span>
                 <Seg<ThemeChoice>
@@ -316,6 +323,12 @@ export function Settings() {
                 <span>Tour: a short walk through an example project (adds the examples again if you removed them)</span>
                 <button className="btn" onClick={startTour}>
                   Start
+                </button>
+              </div>
+              <div className="field-row">
+                <span>Kokon is open source: code, issues and discussions are on GitHub</span>
+                <button className="btn" onClick={() => native.openLink(REPO_URL).catch(toastError)}>
+                  Open GitHub
                 </button>
               </div>
 

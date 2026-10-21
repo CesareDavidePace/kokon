@@ -195,6 +195,9 @@ export function Gallery() {
             onChange={setSort}
           />
         </div>
+        <IconButton title="Open the images folder" onClick={() => api.config().then((c) => native.openFolder(c.outputDir)).catch(toastError)}>
+          <FolderOpen size={17} />
+        </IconButton>
         <span className="spacer" />
         {items.length > 0 && (
           <button className={`btn ${selecting ? "primary" : ""}`} onClick={() => setPicked(selecting ? null : new Set())} title={selecting ? "Stop selecting (Esc)" : "Select several images to delete them at once (or Ctrl/⌘-click)"}>

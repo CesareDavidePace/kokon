@@ -267,6 +267,14 @@ fn release(shared: &Shared) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // WebKitGTK's DMA-BUF renderer paints a blank window with the NVIDIA driver (#15). Turn it
+    // off there unless the user set the variable; done first, while no other thread exists.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none()
+        && std::path::Path::new("/proc/driver/nvidia/version").exists()
+    {
+        unsafe { std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1") };
+    }
     // Feature unification gives every reqwest client here rustls without a provider (from
     // tauri-plugin-updater); building one before a provider is installed panics.
     let _ = rustls::crypto::ring::default_provider().install_default();

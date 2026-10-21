@@ -9,25 +9,9 @@
 <h3 align="center">Edit photos by describing the change, on your own computer.</h3>
 
 <p align="center">
-  One installer for Windows, Mac and Linux, no Python, no cloud. Powered by Qwen-Image 2.1, and ready for your AI agent.
-</p>
-
-<p align="center">
-  <a href="https://github.com/GabrieleLozupone/kokon/releases/latest"><img src="https://img.shields.io/github/v/release/GabrieleLozupone/kokon?style=flat-square&labelColor=333&color=6b6b6b&label=release&cacheSeconds=3600&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjQzI5N0ZGIiBzdHJva2Utd2lkdGg9IjIuNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMTIuNiAyLjZBMiAyIDAgMCAwIDExLjIgMkg0YTIgMiAwIDAgMC0yIDJ2Ny4yYTIgMiAwIDAgMCAuNiAxLjRsOC43IDguN2EyLjQgMi40IDAgMCAwIDMuNCAwbDYuNi02LjZhMi40IDIuNCAwIDAgMCAwLTMuNHoiLz48Y2lyY2xlIGN4PSI3LjUiIGN5PSI3LjUiIHI9IjEuMiIgZmlsbD0iI0MyOTdGRiIvPjwvc3ZnPg%3D%3D" alt="Latest release"></a>
-  <a href="https://github.com/GabrieleLozupone/kokon/releases"><img src="https://img.shields.io/github/downloads/GabrieleLozupone/kokon/total?style=flat-square&labelColor=333&color=6b6b6b&cacheSeconds=3600&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjM0ZCOTUwIiBzdHJva2Utd2lkdGg9IjIuNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMTIgM3YxMiIvPjxwYXRoIGQ9Im03IDEwIDUgNSA1LTUiLz48cGF0aCBkPSJNNCAyMWgxNiIvPjwvc3ZnPg%3D%3D" alt="Downloads"></a>
-  <img src="assets/readme/badges/windows.svg" alt="Windows 10 and 11">
-  <img src="assets/readme/badges/macos.svg" alt="macOS 15 or newer">
-  <img src="assets/readme/badges/linux.svg" alt="Linux, .deb and .rpm">
-  <br>
-  <img src="assets/readme/badges/nvidia.svg" alt="NVIDIA, 12 GB of VRAM or more">
-  <img src="assets/readme/badges/amd.svg" alt="AMD, 12 GB of VRAM or more, beta">
-  <img src="assets/readme/badges/intel.svg" alt="Intel Arc, 12 GB of VRAM or more, beta">
-  <img src="assets/readme/badges/apple.svg" alt="Apple Silicon, 32 GB of unified memory recommended, beta">
-  <br>
-  <a href="#use-it-from-your-ai-agent"><img src="assets/readme/badges/mcp.svg" alt="MCP server included"></a>
-  <a href="LICENSE"><img src="assets/readme/badges/license.svg" alt="License: AGPL-3.0"></a>
-  <a href="https://github.com/GabrieleLozupone/kokon/stargazers"><img src="https://img.shields.io/github/stars/GabrieleLozupone/kokon?style=flat-square&labelColor=333&color=6b6b6b&cacheSeconds=3600&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjRjVDNTE4IiBzdHJva2Utd2lkdGg9IjIuNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBmaWxsPSIjRjVDNTE4IiBkPSJNMTIgMi41bDIuOSA2IDYuNi45LTQuOCA0LjYgMS4yIDYuNUwxMiAxNy40bC01LjkgMy4xIDEuMi02LjVMMi41IDkuNGw2LjYtLjl6Ii8%2BPC9zdmc%2B" alt="Stars"></a>
-  <a href="https://mcpservers.org/servers/gabrielelozupone/kokon"><img src="https://mcpservers.org/badge.svg" alt="Listed on mcpservers.org"></a>
+  Like Nano Banana, but private, offline and without limits. One installer for Windows, Mac and Linux:
+  we pick the best open model and set it up for your GPU, you brush, type and get the result.
+  No Python, no ComfyUI, no cloud.
 </p>
 
 <p align="center">
@@ -59,10 +43,48 @@ https://github.com/user-attachments/assets/8851c580-99b9-432a-82be-b6d42fa9a749
     <img src="assets/readme/download-linux-beta-light.svg" alt="Download for Linux (x86-64, beta)" height="52">
   </picture></a>
   <br>
-  <sub>Free and open source · about 12 GB of models downloaded on first run · nothing leaves your computer</sub>
+  <sub>Free and open source · about 12 GB of models downloaded on first run · nothing leaves your computer · if Kokon is useful to you, a ⭐ helps other people find it</sub>
+</p>
+
+<p align="center">
+  <a href="https://github.com/GabrieleLozupone/kokon/releases/latest"><img src="https://img.shields.io/github/v/release/GabrieleLozupone/kokon?style=flat-square&labelColor=333&color=6b6b6b&label=release&cacheSeconds=3600&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjQzI5N0ZGIiBzdHJva2Utd2lkdGg9IjIuNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMTIuNiAyLjZBMiAyIDAgMCAwIDExLjIgMkg0YTIgMiAwIDAgMC0yIDJ2Ny4yYTIgMiAwIDAgMCAuNiAxLjRsOC43IDguN2EyLjQgMi40IDAgMCAwIDMuNCAwbDYuNi02LjZhMi40IDIuNCAwIDAgMCAwLTMuNHoiLz48Y2lyY2xlIGN4PSI3LjUiIGN5PSI3LjUiIHI9IjEuMiIgZmlsbD0iI0MyOTdGRiIvPjwvc3ZnPg%3D%3D" alt="Latest release"></a>
+  <a href="https://github.com/GabrieleLozupone/kokon/releases"><img src="https://img.shields.io/github/downloads/GabrieleLozupone/kokon/total?style=flat-square&labelColor=333&color=6b6b6b&cacheSeconds=3600&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjM0ZCOTUwIiBzdHJva2Utd2lkdGg9IjIuNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMTIgM3YxMiIvPjxwYXRoIGQ9Im03IDEwIDUgNSA1LTUiLz48cGF0aCBkPSJNNCAyMWgxNiIvPjwvc3ZnPg%3D%3D" alt="Downloads"></a>
+  <img src="assets/readme/badges/windows.svg" alt="Windows 10 and 11">
+  <img src="assets/readme/badges/macos.svg" alt="macOS 15 or newer">
+  <img src="assets/readme/badges/linux.svg" alt="Linux, .deb and .rpm">
+  <br>
+  <img src="assets/readme/badges/nvidia.svg" alt="NVIDIA, 12 GB of VRAM or more">
+  <img src="assets/readme/badges/amd.svg" alt="AMD, 12 GB of VRAM or more, beta">
+  <img src="assets/readme/badges/intel.svg" alt="Intel Arc, 12 GB of VRAM or more, beta">
+  <img src="assets/readme/badges/apple.svg" alt="Apple Silicon, 32 GB of unified memory recommended, beta">
+  <br>
+  <a href="#use-it-from-your-ai-agent"><img src="assets/readme/badges/mcp.svg" alt="MCP server included"></a>
+  <a href="LICENSE"><img src="assets/readme/badges/license.svg" alt="License: AGPL-3.0"></a>
+  <a href="https://github.com/GabrieleLozupone/kokon/stargazers"><img src="https://img.shields.io/github/stars/GabrieleLozupone/kokon?style=flat-square&labelColor=333&color=6b6b6b&cacheSeconds=3600&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjRjVDNTE4IiBzdHJva2Utd2lkdGg9IjIuNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBmaWxsPSIjRjVDNTE4IiBkPSJNMTIgMi41bDIuOSA2IDYuNi45LTQuOCA0LjYgMS4yIDYuNUwxMiAxNy40bC01LjkgMy4xIDEuMi02LjVMMi41IDkuNGw2LjYtLjl6Ii8%2BPC9zdmc%2B" alt="Stars"></a>
+  <a href="https://mcpservers.org/servers/gabrielelozupone/kokon"><img src="https://mcpservers.org/badge.svg" alt="Listed on mcpservers.org"></a>
 </p>
 
 ---
+
+## Like Nano Banana, but on your own computer
+
+Cloud editors made "edit a photo with a sentence" normal, but they upload your photos and limit how much you
+use them. Node-based tools run locally, but you build everything yourself. Kokon is simple **and** local:
+we make the technical choices (model, files, steps, memory), you make the edits.
+
+| | **Kokon** | ChatGPT, Gemini (Nano Banana) | Photoshop Generative Fill | ComfyUI |
+| --- | :---: | :---: | :---: | :---: |
+| Your photos stay on your computer | ✅ | ❌ uploaded | ❌ Adobe's cloud | ✅ |
+| Free, no limits | ✅ it's your GPU | daily limits or subscription | subscription + credits | ✅ |
+| Works offline | ✅ after setup | ❌ | ❌ | ✅ |
+| Setup | one installer | an account | Creative Cloud | Python, nodes, model files |
+| Who picks the model and settings | Kokon, tested for your GPU | the service | Adobe | you |
+| Edit with one sentence | ✅ | ✅ | short prompt for a selection | after building a workflow |
+
+Fair to say: cloud models run on data-center GPUs, so they can be faster and stronger on some edits. Kokon runs
+Qwen-Image 2.1, which leads the open-weights image-editing rankings, on the computer you already have. You need
+a 12 GB graphics card (8 GB in beta) or an Apple Silicon Mac, and the images are for non-commercial use because
+of the model's license.
 
 ## Why Kokon
 
@@ -457,8 +479,9 @@ window, or restart the service. **Save as…** still writes a copy wherever you 
 
 ## How it compares
 
-Kokon does one thing: editing photos with Qwen-Image 2.1, with as little setup as possible.
-If you want full control over every node, ComfyUI is the better tool.
+Against other local tools. Kokon does one thing: photo editing with the best open model we've tested
+(today Qwen-Image 2.1), with nothing to set up. If you want full control over every node, ComfyUI is the
+better tool.
 
 | | **Kokon** | ComfyUI + Qwen workflow | Krita AI Diffusion | Other Qwen web UIs |
 | --- | :---: | :---: | :---: | :---: |

@@ -505,6 +505,11 @@ SmartScreen shows this for new apps that don't have a download history yet. Clic
 **More info → Run anyway**. You can check the installer against the SHA-256 hash listed in the
 release notes, or [build it yourself](#build-from-source).
 
+If the installer **does nothing at all** (the cursor spins for a second, then no window and no
+process), Windows blocked it silently, usually through Smart App Control on fresh Windows 11
+installs. Right-click the downloaded `.exe` → **Properties**, tick **Unblock** at the bottom of the
+General tab, click **OK** and run it again.
+
 </details>
 
 <details>
@@ -569,6 +574,9 @@ Linux: yes, in beta, on x86-64 with a `.deb` (Ubuntu, Debian, Mint) or an `.rpm`
 cards run Kokon's own CUDA build of the engine, AMD and Intel cards its Vulkan build. A headless
 server with the interface in your browser, and a Docker image, come next
 ([#15](https://github.com/GabrieleLozupone/kokon/issues/15)).
+
+If the Kokon window stays blank on Linux, start it with `WEBKIT_DISABLE_DMABUF_RENDERER=1 kokon`
+(a known WebKitGTK issue; Kokon already does this by itself on NVIDIA drivers).
 
 </details>
 

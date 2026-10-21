@@ -30,7 +30,7 @@ interface Reel {
   real: string;
 }
 
-const STREET_STROKE: [number, number][] = [
+export const STREET_STROKE: [number, number][] = [
   [0.47, 0.52], [0.62, 0.49], [0.665, 0.58], [0.475, 0.6], [0.455, 0.7], [0.67, 0.68], [0.68, 0.78], [0.46, 0.8], [0.465, 0.9], [0.665, 0.88], [0.62, 0.965], [0.5, 0.965],
 ];
 

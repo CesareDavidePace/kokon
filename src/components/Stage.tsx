@@ -155,16 +155,26 @@ function PromptPhase(props: { title: string; text: string; streaming: boolean; w
     visible.push(/^\s+$/.test(w) ? w : <span key={i} className="w" style={wordStyle(at, shown)}>{w}</span>);
     at += w.length;
   }
+  // Follow the new words only while the reader is at the bottom; scrolling up to reread stays put.
+  const follow = useRef(true);
   useEffect(() => {
     const el = ref.current;
-    if (el && writing) el.scrollTop = el.scrollHeight;
+    if (el && writing && follow.current) el.scrollTop = el.scrollHeight;
   }, [visible.length, writing]);
   return (
     <div className={`prompt-stage ${leave.leaving ? "leaving" : ""}`} style={{ transitionDuration: `${PROMPT_FADE_MS}ms`, ...leave.style }}>
       <span className={`enhanced-label ${writing ? "shimmer" : ""}`}>
         <WandSparkles size={13} /> {writing ? "Writing the prompt" : "The prompt"} · {props.title}
       </span>
-      <div className="prompt-text" ref={ref} aria-live="polite">
+      <div
+        className="prompt-text"
+        ref={ref}
+        aria-live="polite"
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+        }}
+      >
         <div className="prompt-flow">
           {text ? visible : <span className="enhanced-wait shimmer">{props.withImage ? "Looking at your image…" : "Reading your idea…"}</span>}
           {writing && text && <i className="caret" />}

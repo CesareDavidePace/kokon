@@ -1,6 +1,6 @@
 # Kokon
 
-> Kokon is a free, open-source desktop app for editing and creating photos with AI on your own computer. You describe the change in plain words ("remove the scooter", "make it a snowy night") and Qwen-Image 2.1 does it locally on your GPU. There is nothing to set up: one installer detects the hardware, downloads and verifies the right model, and picks the resolution and the VRAM/RAM split for every job. Nothing is uploaded.
+> Kokon is a free, open-source desktop app for editing and creating photos with AI on your own computer, like Nano Banana or ChatGPT image editing but private, offline and without limits. Kokon picks and sets up the model for you. You describe the change in plain words ("remove the scooter", "make it a snowy night") and Qwen-Image 2.1 does it locally on your GPU. There is nothing to set up: one installer detects the hardware, downloads and verifies the right model, and picks the resolution and the VRAM/RAM split for every job. Nothing is uploaded.
 
 Key facts (version 0.10.0, October 2026):
 
@@ -16,6 +16,11 @@ Key facts (version 0.10.0, October 2026):
 ## Pages
 
 - [Home](https://kokon.app/): what Kokon does, examples, requirements, FAQ
+- [Free local AI photo editor](https://kokon.app/local-ai-photo-editor/): why edit photos with AI locally, what Kokon can do (remove, relight, text, replace, restyle, expand), requirements, honest limits
+- [Offline alternative to Nano Banana](https://kokon.app/offline-alternative-to-nano-banana/): Kokon vs Nano Banana / ChatGPT image editing: what's the same, what's different, when the cloud is still better
+- [Simple ComfyUI alternative](https://kokon.app/comfyui-alternative/): what Kokon decides for you (model, files, steps, VRAM), reusing ComfyUI model files, when to stay with ComfyUI
+- [Remove objects from photos offline](https://kokon.app/remove-objects-from-photos-offline/): step-by-step object and people removal on your own GPU
+- [Press kit](https://kokon.app/press/): one-line and short descriptions, key facts, videos, images, logos
 - [Run Qwen-Image 2.1 locally](https://kokon.app/qwen-image-2-1-local/): step-by-step setup on Windows, Mac and Linux without Python or ComfyUI, speed, troubleshooting
 - [Prompt guide](https://kokon.app/prompt-guide/): how to write prompts for Qwen-Image 2.1, with vague vs clear examples (negative prompts, text in images, edit prompts)
 - [Free local image generation for AI agents (MCP)](https://kokon.app/mcp-image-generation/): use Kokon from Claude Code, Cursor or any MCP client

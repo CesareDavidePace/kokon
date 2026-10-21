@@ -12,6 +12,7 @@ import { Banner } from "./scenes/Banner";
 import { Update010, UPDATE_FRAMES } from "./scenes/Update010";
 import { LENGTH } from "./app/timeline";
 import { REELS, ReelScene, reelFrames } from "./scenes/Reels";
+import { PH_SLIDES } from "./scenes/ProductHunt";
 
 const withPreload = (C: ComponentType) => () => (
   <>
@@ -38,6 +39,9 @@ export function Root() {
       <Composition id="Layout" component={Layout} durationInFrames={8} {...S} />
       {Object.entries(REELS).map(([id, r]) => (
         <Composition key={id} id={id} component={withPreload(() => <ReelScene r={r} />)} durationInFrames={reelFrames(r)} fps={30} width={1080} height={1920} />
+      ))}
+      {Object.entries(PH_SLIDES).map(([id, C]) => (
+        <Composition key={id} id={id} component={withPreload(() => <>{C()}</>)} durationInFrames={1} fps={30} width={1270} height={760} />
       ))}
       <Composition id="Banner" component={withPreload(Banner)} durationInFrames={1} fps={30} width={2560} height={1440} />
     </>

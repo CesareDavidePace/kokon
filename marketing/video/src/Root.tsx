@@ -11,6 +11,7 @@ import { Hook, Intro } from "./scenes/Opening";
 import { Banner } from "./scenes/Banner";
 import { Update010, UPDATE_FRAMES } from "./scenes/Update010";
 import { LENGTH } from "./app/timeline";
+import { REELS, ReelScene, reelFrames } from "./scenes/Reels";
 
 const withPreload = (C: ComponentType) => () => (
   <>
@@ -35,6 +36,9 @@ export function Root() {
       <Composition id="Region" component={withPreload(Region)} durationInFrames={REGION_FRAMES} {...S} />
       <Composition id="Versions" component={withPreload(Versions)} durationInFrames={VERSIONS_FRAMES} {...S} />
       <Composition id="Layout" component={Layout} durationInFrames={8} {...S} />
+      {Object.entries(REELS).map(([id, r]) => (
+        <Composition key={id} id={id} component={withPreload(() => <ReelScene r={r} />)} durationInFrames={reelFrames(r)} fps={30} width={1080} height={1920} />
+      ))}
       <Composition id="Banner" component={withPreload(Banner)} durationInFrames={1} fps={30} width={2560} height={1440} />
     </>
   );

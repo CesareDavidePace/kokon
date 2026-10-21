@@ -6,7 +6,8 @@
   "scripts": {
     "studio": "remotion studio",
     "render": "remotion render KokonLaunch out/kokon-launch.mp4",
-    "still": "remotion still"
+    "still": "remotion still",
+    "reels": "remotion render ReelRemove out/reels/reel-remove.mp4 && remotion render ReelSeason out/reels/reel-season.mp4 && remotion render ReelText out/reels/reel-text.mp4"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",

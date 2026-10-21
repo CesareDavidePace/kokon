@@ -107,16 +107,23 @@ function ProgressPhase({ job, title, pct, clock }: { job: JobView; title: string
   const o = job.plan?.output;
   const remain = remainingSeconds(job, clock);
   const canCancel = !["done", "failed", "cancelled"].includes(job.status);
+  const notes = job.notes.join(" ");
+  // A small card (a tall image in a short window) drops what doesn't fit: the title shortens,
+  // Stop keeps its icon, the size and the notes hide (styles.css, @container pending). Hover
+  // still shows the whole title and the notes.
   return (
     <div className="progress-phase">
-      <span className="pending-title">{title}</span>
+      <span className="pending-title" title={title}>
+        {title}
+      </span>
       {canCancel && (
-        <button className="btn ghost stop-corner" onClick={() => cancelJob(job.id)} title="Cancel">
-          <Square size={12} /> Stop
+        <button className="btn ghost stop-corner" onClick={() => cancelJob(job.id)} title="Cancel" aria-label="Stop">
+          <Square size={12} />
+          <span className="stop-label">Stop</span>
         </button>
       )}
       {/* The cocoon fills the middle; the percentage sits under it. */}
-      <div className="progress-foot">
+      <div className="progress-foot" title={notes || undefined}>
         <span className="job-pct" aria-label={`${Math.floor(pct)} percent`}>
           {Math.floor(pct)}
           <small>%</small>
@@ -124,12 +131,12 @@ function ProgressPhase({ job, title, pct, clock }: { job: JobView; title: string
         <div className="progress">
           <i style={{ width: `${pct}%` }} />
         </div>
-        <span>
+        <span className="progress-detail">
           {jobLabel(job)}
-          {o ? ` · ${o.width}×${o.height}` : ""}
-          {remain !== null ? ` · ${formatDuration(remain)} left` : ""}
+          {o && <span className="detail-size"> · {o.width}×{o.height}</span>}
+          {remain !== null && ` · ${formatDuration(remain)} left`}
         </span>
-        {job.notes.length > 0 && <span className="notes">{job.notes.join(" ")}</span>}
+        {notes && <span className="notes">{notes}</span>}
       </div>
     </div>
   );

@@ -186,7 +186,7 @@ svg { display: block; flex: none; }
 .empty .hint span { display: flex; gap: 6px; align-items: center; }
 
 /* pending job */
-.pending { position: relative; max-width: 100%; max-height: 100%; border-radius: var(--radius-img); background: var(--bg); box-shadow: var(--lift); overflow: hidden; display: grid; place-items: center; isolation: isolate; }
+.pending { position: relative; max-width: 100%; max-height: 100%; border-radius: var(--radius-img); background: var(--bg); box-shadow: var(--lift); overflow: hidden; display: grid; place-items: center; isolation: isolate; container: pending / size; }
 /* the cocoon (components/Cocoon.tsx): silk on a canvas, the edit's source inside it */
 .cocoon { position: absolute; inset: 0; z-index: 0; transition: opacity 0.8s; }
 .cocoon.dim { opacity: 0.32; }
@@ -211,12 +211,18 @@ svg { display: block; flex: none; }
 .hatch-ink { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2; pointer-events: none; overflow: visible; }
 .hatch-ink path { fill: var(--text); }
 .pending-title { color: var(--text); font-weight: 600; font-size: 14px; }
+/* The title shares the top row with Stop: it keeps clear of it on both sides (so it stays centred)
+   and shortens to one line. */
+.progress-phase .pending-title { box-sizing: border-box; max-width: 100%; min-width: 0; padding-inline: calc(3cqw + 82px); line-height: 28px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pending-info { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; gap: 12px; color: var(--text-2); font-size: 13px; padding: 24px; text-align: center; }
-.progress-phase { position: absolute; inset: 0; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: space-between; padding: 5% 6% 5.5%; color: var(--text-2); font-size: 13px; text-align: center; animation: phase-in 0.8s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+/* The mark takes the band from 19 % to 67 % of the card's height (Cocoon.tsx markLayout): the title
+   fits above it and the percentage under it at any card size, in container units. */
+.progress-phase { position: absolute; inset: 0; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: space-between; padding: 3.5cqh 6cqw 5.5cqh; color: var(--text-2); font-size: 13px; text-align: center; animation: phase-in 0.8s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
 @keyframes phase-in { from { opacity: 0; filter: blur(4px); } to { opacity: 1; filter: none; } }
-.progress-phase .stop-corner { position: absolute; top: 3.5%; right: 3%; height: 28px; font-size: 12px; }
-.progress-foot { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%; }
-.job-pct { font-size: clamp(30px, 5.5vw, 52px); font-weight: 650; letter-spacing: -0.03em; line-height: 1; color: var(--text); font-variant-numeric: tabular-nums; }
+.progress-phase .stop-corner { position: absolute; top: 3.5cqh; right: 3cqw; height: 28px; font-size: 12px; }
+.progress-foot { display: flex; flex-direction: column; align-items: center; gap: clamp(4px, 1.6cqh, 8px); width: 100%; }
+.progress-detail { max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.job-pct { font-size: clamp(18px, min(12cqw, 9cqh), 52px); font-weight: 650; letter-spacing: -0.03em; line-height: 1; color: var(--text); font-variant-numeric: tabular-nums; }
 .job-pct small { font-size: 0.42em; font-weight: 500; margin-left: 2px; color: var(--text-2); letter-spacing: 0; }
 .progress-foot .progress { width: min(240px, 60%); }
 .progress-foot .progress > i { transition: width 0.12s linear; }
@@ -225,10 +231,22 @@ svg { display: block; flex: none; }
 .progress.indeterminate > i { width: 30%; animation: indet 1.3s ease-in-out infinite; }
 @keyframes indet { from { left: -30%; } to { left: 100%; } }
 .notes { color: var(--text-3); font-size: 12px; max-width: 360px; }
+.progress-foot .notes { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+@container pending (max-width: 440px) {
+  .progress-phase .stop-corner { width: 28px; padding: 0; justify-content: center; }
+  .progress-phase .stop-label { display: none; }
+  .progress-phase .pending-title { padding-inline: calc(3cqw + 36px); }
+}
+@container pending (max-width: 360px) {
+  .progress-detail .detail-size { display: none; }
+}
+@container pending (max-height: 520px) or (max-width: 380px) {
+  .progress-foot .notes { display: none; }
+}
 /* prompt enhancer: its prompt fills the frame while it is written, then fades for the percentage */
 .prompt-stage { position: absolute; inset: 0; z-index: 1; display: flex; flex-direction: column; gap: 14px; padding: clamp(18px, 5%, 44px); transition-property: opacity, transform, filter; transition-timing-function: ease-in; }
 .prompt-stage.leaving { opacity: 0; transform: scale(0.97); filter: blur(8px); }
-.prompt-text { flex: 1; min-height: 0; overflow: auto; scrollbar-width: none; display: flex; flex-direction: column; white-space: pre-wrap; user-select: text; color: var(--text); font-size: clamp(15px, 2.1vw, 22px); line-height: 1.5; letter-spacing: -0.005em; text-shadow: 0 1px 18px color-mix(in srgb, var(--bg, #000) 70%, transparent); }
+.prompt-text { flex: 1; min-height: 0; overflow: auto; scrollbar-width: none; display: flex; flex-direction: column; white-space: pre-wrap; user-select: text; color: var(--text); font-size: clamp(14px, min(4.2cqw, 5.5cqh), 22px); line-height: 1.5; letter-spacing: -0.005em; text-shadow: 0 1px 18px color-mix(in srgb, var(--bg, #000) 70%, transparent); }
 .prompt-flow { margin: auto 0; }
 .prompt-stage .btn.ghost { align-self: center; }
 .enhanced-label { display: flex; align-items: center; gap: 6px; color: var(--text-3); font-size: 12px; letter-spacing: 0.02em; }

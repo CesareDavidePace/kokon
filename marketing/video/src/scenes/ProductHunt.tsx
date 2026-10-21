@@ -3,7 +3,9 @@
 // a before/after per edit, the comparison with the cloud and ComfyUI, and what it runs on.
 import type { ReactNode } from "react";
 import { AbsoluteFill, Img, staticFile } from "remotion";
-import { PROMPTS } from "../app/fixtures";
+import { AppWindow } from "../app/AppWindow";
+import { appState, genItem, PROJECTS, PROMPTS, ref } from "../app/fixtures";
+import { CAT, REMOVED, STREET } from "./AppScenes";
 import { Mark } from "../app/Mark";
 
 const font = '"Inter Variable", Inter, sans-serif';
@@ -57,16 +59,31 @@ function Pair({ before, after, mode, prompt, kicker, title }: { before: string; 
   );
 }
 
+const HERO_STATE = (() => {
+  const base = appState();
+  return appState({
+    session: [genItem(STREET), genItem(REMOVED), genItem(CAT)],
+    selected: "street-removed",
+    compare: "slider",
+    composer: { ...base.composer, refs: [ref("street-removed")] },
+    projects: [{ id: "current", title: "Italian street café", updatedAt: Date.now() - 20_000, cover: "gen:street-cat", count: 3 }, ...PROJECTS],
+    projectId: "current",
+  });
+})();
+
 function Hero() {
   return (
     <Frame bg="street-removed.jpg">
-      <div style={{ position: "absolute", left: 64, top: 0, bottom: 0, width: 470, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+      <div style={{ position: "absolute", left: 60, top: 0, bottom: 0, width: 450, display: "flex", flexDirection: "column", justifyContent: "center" }}>
         <Mark size={58} color={INK} />
-        <div style={{ marginTop: 26, fontSize: 58, fontWeight: 720, letterSpacing: "-0.045em", lineHeight: 1.02 }}>Edit photos by describing the change.</div>
-        <div style={{ marginTop: 20, fontSize: 23, lineHeight: 1.4, color: DIM }}>Like Nano Banana, but on your own computer. Free, private, no limits. We pick the model and set it up for your GPU.</div>
+        <div style={{ marginTop: 26, fontSize: 54, fontWeight: 720, letterSpacing: "-0.045em", lineHeight: 1.02 }}>Edit photos by describing the change.</div>
+        <div style={{ marginTop: 20, fontSize: 23, lineHeight: 1.4, color: DIM }}>Like Nano Banana, but on your own computer. Free, private, no limits. Nothing to set up.</div>
       </div>
-      <div style={{ position: "absolute", left: 580, top: 120, width: 820, height: 502, borderRadius: 16, overflow: "hidden", boxShadow: "0 0 0 1px rgba(255,255,255,0.14), 0 40px 120px rgba(0,0,0,0.7)" }}>
-        <Img src={staticFile("img/app-screenshot.webp")} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "0 0" }} />
+      {/* The real window (today's components), the scooter removed and the before/after slider on. */}
+      <div style={{ position: "absolute", left: 556, top: 157, width: 1440 * 0.47, height: 900 * 0.47, borderRadius: 12, overflow: "hidden", boxShadow: "0 0 0 1px rgba(255,255,255,0.14), 0 40px 120px rgba(0,0,0,0.7)" }}>
+        <div style={{ transform: "scale(0.47)", transformOrigin: "0 0" }}>
+          <AppWindow state={HERO_STATE} width={1440} height={900} split={0.58} />
+        </div>
       </div>
     </Frame>
   );
@@ -128,6 +145,17 @@ function Runs() {
         ))}
       </div>
     </Frame>
+  );
+}
+
+/** The window alone, for kokon.app (site/assets/img/app-screenshot.webp). */
+export function AppShot() {
+  return (
+    <AbsoluteFill style={{ background: "#0a0a0a" }}>
+      <div style={{ transform: `scale(${1600 / 1440})`, transformOrigin: "0 0" }}>
+        <AppWindow state={HERO_STATE} width={1440} height={900} split={0.58} />
+      </div>
+    </AbsoluteFill>
   );
 }
 

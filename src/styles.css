@@ -68,6 +68,17 @@
   color-scheme: dark;
 }
 
+/* Mac screens show these greys close to black; a step lighter matches macOS's own dark apps. */
+:root[data-theme="dark"][data-platform="mac"] {
+  --ground: #161616;
+  --bg: #1f1f1f;
+  --surface: #262626;
+  --surface-2: #2f2f2f;
+  --surface-3: #3a3a3a;
+  --checker: #222222;
+  --scrim: rgba(22, 22, 22, 0.85);
+}
+
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
 body {
@@ -902,8 +913,8 @@ kbd { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; display
 /* the drag regions take the click, not the text inside them */
 .wordmark *, .brand > span.project-title { pointer-events: none; }
 /* macOS keeps its traffic lights over the top-left corner */
-:root[data-platform="mac"] .side-head { padding-left: 86px; }
-:root[data-platform="mac"] .app:not(:has(.sidebar)) .topbar { padding-left: 86px; }
+:root[data-platform="mac"]:not([data-fullscreen]) .side-head { padding-left: 86px; }
+:root[data-platform="mac"]:not([data-fullscreen]) .app:not(:has(.sidebar)) .topbar { padding-left: 86px; }
 
 /* ---------- scrollbars: a thin rounded thumb, no arrows, shown while the pointer is over the
    list (WebView2, WebKit); the track stays invisible ---------- */

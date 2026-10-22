@@ -8,8 +8,19 @@ import { useEffect, useState } from "react";
 import { native } from "../lib/native";
 import { isLinux, isMac } from "../lib/platform";
 
-// macOS: room for the traffic lights on the left of the top bar (styles.css).
-if (isMac && typeof document !== "undefined") document.documentElement.dataset.platform = "mac";
+// macOS: room for the traffic lights on the left of the top bar (styles.css). In full screen
+// macOS hides them, so the room goes too.
+if (isMac && typeof document !== "undefined") {
+  const root = document.documentElement;
+  root.dataset.platform = "mac";
+  const sync = () =>
+    native.isFullscreen().then(
+      (on) => (on ? (root.dataset.fullscreen = "") : delete root.dataset.fullscreen),
+      () => {},
+    );
+  sync();
+  native.onResized(sync).catch(() => {});
+}
 
 export function WindowControls() {
   const [maximized, setMaximized] = useState(false);

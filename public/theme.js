@@ -3,6 +3,8 @@
 // localStorage (src/lib/theme.ts); without one it follows the OS and updates when that changes.
 // (A classic script file, not inline, because the CSP only allows scripts from the app itself.)
 (function () {
+  // macOS gets a lighter dark palette (styles.css); set it here too so the splash matches.
+  if (/Mac/i.test(navigator.platform || navigator.userAgent)) document.documentElement.dataset.platform = "mac";
   var dark = window.matchMedia("(prefers-color-scheme: dark)");
   function apply() {
     var t = null;

@@ -9,9 +9,9 @@
 <h3 align="center">Edit photos by describing the change, on your own computer.</h3>
 
 <p align="center">
-  Like Nano Banana, but private, offline and without limits. One installer for Windows, Mac and Linux:
-  we pick the best open model and set it up for your GPU, you brush, type and get the result.
-  No Python, no ComfyUI, no cloud.
+  A free, open-source alternative to Nano Banana and Generative Fill that runs on your own GPU.
+  One installer for Windows, Mac and Linux sets up the best open model for your hardware.
+  Brush an area, type what you want, get the edit. Your photos stay with you, and you can edit as often as you like.
 </p>
 
 <p align="center">
@@ -66,7 +66,7 @@ https://github.com/user-attachments/assets/8851c580-99b9-432a-82be-b6d42fa9a749
 
 ---
 
-## Like Nano Banana, but on your own computer
+## A local alternative to Nano Banana, without the node graph
 
 Cloud editors made "edit a photo with a sentence" normal, but they upload your photos and limit how much you
 use them. Node-based tools run locally, but you build everything yourself. Kokon is simple **and** local:

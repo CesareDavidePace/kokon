@@ -1,6 +1,6 @@
 # Kokon
 
-> Kokon is a free, open-source desktop app for editing and creating photos with AI on your own computer, like Nano Banana or ChatGPT image editing but private, offline and without limits. Kokon picks and sets up the model for you. You describe the change in plain words ("remove the scooter", "make it a snowy night") and Qwen-Image 2.1 does it locally on your GPU. There is nothing to set up: one installer detects the hardware, downloads and verifies the right model, and picks the resolution and the VRAM/RAM split for every job. Nothing is uploaded.
+> Kokon is a free, open-source desktop app for editing and creating photos with AI on your own computer, a free, local alternative to Nano Banana and ChatGPT image editing: photos stay on the user's computer and there is no daily limit. Kokon picks and sets up the model for you. You describe the change in plain words ("remove the scooter", "make it a snowy night") and Qwen-Image 2.1 does it locally on your GPU. There is nothing to set up: one installer detects the hardware, downloads and verifies the right model, and picks the resolution and the VRAM/RAM split for every job. Nothing is uploaded.
 
 Key facts (version 0.10.0, October 2026):
 

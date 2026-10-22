@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kokon: Free Offline AI Photo Editor for Windows, Mac &amp; Linux (Qwen-Image 2.1)</title>
-<meta name="description" content="Edit photos by describing the change, like Nano Banana or ChatGPT, but on your own computer: free, private, no limits. One installer; Kokon picks the best open model and sets it up for your GPU. Windows, Mac and Linux.">
+<meta name="description" content="Edit photos by describing the change, on your own computer. A free, open-source alternative to Nano Banana and ChatGPT image editing: your photos stay on your PC and there is no daily limit. One installer for Windows, Mac and Linux sets up the best open model for your GPU.">
 <meta name="keywords" content="local AI photo editor, offline AI image editor, Nano Banana alternative, local Nano Banana, Photoshop Generative Fill alternative, Qwen-Image 2.1, Qwen Image Edit, run Qwen-Image locally, ComfyUI alternative, AI inpainting, remove objects from photos, MCP image generation, stable-diffusion.cpp">
 <meta name="author" content="Gabriele Lozupone">
 <meta name="robots" content="index, follow, max-image-preview:large, max-video-preview:-1">
 <meta property="og:site_name" content="Kokon">
 <meta property="og:title" content="Kokon — Edit photos by describing the change, on your own GPU">
-<meta property="og:description" content="Nano Banana-style photo editing on your own computer. Free, private, no limits. One installer for Windows, Mac and Linux; nothing to configure.">
+<meta property="og:description" content="A free, local alternative to Nano Banana and Generative Fill. Brush an area, type the change, and your own GPU does the edit. One installer for Windows, Mac and Linux.">
 <meta property="og:image" content="https://kokon.app/assets/og.png">
 <meta property="og:image:width" content="1280">
 <meta property="og:image:height" content="640">
@@ -92,7 +92,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/style.css?v=8">
+<link rel="stylesheet" href="assets/style.css?v=9">
 <script type="application/ld+json">
 {
  "@context": "https://schema.org",
@@ -274,9 +274,9 @@
 <main id="top">
   <section class="hero">
     <div class="wrap">
-      <span class="eyebrow rv"><b>Beta</b><span>Like Nano Banana<span class="eb-long">, but on your own computer</span></span></span>
+      <span class="eyebrow rv"><b>Beta</b><span>A local alternative to Nano Banana<span class="eb-long"> and Generative Fill</span></span></span>
       <h1 class="rv d1">Edit photos by describing the change.</h1>
-      <p class="lede rv d2">AI photo editing on your own GPU: free, private, no limits. We pick the best open model and set it up for your hardware. You just brush, type and get the result. No Python, no ComfyUI, no cloud.</p>
+      <p class="lede rv d2">Kokon runs the best open image model on your own computer, set up for your GPU by one installer. Brush an area, type what you want, get the edit. Your photos stay with you, and you can edit as often as you like.</p>
       <div class="ctas rv d3" id="download">
         <a class="btn primary" href="https://github.com/GabrieleLozupone/kokon/releases/latest" rel="noopener" data-dl="windows"><svg fill="currentColor"><use href="#win"/></svg>Download for Windows</a>
         <a class="btn ghost" href="https://github.com/GabrieleLozupone/kokon/releases/latest" rel="noopener" data-dl="mac"><svg fill="currentColor"><use href="#apple"/></svg>Download for macOS <span class="tag">BETA</span></a>
@@ -331,6 +331,22 @@
         </div>
       </div>
       <p class="honest">Times on an RTX 5070 Ti: about 36 s for a new image at native 2K, about 24 s for an edit at 1.5K. The prompts and seeds are in the repository.</p>
+    </div>
+  </section>
+
+  <section class="sec" id="voices">
+    <div class="wrap center">
+      <p class="kicker rv">From the people using it</p>
+      <h2 class="rv d1">What people say after trying it.</h2>
+      <p class="sec-lede rv d2">Comments from Reddit and GitHub, word for word. Click a name to read the whole comment.</p>
+      <div class="voices">
+        <figure class="card rv"><blockquote>"Install really is as easy as you say, and the quality (so far) is as good as anything I've come across."</blockquote><figcaption><a href="https://www.reddit.com/r/LocalLLaMA/comments/1x5wyii/gptimagestyle_photo_editing_on_your_own_gpu_12_gb/pgu0063/" rel="noopener">seasonedcurlies</a> on r/LocalLLaMA</figcaption></figure>
+        <figure class="card rv d1"><blockquote>"So much better than having up 5 or 10+ workflows to sort through. The ease of use and intuitive design."</blockquote><figcaption><a href="https://www.reddit.com/r/StableDiffusion/comments/1x5tmlp/i_made_a_nosettings_photo_editor_for_qwenimage_21/phalzev/" rel="noopener">Vast_Description_206</a> on r/StableDiffusion</figcaption></figure>
+        <figure class="card rv d2"><blockquote>"I'm running it on a 7900 XTX under Windows, and the experience have been really good! No problems so far with vulkan."</blockquote><figcaption><a href="https://www.reddit.com/r/LocalLLaMA/comments/1xazqxz/kokon_010_the_qwenimage_21_text_encoder_now/19rehjddcdrwj/" rel="noopener">ComfortableTomato807</a> on r/LocalLLaMA</figcaption></figure>
+        <figure class="card rv"><blockquote>"8GB VRAM here. It works and it's so much faster than the image editor in unsloth desktop"</blockquote><figcaption><a href="https://www.reddit.com/r/LocalLLaMA/comments/1x5wyii/gptimagestyle_photo_editing_on_your_own_gpu_12_gb/pgso7iw/" rel="noopener">jucabala457</a> on r/LocalLLaMA</figcaption></figure>
+        <figure class="card rv d1"><blockquote>"I've been tinkering with image models in ComfyUI a lot this year and I really like the clean interface you've made. Kokon is just really nice to boot up and use."</blockquote><figcaption><a href="https://www.reddit.com/r/StableDiffusion/comments/1x5tmlp/i_made_a_nosettings_photo_editor_for_qwenimage_21/ph54o1a/" rel="noopener">Sdesser</a> on r/StableDiffusion</figcaption></figure>
+        <figure class="card rv d2"><blockquote>"Thank you for Kokon, it is beautifully designed and very useful."</blockquote><figcaption><a href="https://github.com/GabrieleLozupone/kokon/issues/32" rel="noopener">electric-dragon-80000v</a> on GitHub</figcaption></figure>
+      </div>
     </div>
   </section>
 

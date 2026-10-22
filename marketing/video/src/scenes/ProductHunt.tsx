@@ -77,7 +77,7 @@ function Hero() {
       <div style={{ position: "absolute", left: 60, top: 0, bottom: 0, width: 450, display: "flex", flexDirection: "column", justifyContent: "center" }}>
         <Mark size={58} color={INK} />
         <div style={{ marginTop: 26, fontSize: 54, fontWeight: 720, letterSpacing: "-0.045em", lineHeight: 1.02 }}>Edit photos by describing the change.</div>
-        <div style={{ marginTop: 20, fontSize: 23, lineHeight: 1.4, color: DIM }}>Like Nano Banana, but on your own computer. Free, private, no limits. Nothing to set up.</div>
+        <div style={{ marginTop: 20, fontSize: 23, lineHeight: 1.4, color: DIM }}>A local alternative to Nano Banana. Brush, type, get the edit, on your own GPU.</div>
       </div>
       {/* The real window (today's components), the scooter removed and the before/after slider on. */}
       <div style={{ position: "absolute", left: 556, top: 157, width: 1440 * 0.47, height: 900 * 0.47, borderRadius: 12, overflow: "hidden", boxShadow: "0 0 0 1px rgba(255,255,255,0.14), 0 40px 120px rgba(0,0,0,0.7)" }}>

@@ -774,6 +774,12 @@ for a module map and the backend facts each default is based on.
 
 </details>
 
+## Support Kokon
+
+Kokon is free and open source, and everything that runs on your computer stays free: no account, no credits,
+no limits. It's built by one person. If it's useful to you, a tip on [Ko-fi](https://ko-fi.com/gabrielelozupone)
+helps keep it that way; a star on GitHub helps other people find it. Tips are gifts and don't unlock anything.
+
 ## Contributing
 
 Bug reports, translations, example prompts and pull requests are all welcome. Issues tagged

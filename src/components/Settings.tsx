@@ -1,4 +1,4 @@
-import { Activity, Copy, Cpu, Download, FolderOpen, HardDrive, Layers, RefreshCw, RotateCcw, Settings2, Trash2, X } from "lucide-react";
+import { Activity, Copy, Cpu, Download, FolderOpen, HardDrive, Heart, Layers, RefreshCw, RotateCcw, Settings2, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { api } from "../lib/api";
@@ -14,6 +14,7 @@ import { IconButton, Seg, Switch } from "./ui";
 import { autoCheckEnabled, checkForUpdate } from "../lib/updates";
 
 const REPO_URL = "https://github.com/GabrieleLozupone/kokon";
+const SUPPORT_URL = "https://kokon.app/support/";
 
 /** Top of Settings → General: where Kokon lives. */
 export function RepoCard() {
@@ -26,6 +27,22 @@ export function RepoCard() {
       </div>
       <button className="btn primary" onClick={() => native.openLink(REPO_URL).catch(toastError)}>
         Open GitHub
+      </button>
+    </div>
+  );
+}
+
+/** Under the repository card: one quiet way to tip, no prompts anywhere else. */
+export function SupportCard() {
+  return (
+    <div className="repo-card support-card">
+      <Heart size={22} className="support-mark" aria-hidden />
+      <div className="body">
+        <strong>Support Kokon</strong>
+        <span className="muted">Kokon is free and made by one person. If it's useful to you, a tip helps keep it that way.</span>
+      </div>
+      <button className="btn" onClick={() => native.openLink(SUPPORT_URL).catch(toastError)}>
+        Support
       </button>
     </div>
   );
@@ -299,6 +316,7 @@ export function Settings() {
           {tab === "general" && (
             <>
               <RepoCard />
+              <SupportCard />
               <PathField label="Save images to" value={cfg.outputDir} folder open onChange={(v) => set({ outputDir: v })} />
               <div className="field">
                 <span>Appearance</span>

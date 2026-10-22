@@ -17,15 +17,12 @@ __pycache__/
 /src-tauri/binaries/*-apple-darwin
 /target/mac-check
 .DS_Store
-# Internal notes kept locally
-/docs/upscale-plan.md
-/docs/visibility-plan.md
-/docs/visibility-progress.md
-/docs/vision.md
+# Maintainer notes: a separate private repo cloned here (see AGENTS.md)
+/private/
+# Local Claude Code settings
+.claude/settings.local.json
+# Reports written by scripts/dev/test-12gb.ps1
 /docs/test-results/
 /docs/media/demo.gif
-/docs/launch-posts.md
-/docs/launch-day-prs.md
-/docs/engineering-writeup-outline.md
 /mcp/LICENSE
 /src-tauri/binaries/kokon-*

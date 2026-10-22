@@ -1,6 +1,7 @@
 # Releasing Kokon
 
-How to publish a version that installed copies update to, on Windows and macOS.
+How to publish a version that installed copies update to, on Windows, macOS and Linux. Every release ships
+all three from the same code.
 
 ## How updates work
 
@@ -33,10 +34,14 @@ How to publish a version that installed copies update to, on Windows and macOS.
    then both `"version"` fields in `mcp/server.json` (`npm test` in `mcp/` fails until all match;
    `kokon-mcp --version` reads `mcp/package.json`).
 2. **Windows:** `powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1`
-3. **Mac:** `bash scripts/build-release-mac.sh`. Then copy `dist-release/` from the Mac to the
-   PC (or the other way around) so that one folder holds both platforms' files.
+3. **Mac:** `bash scripts/build-release-mac.sh`.
+   **Linux:** in WSL Ubuntu 22.04 (clone in `~/kokon`, see [linux.md](linux.md)),
+   `bash scripts/build-release-linux.sh` → `.deb`, `.rpm` and `updater-linux-x86_64-{deb,rpm}.json`.
+   Then copy each machine's `dist-release/` files to the PC so that one folder holds every platform's files.
 4. **Write the manifest:**
    `node scripts/release/updater.mjs manifest --notes "What changed, in one or two lines"`
+   (`latest.json` must list Windows, macOS and both Linux packages).
+   Release notes go in `marketing/release-notes-<version>.md`, with each installer's SHA-256.
 5. **Publish** (the tag must be `v` + the version):
    ```bash
    gh release create v0.9.1 --draft --target master --title "Kokon 0.9.1" --notes-file notes.md \

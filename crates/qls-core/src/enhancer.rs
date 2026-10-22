@@ -3,13 +3,13 @@
 //! images for edits) before the image is generated. Runs on Kokon's engine builds only
 //! (`Capabilities::text_generation`, `POST /sdcpp/v1/text_gen`); the server has no built-in
 //! system prompt, so Kokon always sends one: the user's from Settings or the defaults below.
-//! Design and the A/B behind these texts: docs/prompt-enhancer.md.
+//! Design and the A/B behind these texts: docs/engineering-notes.md, "Prompt+".
 
 use crate::config::AppConfig;
 use crate::planner::ResolvedMode;
 use crate::sdcpp::{TextGenRequest, TextSampling};
 
-/// Built-in system prompt for text-to-image (docs/prompt-enhancer.md, decided 2026-10-18, revised
+/// Built-in system prompt for text-to-image (engineering notes, "Prompt+"; decided 2026-10-18, revised
 /// 2026-10-20). No example colours or objects: the model copies them into every prompt.
 pub const T2I_SYSTEM_PROMPT: &str = r#"You write prompts for an image generation model. Expand the user's request into one detailed English paragraph that describes the finished image: subject, setting, composition, lighting and style.
 - Keep everything the user specified about the image (objects, counts, colours, positions, style) and never contradict it. If the request is already detailed, keep all of it and only add what is missing. Leave out size and quality words (4K, HD, 16:9, resolution): the app sets the size.

@@ -143,7 +143,7 @@ merged upstream as PR #2128 on 2026-10-12; since 0.9.2 the engine is the officia
 
 `engine.json` at the repository root names the newest engine release tested with Kokon. Since
 0.10 every engine is Kokon's own build (fork branch `kokon`, workflow `kokon.yml`, release
-`kokon-<n>-<commit>`; see docs/prompt-enhancer.md), listed under the `kokon` key: tag, `min_app`,
+`kokon-<n>-<commit>`; see "Prompt+" below), listed under the `kokon` key: tag, `min_app`,
 URL + size + SHA-256 of `win_cuda`, `win_vulkan`, `linux_cuda`, `linux_vulkan`, `macos`. The
 file's other keys are an upstream release for apps up to 0.9.4, which ignore `kokon`. The service
 reads its cached copy at start and fetches it again when older than 2.5 days
@@ -235,6 +235,40 @@ The **Upscale** action runs the upscaler model straight on the image. The Detail
 method (a low-denoise img2img pass at about 2K first) was removed on 2026-10-09: Turbo's
 schedule leaves only 1–2 steps at strength 0.3. Requests with `"method": "detailed"` run as
 the upscaler model only.
+
+### Prompt+ (the prompt enhancer, 0.10.0)
+
+Optional, off by default. The Qwen3-VL 8B that Qwen-Image 2.1 already loads as its text encoder
+rewrites the user's short instruction into a full English prompt (looking at the input image for
+edits) before the image is made, so there is no second model in memory.
+
+- **Inside the engine, not a second llama.cpp process.** Kokon's engine build adds a generation loop
+  (KV cache, sampling, streaming detokenizer) on the loaded encoder and `POST /sdcpp/v1/text_gen`
+  (SSE `delta` / `done` / `error`; `stream: false` returns one JSON). `/sdcpp/v1/capabilities` reports
+  `text_generation`; the app hides the Prompt+ pill on engines without it. A second llama.cpp would
+  double the 8B in RAM (+6.6 GB on Windows without mmap). Upstream prefers to leave text generation to
+  llama.cpp ([leejet/stable-diffusion.cpp#2155](https://github.com/leejet/stable-diffusion.cpp/issues/2155)),
+  so it lives in the fork.
+- **Checked against llama.cpp** on the same GGUF: tokenizer round-trips, first-step logits (text
+  KL ≤ 0.02 on CUDA, ≤ 0.03 on CPU, images ≤ 0.15) and greedy tokens identical up to the first near-tie.
+- **Memory:** the encoder weights live in RAM (`--params-backend te=cpu`). For generation the engine
+  moves the DiT/VAE to pinned RAM when the encoder doesn't fit next to them (restore ~0.5 s on the next
+  image job), releases the vision tower before decoding, and reuses the decode graph with CUDA graphs
+  (ggml patch: only graphs with an id are captured). Below the budget, layers run split CPU/GPU.
+  Measured: ~127 tok/s on 16, 12 and 8 GB (RTX 5070 Ti, real and emulated; llama.cpp 133–145).
+- **Cost per image** (Fast 1024², same seed on/off): Windows +2.0 s t2i / +1.1 s edit, +2.4 GB peak
+  VRAM; Linux (WSL) +1.6 / +0.1 s; 8 GB emulated +3.6 / +1.8 s; M2 Pro 16 GB ~+13 s on ~290 s.
+- **System prompts live only in Kokon** (`crates/qls-core/src/enhancer.rs`; Settings can replace
+  them). They are our own texts, chosen in blind A/Bs over 20 and then 39 cases × 2 seeds against
+  Qwen's official PE prompts (those are under the Qwen Research License, ~2,400 / ~4,900 tokens, and
+  on the 8B the edit one wrote edits in Chinese). Rules kept: copy the user's fixed content exactly
+  (quoted text, counts, colours), name the medium early, always state the light, no quality tags; for
+  edits lead with the operation, describe only what changes and end with one "keep everything else
+  unchanged" clause (describing what stays makes the model redraw it). Output is always English.
+  Lesson: **any example colour or object in a system prompt leaks** into the outputs.
+- **Sampling:** Qwen3-VL's values (temperature 0.7, top-p 0.8, top-k 20, presence penalty 1.5 counted
+  on generated tokens only), seeded with a portable RNG, so the same seed gives the same text on every
+  platform. Regenerate makes a new prompt and a new seed; greedy is the engine default and test mode.
 
 ## HDR
 

@@ -427,8 +427,8 @@ claude mcp add-json --scope user kokon '{"type":"stdio","command":"C:\\Users\\<y
 
 Base URL `http://127.0.0.1:39151/api/v1`. Every call except `/ping` needs
 `Authorization: Bearer <token>`, with the token from `%LOCALAPPDATA%\KokonData\service.json`
-(Mac: `~/Library/Application Support/KokonData/service.json`).
-Requests that carry a browser `Origin` header are refused.
+(Mac: `~/Library/Application Support/KokonData/service.json`, Linux: `~/.local/share/KokonData/service.json`).
+Requests from web pages (a browser `Origin` header other than the app's own) are refused.
 
 ```powershell
 $i = Get-Content "$env:LOCALAPPDATA\KokonData\service.json" | ConvertFrom-Json
@@ -437,7 +437,7 @@ Invoke-RestMethod -Method Post "http://127.0.0.1:$($i.port)/api/v1/generate" -He
   -ContentType 'application/json' -Body '{"prompt":"a lighthouse at dusk, 16:9","quality":"fast"}'
 ```
 
-On macOS (or any shell with `curl`):
+On macOS or Linux (`curl`; on Linux the file is in `~/.local/share/KokonData/`):
 
 ```bash
 INFO="$HOME/Library/Application Support/KokonData/service.json"

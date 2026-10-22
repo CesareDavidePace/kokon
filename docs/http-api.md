@@ -13,10 +13,11 @@ The service writes its port and token to `service.json` when it starts:
 | --- | --- |
 | Windows | `%LOCALAPPDATA%\KokonData\service.json` |
 | Mac | `~/Library/Application Support/KokonData/service.json` |
+| Linux | `~/.local/share/KokonData/service.json` (or `$XDG_DATA_HOME/KokonData`) |
 
 Base URL: `http://127.0.0.1:<port>/api/v1` (the port is usually `39151`). Every call except
-`/ping` needs `Authorization: Bearer <token>`. Requests that carry a browser `Origin` header are
-refused. Errors come back as `{"error": {...}}`.
+`/ping` needs `Authorization: Bearer <token>`. Requests from web pages (a browser `Origin`
+header other than the app's own) are refused. Errors come back as `{"error": {...}}`.
 
 **PowerShell:**
 
@@ -27,7 +28,7 @@ Invoke-RestMethod -Method Post "http://127.0.0.1:$($i.port)/api/v1/generate" -He
   -ContentType 'application/json' -Body '{"prompt":"a lighthouse at dusk, 16:9","quality":"fast"}'
 ```
 
-**macOS (curl):**
+**macOS and Linux (curl):** on Linux, set `INFO` to `$HOME/.local/share/KokonData/service.json`.
 
 ```bash
 INFO="$HOME/Library/Application Support/KokonData/service.json"

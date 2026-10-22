@@ -33,6 +33,6 @@ jobs:
         working-directory: mcp
         run: npm run typecheck
       # The protocol test needs a built kokon-service and MCP bundle; the others need no binaries.
-      - name: Test MCP paths, tools and version
+      - name: Test MCP paths, tools, version and help
         working-directory: mcp
-        run: npm test -- test/paths.test.ts test/tools.test.ts test/version.test.ts
+        run: npm test -- test/paths.test.ts test/tools.test.ts test/version.test.ts test/help.test.ts

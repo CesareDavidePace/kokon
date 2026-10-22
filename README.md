@@ -705,14 +705,15 @@ or macOS version and the log from `KokonData/logs` (see the table above).
 - [x] Qwen's official 8-step Turbo model for every preset
 - [x] Prompt+: the prompt enhancer on the model Kokon already has (0.10.0)
 - [x] Your own LoRA files, per project (0.10.0, beta)
-- [ ] AMD and Intel GPUs through Vulkan (beta now; works on NVIDIA, to verify on AMD/Intel)
+- [x] AMD GPUs through Vulkan (beta; RX 7900 XTX and RX 9060 XT reported working, RX 6000 cards still slow)
+- [ ] **0.11:** the interface in the browser, served by Kokon itself, on your local network with a password;
+  then a Docker image for NVIDIA ([#15](https://github.com/GabrieleLozupone/kokon/issues/15))
+- [ ] Intel GPUs through Vulkan (to verify)
 - [ ] Background removal and transparent cutouts
 - [ ] Batch edits: one instruction for a whole folder
-- [ ] Curated LoRAs tested with Kokon, installed in one click
-- [ ] Headless server with the interface in the browser, then Docker
-  ([#15](https://github.com/GabrieleLozupone/kokon/issues/15))
 - [ ] Plugins for Krita, GIMP and Photoshop through the local API
 
+What is in progress right now, known issues and where help is welcome: [docs/STATUS.md](docs/STATUS.md).
 Have an idea? [Start a discussion](https://github.com/GabrieleLozupone/kokon/discussions) or 👍 an existing one.
 
 ## Build from source

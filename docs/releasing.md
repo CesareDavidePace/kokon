@@ -54,7 +54,8 @@ How to publish a version that installed copies update to, on Windows and macOS.
    1. Copy its files and its `updater-<platform>.json` into the same `dist-release/`.
    2. Run the manifest step again.
    3. Upload with `gh release upload v0.9.1 <files> dist-release/latest.json --clobber`.
-7. **MCP server** (after the GitHub release is out): `cd mcp && npm publish` (runs the build and
+7. **MCP server** (after the GitHub release is out): `cd mcp && npm login && npm whoami && npm publish`
+   (`npm login` first: an expired login makes `npm publish` fail with a misleading **E404 Not Found**; it runs the build and
    tests first), then `mcp-publisher login github` and `mcp-publisher publish` from `mcp/` so the
    MCP Registry lists the new version. Glama (https://glama.ai/mcp/servers/GabrieleLozupone/kokon):
    Admin → Repository → **Sync Server**, then Admin → Dockerfile → **Build** (the saved spec:

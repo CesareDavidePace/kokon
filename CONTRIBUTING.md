@@ -4,6 +4,8 @@ Thanks for helping. Bug reports, docs fixes, example prompts and pull requests a
 Kokon is a small project maintained by one person, so short, focused changes are the easiest to
 review.
 
+Using a coding agent? Start from [AGENTS.md](AGENTS.md) and [docs/STATUS.md](docs/STATUS.md).
+
 ## Before you start
 
 - **Bugs and install problems:** open an issue with the template. The **Settings → Diagnostics →
@@ -30,6 +32,16 @@ bash scripts/dev/mac-dev.sh --check   # check the prerequisites
 bash scripts/dev/mac-dev.sh           # build and run the app in development
 bash scripts/build-release-mac.sh     # Kokon.app + .dmg in dist-release/
 ```
+
+**Linux (x86_64, built on Ubuntu 22.04 or WSL):** Rust from rustup (Ubuntu's `cargo` package is too
+old) and Node 22+. Clone on the Linux disk, not under `/mnt/c`.
+
+```bash
+bash scripts/build-release-linux.sh --setup   # once: system packages
+bash scripts/build-release-linux.sh           # .deb + .rpm in dist-release/
+```
+
+A quick run without packaging and the details are in [docs/linux.md](docs/linux.md).
 
 To generate images you need the models. The app's first-run setup screen downloads them, or you
 can point it at an existing stable-diffusion.cpp folder. Most code changes (planner, geometry,

@@ -42,6 +42,22 @@ export function Popover(props: {
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);
+  const placement = props.placement ?? "top-start";
+  // A popover taller than the room above (or below) its button would leave the window: it gets
+  // at most that room and scrolls inside.
+  const [maxHeight, setMaxHeight] = useState<number>();
+  useLayoutEffect(() => {
+    if (!open || !ref.current) return;
+    const fit = () => {
+      const r = ref.current?.getBoundingClientRect();
+      if (!r) return;
+      const room = placement.startsWith("top") ? r.top - 8 - 12 : window.innerHeight - r.bottom - 6 - 12;
+      setMaxHeight(Math.max(120, Math.floor(room)));
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, [open, placement]);
   const pos: Record<string, React.CSSProperties> = {
     "top-start": { bottom: "calc(100% + 8px)", left: 0 },
     "top-end": { bottom: "calc(100% + 8px)", right: 0 },
@@ -52,7 +68,7 @@ export function Popover(props: {
     <div ref={ref} style={{ position: "relative" }}>
       {props.trigger(open, () => setOpen((o) => !o))}
       {open && (
-        <div className={`popover ${props.className ?? ""}`} style={pos[props.placement ?? "top-start"]}>
+        <div className={`popover ${props.className ?? ""}`} style={{ ...pos[placement], maxHeight, overflowY: "auto" }}>
           {props.children(() => setOpen(false))}
         </div>
       )}

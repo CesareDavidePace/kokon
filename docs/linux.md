@@ -24,10 +24,10 @@ The app is already client/server: the UI talks to `kokon-service` only over HTTP
 Rough effort for one person: 1 = days, 2 = 3–5 days, 3 = about a week. Order: 1 → 2 (+Docker) → 3.
 Public promise: issue #15 comment (2026-10-16). #22 closed as its duplicate.
 
-**Under review (2026-10-17): the design of steps 2–3.** Open questions: whether the first remote
-client is the browser UI or the desktop app connecting to a Kokon server (or both), where access
-should work from (local network only, or anywhere through a VPN), and whether Docker follows. To be
-settled before work on 0.11.0 starts.
+**Decided (2026-10-22) for 0.11.0:** the first remote client is the **browser UI** served by `kokon-service`
+(the desktop app connecting to a server, step 3, comes later). Access is **local network only**, off by default,
+behind a password with a limit on attempts; for access from outside, a guide to Tailscale or another VPN, never
+direct exposure. **Docker: an NVIDIA (CUDA) image first**; a Vulkan image for AMD/Intel follows once it can be tested.
 
 ## Why Kokon builds its own Linux engine
 

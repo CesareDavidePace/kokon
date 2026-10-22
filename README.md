@@ -282,7 +282,7 @@ files are not tested by Kokon; you can switch to the official files at any time 
 **New to prompts?** The [prompt guide](https://kokon.app/prompt-guide/) shows good and bad prompts side by side, with real results.
 
 <p align="center">
-  <img src="docs/media/screenshot-app.png" alt="The Kokon window: a cat-and-cowboy western showdown built from three generated images, combined, edited and expanded, with its version tree, the compare views and the prompt box" width="860">
+  <img src="docs/media/screenshot-app.png" alt="The Kokon window: an Italian street café where a red scooter was removed, shown with the before/after slider, the version tree and the edit prompt box" width="860">
 </p>
 
 Every result can be edited again, varied, used as a reference, upscaled, saved, copied or

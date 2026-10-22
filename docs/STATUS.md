@@ -38,8 +38,6 @@ Tracked in [#15](https://github.com/GabrieleLozupone/kokon/issues/15); design in
 
 - [#29](https://github.com/GabrieleLozupone/kokon/pull/29) EasyCache step cache (giveen): to be A/B-tested on the
   test set (text-to-image, edit, multi-image, LoRA) before it becomes a default.
-- [#36](https://github.com/GabrieleLozupone/kokon/pull/36) `kokon-mcp --help` (closes #5) and
-  [#37](https://github.com/GabrieleLozupone/kokon/pull/37) full HTTP API table (closes #9), both shrinivas-sn.
 
 ## Help wanted
 
@@ -50,6 +48,10 @@ Tracked in [#15](https://github.com/GabrieleLozupone/kokon/issues/15); design in
 - Model proposals that meet the switch rule: [Discussion #35](https://github.com/GabrieleLozupone/kokon/discussions/35).
 
 ## Recently shipped
+
+- **On master** (next release): `kokon-mcp --help` ([#36](https://github.com/GabrieleLozupone/kokon/pull/36),
+  closes #5) and the full local HTTP API reference in [http-api.md](http-api.md)
+  ([#37](https://github.com/GabrieleLozupone/kokon/pull/37), closes #9), both by shrinivas-sn.
 
 - **0.10.1** (2026-10-22): own model files never take a text-only Qwen3 as the text encoder; Linux NVIDIA blank
   window fixed; the progress card fits small windows ([#32](https://github.com/GabrieleLozupone/kokon/issues/32));

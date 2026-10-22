@@ -15,6 +15,8 @@
   --text: #0d0d0d;
   --text-2: #555555;
   --text-3: #737373;
+  /* the cocoon's threads and the solid logo a result hatches from */
+  --mark: #0d0d0d;
   --invert-bg: #0d0d0d;
   --invert-text: #ffffff;
   --scrim: rgba(244, 244, 244, 0.84);
@@ -50,6 +52,8 @@
   --text: #f2f2f2;
   --text-2: #a8a8a8;
   --text-3: #858585;
+  /* softer than --text: a big near-white logo flashing on a dark screen hurts the eyes */
+  --mark: #9a9a9a;
   --invert-bg: #f2f2f2;
   --invert-text: #0a0a0a;
   --scrim: rgba(10, 10, 10, 0.85);
@@ -209,7 +213,7 @@ svg { display: block; flex: none; }
 .hatch-veil svg { display: none; position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; will-change: opacity, filter; }
 .hatch-veil path { fill: var(--bg); }
 .hatch-ink { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2; pointer-events: none; overflow: visible; }
-.hatch-ink path { fill: var(--text); }
+.hatch-ink path { fill: var(--mark); }
 .pending-title { color: var(--text); font-weight: 600; font-size: 14px; }
 /* The title shares the top row with Stop: it keeps clear of it on both sides (so it stays centred)
    and shortens to one line. */

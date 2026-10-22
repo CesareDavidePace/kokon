@@ -42,7 +42,7 @@ interface MarkLayout {
 }
 
 export function markLayout(w: number, h: number): MarkLayout {
-  let sh = h * 0.48;
+  let sh = h * 0.38;
   sh = Math.min(sh, (w * 0.8 * STEM_H) / 1024, (w * 0.5) / STEM_RATIO);
   const scale = sh / STEM_H;
   const cy = h * 0.43;
@@ -236,7 +236,7 @@ export function Cocoon({ src, pct, form, dim }: { src?: string; pct: number; for
     if (!ctx) return;
     const threads = makeThreads(THREADS);
     const still = reducedMotion();
-    let ink = getComputedStyle(document.documentElement).getPropertyValue("--text").trim() || "#ffffff";
+    let ink = getComputedStyle(document.documentElement).getPropertyValue("--mark").trim() || "#9a9a9a";
     let lastInk = 0;
     let formStart: number | null = null;
     let raf = 0;
@@ -245,7 +245,7 @@ export function Cocoon({ src, pct, form, dim }: { src?: string; pct: number; for
     const draw = (now: number) => {
       const t = still ? 0 : (now - t0) / 1000;
       if (now - lastInk > 1000) {
-        ink = getComputedStyle(document.documentElement).getPropertyValue("--text").trim() || ink;
+        ink = getComputedStyle(document.documentElement).getPropertyValue("--mark").trim() || ink;
         lastInk = now;
       }
       const { pct: pctNow, form: formNow } = live.current;

@@ -325,7 +325,8 @@ async fn run(args: Vec<String>) {
     if forced_remote && !state.remote.password_set() {
         let msg = "--remote: no password is set yet, so other devices cannot connect. Run `kokon-service --set-password` (Docker: `docker exec -it kokon kokon-service --set-password`); it applies without a restart.";
         tracing::warn!("{msg}");
-        say("  Other devices:     not yet, set a password first: kokon-service --set-password");
+        let cmd = if in_container() { "docker exec -it kokon kokon-service --set-password" } else { "kokon-service --set-password" };
+        say(&format!("  Other devices:     not yet, set a password first: {cmd}"));
     } else if !forced_remote && !cfg_now.remote_access {
         say("  Other devices:     off (start with --remote, or turn it on in the desktop app)");
     }

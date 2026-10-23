@@ -39,6 +39,7 @@
 <p align="center">
   <a href="https://kokon.app/">Website</a> ·
   <a href="#install">Install</a> ·
+  <a href="#new-in-011-use-it-from-your-phone-or-run-it-as-a-server">Phone & server</a> ·
   <a href="#what-you-can-do">Features</a> ·
   <a href="#examples">Examples</a> ·
   <a href="#use-it-from-your-ai-agent">AI agents</a> ·
@@ -67,6 +68,33 @@ https://github.com/user-attachments/assets/8851c580-99b9-432a-82be-b6d42fa9a749
   <br>
   <sub>Free and open source · about 12 GB of models downloaded on first run · nothing leaves your computer</sub>
 </p>
+
+---
+
+## New in 0.11: use it from your phone, or run it as a server
+
+<p align="center">
+  <a href="https://kokon.app/self-hosted/"><img src="assets/readme/other-devices.webp" alt="A computer with a graphics card runs Kokon; a MacBook and an iPhone use it in the browser over the home network" width="860"></a>
+</p>
+
+Your computer with the graphics card makes the images; your phone, tablet or laptop uses Kokon in a browser.
+Nothing goes through a cloud, and there is no account.
+
+- **Other devices:** open **Settings → Other devices**, set a password and scan the QR code with your phone.
+  Add Kokon to the home screen and it opens like an app. Off until you turn it on; 5 wrong passwords make
+  that device wait.
+- **From anywhere:** connect your devices with [Tailscale](https://tailscale.com) or another VPN. Never open
+  Kokon's port on your router.
+- **As a server:** `kokon-service` on a Linux box without a screen, or the Docker image for NVIDIA cards:
+
+  ```bash
+  curl -fsSLO https://raw.githubusercontent.com/GabrieleLozupone/kokon/master/docker/compose.yaml
+  docker compose up -d
+  docker exec -it kokon kokon-service --set-password
+  ```
+
+Step by step: [kokon.app/self-hosted](https://kokon.app/self-hosted/) · full reference:
+[docs/remote-access.md](docs/remote-access.md) and [docs/docker.md](docs/docker.md).
 
 ---
 
@@ -173,8 +201,9 @@ seeds and times are in [marketing/showcase/PROMPTS.md](marketing/showcase/PROMPT
   Intel cards use Mesa's Vulkan driver, installed on most desktops already. If apt prints
   "Download is performed unsandboxed as root", that's harmless (apt can't read your home
   folder); copy the .deb to `/tmp` first to avoid it.
-- **Server or Docker (NVIDIA):** Kokon without a window, used from a browser on any device. See
-  [docs/docker.md](docs/docker.md), or run `kokon-service` from the Linux packages
+- **Server or Docker (NVIDIA):** Kokon without a window, used from a browser on any device. The image
+  `ghcr.io/gabrielelozupone/kokon` is published with every release: see [docs/docker.md](docs/docker.md),
+  or run `kokon-service` from the Linux packages
   ([docs/remote-access.md](docs/remote-access.md#on-a-server-without-a-screen-linux)).
 
 **2. Set up models.** On first launch Kokon shows your graphics card (or your Mac's chip and
@@ -586,9 +615,9 @@ Mac: yes, in beta, on Apple Silicon (M1 or newer) with macOS 15 Sequoia or newer
 and [docs/platforms.md](docs/platforms.md).
 
 Linux: yes, in beta, on x86-64 with a `.deb` (Ubuntu, Debian, Mint) or an `.rpm` (Fedora). NVIDIA
-cards run Kokon's own CUDA build of the engine, AMD and Intel cards its Vulkan build. A headless
-server with the interface in your browser, and a Docker image, come next
-([#15](https://github.com/GabrieleLozupone/kokon/issues/15)).
+cards run Kokon's own CUDA build of the engine, AMD and Intel cards its Vulkan build. Since 0.11 it
+also runs headless, with the interface in your browser, and as a Docker image for NVIDIA cards
+([docs/docker.md](docs/docker.md)).
 
 If the Kokon window stays blank on Linux, start it with `WEBKIT_DISABLE_DMABUF_RENDERER=1 kokon`
 (a known WebKitGTK issue; Kokon already does this by itself on NVIDIA drivers).

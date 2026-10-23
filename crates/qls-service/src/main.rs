@@ -58,6 +58,18 @@ pub struct AppState {
 
 pub const LEASE_TTL: Duration = Duration::from_secs(45);
 
+/// Whether a client keeps the service running. A browser tab does only on a server (headless
+/// `--persistent` or `--remote`, Docker): when the desktop app started the service, closing the
+/// app ends it, and frees the GPU, even with a phone still on the page.
+pub fn keeps_service(kind: &str, persistent: bool, forced_remote: bool) -> bool {
+    kind != "web" || persistent || forced_remote
+}
+
+/// Clients that keep the service running (see [`keeps_service`]).
+pub fn holding_clients(state: &AppState, leases: &HashMap<String, Lease>) -> usize {
+    leases.values().filter(|l| keeps_service(&l.kind, state.persistent, state.remote.forced)).count()
+}
+
 /// Whether a client still holds its lease. Clients that sent their pid (the desktop app, the
 /// MCP server) hold it while that process runs: after the computer sleeps their heartbeat is
 /// minutes late, and dropping them then cancelled the window's jobs and unloaded the model.
@@ -360,7 +372,7 @@ async fn lifecycle(state: Arc<AppState>) {
                 alive
             });
             // A browser tab keeps the model loaded like the desktop window does.
-            (leases.len(), leases.values().any(|l| l.kind == "ui"), leases.values().any(|l| l.kind == "ui" || l.kind == "web"), lost)
+            (holding_clients(&state, &leases), leases.values().any(|l| l.kind == "ui"), leases.values().any(|l| l.kind == "ui" || l.kind == "web"), lost)
         };
         for (id, kind) in &lost {
             tracing::info!("client {id} ({kind}) is gone");
@@ -440,7 +452,7 @@ async fn server_watch(state: Arc<AppState>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{cli_meta, APP_VERSION};
+    use super::{cli_meta, keeps_service, APP_VERSION};
 
     fn args(s: &str) -> Vec<String> {
         s.split_whitespace().map(String::from).collect()
@@ -456,5 +468,14 @@ mod tests {
             }
         }
         assert!(cli_meta(&args("--persistent --port 1234")).is_none());
+    }
+
+    #[test]
+    fn a_browser_tab_keeps_only_a_server_running() {
+        assert!(keeps_service("ui", false, false));
+        assert!(keeps_service("mcp", false, false));
+        assert!(!keeps_service("web", false, false), "closing the desktop app ends the service");
+        assert!(keeps_service("web", true, false));
+        assert!(keeps_service("web", false, true));
     }
 }

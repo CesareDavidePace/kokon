@@ -1211,7 +1211,7 @@ async fn release(State(s): St, Json(b): Json<HeartbeatBody>) -> Json<Value> {
     let (removed, remaining, ui_remaining) = {
         let mut l = s.leases.lock().unwrap();
         let removed = l.remove(&b.client_id);
-        (removed, l.len(), l.values().any(|l| l.kind == "ui"))
+        (removed, crate::holding_clients(&s, &l), l.values().any(|l| l.kind == "ui"))
     };
     if let Some(lease) = removed {
         tracing::info!("client {} ({}) released", b.client_id, lease.kind);

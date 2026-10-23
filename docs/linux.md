@@ -102,4 +102,11 @@ Upstream moves fast. Every platform follows the same release, so:
 Later
 - [ ] Real-hardware reports: AMD on Linux (swingtempo R9700, alean200), a non-WSL NVIDIA machine.
 - [ ] AppImage? Not planned (large, and deb/rpm cover the main distros).
-- [ ] Steps 2 and 3 of the plan above (0.11.0; design under review).
+- [x] Step 2 of the plan above (0.11.0, branch `server-0.11`): `kokon-service` serves the UI it embeds
+  (`crates/qls-service/src/remote.rs`); a second listener on all interfaces (`remote_port`, 39152) opens only
+  with access on and a password set, and refuses the token; rules and tests in `qls_core::remote`. Guides:
+  [remote-access.md](remote-access.md), [docker.md](docker.md).
+- [ ] Step 3 (the desktop app as a client). Decided 2026-10-23: when it comes, the app keeps two separate
+  galleries, "This computer" and the server's, with a button to save a server image locally; no automatic
+  sync (conflicts, duplicates, lost images). Away from home the server's gallery is reachable only through
+  Tailscale or another VPN.

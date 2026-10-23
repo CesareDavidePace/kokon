@@ -33,7 +33,7 @@ Kokon.exe (Tauri 2 + React)      kokon-mcp.exe (MCP, stdio)      scripts
 | `catalog.rs`, `installer.rs` | Pinned downloads (URLs, sizes, SHA-256), hardware presets, parallel resumable downloader |
 | `config.rs` | Settings and model profiles: the official files (derived from folder + preset) and the user's own files, each recording its model and source |
 | `modelfile.rs` | What a `.gguf` / `.safetensors` file is, read from its header only (role, Qwen-Image 2.1 or not, quantization, vision weights); folder scan for the user's own files |
-| `crates/qls-service` | Headless service and stable HTTP API; single instance; lifecycle |
+| `crates/qls-service` | Headless service and stable HTTP API; single instance; lifecycle. `remote.rs`: the embedded browser UI, password sign-in and the network listener (rules in `qls_core::remote`) |
 | `src-tauri`, `src/` | Desktop shell (Rust) and UI (React + TypeScript); in-app updates in `src/lib/updates.ts` |
 | `mcp/` | MCP server (TypeScript, official SDK) |
 

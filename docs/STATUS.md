@@ -9,11 +9,12 @@ Windows, macOS (Apple Silicon, 15+) and Linux (`.deb`, `.rpm`). Installed copies
 
 ## In progress: 0.11, Kokon as a server
 
-Tracked in [#15](https://github.com/GabrieleLozupone/kokon/issues/15); design in [linux.md](linux.md).
-- The browser UI, served by `kokon-service` itself.
-- Access from the local network: off by default, behind a password with a limit on attempts. For access from
-  outside, a guide to Tailscale or another VPN, never direct exposure.
-- A Docker image for NVIDIA (CUDA) first; an AMD/Intel (Vulkan) image once it can be tested.
+Tracked in [#15](https://github.com/GabrieleLozupone/kokon/issues/15); design in [linux.md](linux.md). Built on the
+branch `server-0.11`, being tested before the release:
+- The browser UI, served by `kokon-service` itself (Settings → Other devices, or `kokon-service --remote`).
+- Access from the local network: off by default, behind a password (Argon2id hash) with a limit on attempts.
+  For access from outside, a guide to Tailscale or another VPN: [remote-access.md](remote-access.md).
+- A Docker image for NVIDIA (CUDA): [docker.md](docker.md). An AMD/Intel (Vulkan) image once it can be tested.
 - Later: the desktop app as a client of a Kokon server elsewhere.
 
 ## Next

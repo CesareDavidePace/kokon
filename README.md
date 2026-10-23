@@ -173,6 +173,9 @@ seeds and times are in [marketing/showcase/PROMPTS.md](marketing/showcase/PROMPT
   Intel cards use Mesa's Vulkan driver, installed on most desktops already. If apt prints
   "Download is performed unsandboxed as root", that's harmless (apt can't read your home
   folder); copy the .deb to `/tmp` first to avoid it.
+- **Server or Docker (NVIDIA):** Kokon without a window, used from a browser on any device. See
+  [docs/docker.md](docs/docker.md), or run `kokon-service` from the Linux packages
+  ([docs/remote-access.md](docs/remote-access.md#on-a-server-without-a-screen-linux)).
 
 **2. Set up models.** On first launch Kokon shows your graphics card (or your Mac's chip and
 memory), recommends a preset and downloads everything it needs. The download resumes if it is
@@ -465,8 +468,9 @@ Kokon makes only two kinds of network request:
   downloaded only when you click **Update**, and installed only if their signature matches the
   key built into the app.
 
-Creating, editing, the gallery, the MCP server and the API talk to `127.0.0.1` only. Logs never
-contain your prompts.
+Creating, editing, the gallery, the MCP server and the API talk to `127.0.0.1` only, unless you turn
+on access from other devices (Settings → Other devices, off by default, password required): then
+the browser interface is also reachable on your local network. Logs never contain your prompts.
 
 You can check this yourself. While you work, watch `Kokon`, `kokon-service` and `sd-server` in
 Resource Monitor's Network tab on Windows (or run `Get-NetTCPConnection -OwningProcess <pid>`),
@@ -551,6 +555,18 @@ You can also [build it yourself](#build-from-source).
 Only to download the models. After that Kokon works fully offline. If you are online it checks
 once a day for a new version, which you can turn off on the welcome screen or in Settings →
 General.
+
+</details>
+
+<details>
+<summary><b>Can I use it from my phone or another computer?</b></summary>
+<br>
+
+Yes, in a browser. On the computer with the graphics card, open **Settings → Other devices**, set a
+password and open the address it shows on the other device, on the same network. Images are made and
+saved on that computer; the other device uploads photos and downloads results. From outside your home,
+use Tailscale or another VPN, never port forwarding. Kokon can also run without a window, on a Linux
+server or in Docker. Guide: [docs/remote-access.md](docs/remote-access.md).
 
 </details>
 
@@ -702,8 +718,9 @@ or macOS version and the log from `KokonData/logs` (see the table above).
 - [x] Your own LoRA files, per project (0.10.0, beta)
 - [x] New images from reference photos (a person, a product, a style), with Prompt+ (0.10.2)
 - [x] AMD GPUs through Vulkan (beta; RX 7900 XTX and RX 9060 XT reported working, RX 6000 cards still slow)
-- [ ] **0.11:** the interface in the browser, served by Kokon itself, on your local network with a password;
-  then a Docker image for NVIDIA ([#15](https://github.com/GabrieleLozupone/kokon/issues/15))
+- [x] **0.11:** the interface in a browser on your other devices, served by Kokon itself, with a password,
+  and a Docker image for NVIDIA ([#15](https://github.com/GabrieleLozupone/kokon/issues/15))
+- [ ] Docker image for AMD and Intel (Vulkan); the desktop app as a client of a Kokon server elsewhere
 - [ ] Intel GPUs through Vulkan (to verify)
 - [ ] Background removal and transparent cutouts
 - [ ] Batch edits: one instruction for a whole folder

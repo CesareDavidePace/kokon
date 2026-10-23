@@ -1,6 +1,6 @@
 # Status
 
-**Updated 2026-10-22.** What is in progress, what comes next, and where help is welcome. Kept current at the end
+**Updated 2026-10-23.** What is in progress, what comes next, and where help is welcome. Kept current at the end
 of every task (see [AGENTS.md](../AGENTS.md#keeping-docsstatusmd-current)); GitHub is the source of truth.
 
 ## Current version: [0.10.1](https://github.com/GabrieleLozupone/kokon/releases/tag/v0.10.1) (2026-10-22)
@@ -16,6 +16,20 @@ Tracked in [#15](https://github.com/GabrieleLozupone/kokon/issues/15); design in
 - A Docker image for NVIDIA (CUDA) first; an AMD/Intel (Vulkan) image once it can be tested.
 - Later: the desktop app as a client of a Kokon server elsewhere.
 
+## Being tested: 0.10.2 (branch `release-0.10.2`)
+
+Notes: [release-notes-0.10.2.md](../marketing/release-notes-0.10.2.md). Tested on Windows (CUDA); macOS and
+Linux next.
+- **New image from reference images**: with New image, the images you add are references (a person, a
+  product, a style) for a new picture sized by your quality and aspect ratio, not by image 1; Prompt+ has its
+  own instructions for it. Also in MCP (`generate_image` with `reference_images`) and the HTTP API.
+- **Prompt+ menu**: off, write and make, or write the prompt into the box first to read and change it.
+- **Longer Prompt+ prompts** for crowded scenes (they were cut at 512 tokens).
+- **Edits never reuse their source's seed** (that made them over-sharpened and crunchy).
+- **Vulkan decodes in 512 px tiles**, under AMD's 2 GiB buffer limit (decodes took 25-70 s on AMD cards).
+- **New engine** [kokon-1013-1814814](https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/tag/kokon-1013-1814814)
+  (upstream fd21ecf, with the Vulkan fix for cards without Resizable BAR).
+
 ## Next
 
 - **0.12: reliability foundations** (details soon).
@@ -25,8 +39,11 @@ Tracked in [#15](https://github.com/GabrieleLozupone/kokon/issues/15); design in
 
 ## Known issues
 
-- **AMD RX 6000 (RDNA2) cards are slow on Vulkan** (an RX 6700 XT took ~21 s per step). Under investigation;
-  flash attention on cards without matrix cores is the main suspect. RX 7900 XTX and RX 9060 XT work well.
+- **AMD RX 6000 (RDNA2) cards are slow on Vulkan** (an RX 6700 XT takes 21-41 s per step at 1 MP). Under
+  investigation: flash attention and memory placement are ruled out (the model stays in VRAM, the GPU is at 99 %).
+  RX 7900 XTX and RX 9060 XT work well.
+- **Slow VAE decode on AMD cards on Vulkan**: the decode asks for a buffer over the driver's 2 GiB limit and takes
+  25-70 s instead of a few seconds. Fixed in 0.10.2.
 - **LoRA is beta** and tested on Windows only; reports from macOS and Linux are welcome
   ([#33](https://github.com/GabrieleLozupone/kokon/issues/33) has a product-shot test).
 - **Macs are slow** compared with NVIDIA cards (about 4 minutes for 1 MP on an M2 Pro 16 GB). Engine speed-ups are
@@ -44,6 +61,8 @@ Tracked in [#15](https://github.com/GabrieleLozupone/kokon/issues/15); design in
 - Good first issues: [#2](https://github.com/GabrieleLozupone/kokon/issues/2) gallery keyboard,
   [#3](https://github.com/GabrieleLozupone/kokon/issues/3) site slider keyboard,
   [#4](https://github.com/GabrieleLozupone/kokon/issues/4) reduced-motion video.
+- AMD RDNA3/RDNA4 owners who know HIP: compare a ROCm engine with Vulkan
+  ([#38](https://github.com/GabrieleLozupone/kokon/issues/38)).
 - Hardware reports: AMD and Intel on Windows and Linux, Linux on NVIDIA outside WSL, Macs other than an M2 Pro.
 - Model proposals that meet the switch rule: [Discussion #35](https://github.com/GabrieleLozupone/kokon/discussions/35).
 

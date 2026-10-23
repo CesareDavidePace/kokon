@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { urls } from "../lib/api";
 import { timeAgo } from "../lib/logic";
 import { native } from "../lib/native";
+import { isNarrow } from "../lib/platform";
 import { deleteProject, deleteProjects, newProject, renameProject, setState, switchProject, useStore } from "../lib/store";
 import { IconButton, NameField } from "./ui";
 import { KokonMark } from "./Welcome";
@@ -70,7 +71,14 @@ export function Sidebar() {
   };
 
   return (
-    <aside className={`sidebar ${selecting ? "selecting" : ""}`}>
+    <aside
+      className={`sidebar ${selecting ? "selecting" : ""}`}
+      // On a phone the drawer closes once you pick where to go.
+      onClick={(e) => {
+        const t = e.target as HTMLElement;
+        if (isNarrow() && !selecting && t.closest(".side-item, .proj") && !t.closest(".proj-rm, .name-field")) setState({ sidebar: false });
+      }}
+    >
       <div className="side-head" data-tauri-drag-region>
         <Wordmark />
         <IconButton title="Hide sidebar" onClick={() => setState({ sidebar: false })}>

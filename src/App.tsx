@@ -3,7 +3,7 @@ import { Star, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, configure, setSignedOutHandler } from "./lib/api";
 import { native } from "./lib/native";
-import { inBrowser } from "./lib/platform";
+import { inBrowser, isNarrow } from "./lib/platform";
 import {
   addExampleProjects, closeStarPrompt, dismissToast, getState, initStarPrompt, redoVersion, refreshLoras, refreshStatus, selectItem, setState, startEvents, startTour, submitComposer, toastError, toastInfo, undoVersion, useStore,
 } from "./lib/store";
@@ -326,6 +326,7 @@ export default function App() {
   return (
     <div className="app">
       {sidebar && !needsSetup && <Sidebar />}
+      {sidebar && !needsSetup && isNarrow() && <div className="sidebar-scrim" onClick={() => setState({ sidebar: false })} />}
       <div className="workspace">
         <TopBar />
         <div className="main">

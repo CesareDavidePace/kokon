@@ -5,6 +5,7 @@
 // every project is kept as ids in `projects` (persisted) and re-loaded from the service when
 // opened again.
 
+import { isNarrow } from "./platform";
 import { useSyncExternalStore } from "react";
 import { markFresh } from "../components/Cocoon";
 import { api, ApiError, setPrivateInputs, subscribe } from "./api";
@@ -269,6 +270,8 @@ async function hydrate(items: StoredItem[]): Promise<SessionItem[]> {
 }
 
 const loadSidebar = () => {
+  // On a phone the sidebar is a drawer over the page: start with it closed.
+  if (isNarrow()) return false;
   try {
     return localStorage.getItem(SIDEBAR_KEY) !== "0";
   } catch {

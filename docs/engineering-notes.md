@@ -150,9 +150,9 @@ reads its cached copy at start and fetches it again when older than 2.5 days
 (`engine_manifest.rs`). A valid release newer than the built-in pin (`catalog::ENGINE_TAG`)
 replaces the engine downloads, so the status reports `engine.update_needed` and What's new offers
 the download. Only `sd-kokon-<commit>-bin-*.zip` files of that tag in the fork are accepted, and a
-manifest with any bad entry is ignored as a whole. To ship an engine: run the workflow with
-`create_release`, test on Windows (CUDA + Vulkan), Linux and a Mac, then edit `engine.json` on master
-(digests: `gh release view <tag> -R GabrieleLozupone/stable-diffusion.cpp --json assets`).
+manifest with any bad entry is ignored as a whole. To ship an engine: push to the fork's `kokon`
+branch (a run where every job passes publishes the prerelease), test on Windows (CUDA + Vulkan),
+Linux and a Mac, then edit `engine.json` on master (digests: `gh release view <tag> -R GabrieleLozupone/stable-diffusion.cpp --json assets`).
 Since master-964 `--fa` and `--diffusion-conv-direct` are deprecated aliases (still accepted, so
 older engines keep working); convolutions default to `auto`, which turns implicit-GEMM direct
 convolutions on for CUDA (RTX 20xx+) and Vulkan, VAE included.

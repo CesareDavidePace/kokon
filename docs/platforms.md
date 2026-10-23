@@ -1,14 +1,14 @@
 # Platforms: engines, requirements and what is verified
 
 Kokon runs Qwen-Image 2.1 through stable-diffusion.cpp. Since 0.10 every platform uses Kokon's own
-build from one release of the fork ([kokon-992-dfaab76](https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/tag/kokon-992-dfaab76):
-upstream b13a482 plus text generation for Prompt+, branch `kokon`, workflow `kokon.yml`), so model
+build from one release of the fork ([kokon-1013-1814814](https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/tag/kokon-1013-1814814):
+upstream fd21ecf plus text generation for Prompt+, branch `kokon`, workflow `kokon.yml`), so model
 behaviour is identical everywhere; only speed and memory differ. The image side is upstream's code.
 `engine.json` (key `kokon`) can move every platform to a newer release without an app update; see
 the engine section of [engineering-notes.md](engineering-notes.md). Apps up to 0.9.4 used upstream's
 releases (Windows, macOS 26) and the `kokon-linux` / `kokon-macos` builds (Linux, macOS 15).
 
-| Platform | Engine (kokon-992-dfaab76) | Status |
+| Platform | Engine (kokon-1013-1814814) | Status |
 | --- | --- | --- |
 | Windows + NVIDIA | CUDA 12.8 build with CUDA graphs (runtime DLLs from upstream's `cudart-sd-bin-win-cu12-x64.zip`) | ✅ verified (RTX 5070 Ti 16 GB, RTX 5070 12 GB) |
 | Windows + AMD / Intel | Vulkan build (29 MB, uses the driver's Vulkan runtime) | 🟡 beta: works on NVIDIA (RTX 5070 Ti, 2K/20 steps, slower than CUDA); first AMD user report: RX 9060 XT 16 GB, 16:9 1080p Balanced ~80 s on the first image (incl. model load), no errors; Intel to verify |
@@ -31,7 +31,7 @@ budget (largest working size per quality level). Nothing is tuned per platform.
 
 ## Windows: AMD and Intel (Vulkan, beta)
 
-- Engine: `sd-kokon-dfaab76-bin-win-vulkan-x64.zip`, installed into `<sdcpp>\engine-vulkan`,
+- Engine: `sd-kokon-1814814-bin-win-vulkan-x64.zip`, installed into `<sdcpp>\engine-vulkan`,
   next to the CUDA build (switching engines needs no re-download).
 - Launch: `--backend vulkan0`, flash attention, q8_0 prefix cache. No SageAttention (CUDA only).
 - Requirements: a discrete GPU with **12 GB+ VRAM** (RX 6700 XT 12 GB / 7700 XT and up,

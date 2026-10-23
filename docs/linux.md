@@ -39,10 +39,10 @@ architectures (`61;70;75;80;86;89;90;100;120`, CUDA 12.8).
 **Since 0.10 (current):** one workflow builds every platform's engine.
 
 - Fork: `GabrieleLozupone/stable-diffusion.cpp`, branch **`kokon`** = upstream (`UPSTREAM_BASE`, now
-  b13a482) + the text-generation commits for Prompt+ + workflow **`kokon.yml`**. ggml comes from Kokon's
+  fd21ecf) + the text-generation commits for Prompt+ + workflow **`kokon.yml`**. ggml comes from Kokon's
   ggml fork (branch `sdcpp-cuda-graphs-opt-in`, CUDA graphs only for reused graphs).
-- Running `kokon.yml` with `create_release` publishes **`kokon-<n>-<commit>`** (now
-  [`kokon-992-dfaab76`](https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/tag/kokon-992-dfaab76)):
+- A push to `kokon` that passes every job of `kokon.yml` (or a manual run with `create_release`)
+  publishes **`kokon-<n>-<commit>`** (now [`kokon-1013-1814814`](https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/tag/kokon-1013-1814814)):
   `sd-kokon-<commit>-bin-Linux-Ubuntu-22.04-x86_64-{cuda12,vulkan,cpu,rocm-10.1.0}.zip`, the Windows and
   macOS 15 zips, `cudart-sd-bin-{linux,win}-cu12-x64.zip` and `SHA256SUMS.txt`. A published release is
   never replaced (rebuilds aren't byte-identical and the app pins SHA-256).
@@ -65,7 +65,7 @@ Upstream moves fast. Every platform follows the same release, so:
 1. `gh api repos/leejet/stable-diffusion.cpp/compare/<UPSTREAM_BASE>...master` and the upstream releases.
 2. In the fork clone: `git fetch upstream`, `git switch kokon`, rebase the Kokon commits onto the new
    upstream commit, set `UPSTREAM_BASE` in `kokon.yml`, push to `fork`.
-3. Run `kokon.yml` with `create_release`; it publishes `kokon-<n>-<new commit>`. Check the glibc report
+3. The push runs `kokon.yml`; when every job passes it publishes `kokon-<n>-<new commit>`. Check the glibc report
    in the build log.
 4. Test on Windows (CUDA + Vulkan), Linux (WSL: engine download, one image, one Prompt+ job) and a Mac.
 5. Ship it: either bump `ENGINE_TAG` and the pins in `catalog.rs` with an app release, or edit the

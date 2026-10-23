@@ -28,7 +28,7 @@ pub enum FileKind {
 /// Release of the engine builds below. Written into [`ENGINE_MARKER`] after extraction, so an
 /// engine of another release (files present, marker missing or different) is updated. A newer
 /// release published in the engine manifest replaces these at runtime ([`engine_tag`]).
-pub const ENGINE_TAG: &str = "kokon-992-dfaab76";
+pub const ENGINE_TAG: &str = "kokon-1013-1814814";
 /// File in an engine's folder naming the release it was extracted from.
 pub const ENGINE_MARKER: &str = "kokon-engine.txt";
 
@@ -118,7 +118,7 @@ impl Download {
 /// graphs (ggml from Kokon's fork). Linux builds on Ubuntu 22.04 (smoke-tested on Ubuntu
 /// 22.04/24.04, Debian 12, Fedora 40/42); macOS for 15.0 (upstream's Mac zip needs macOS 26).
 /// Sizes and SHA-256 from GitHub's asset digests.
-const KOKON_RELEASE: &str = "https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/tag/kokon-992-dfaab76";
+const KOKON_RELEASE: &str = "https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/tag/kokon-1013-1814814";
 /// Upstream release the Windows CUDA runtime comes from (CUDA 12.8.1, the version the engines
 /// are built with).
 #[cfg(not(target_os = "linux"))]
@@ -133,12 +133,12 @@ pub const ENGINE_CUDA: Download = Download {
     id: "engine_cuda",
     label: "stable-diffusion.cpp (CUDA 12)",
     kind: FileKind::Engine,
-    url: "https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/download/kokon-992-dfaab76/sd-kokon-dfaab76-bin-win-cuda12-x64.zip",
+    url: "https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/download/kokon-1013-1814814/sd-kokon-1814814-bin-win-cuda12-x64.zip",
     fallback_urls: &[],
     page: KOKON_RELEASE,
     size: WIN_CUDA_SIZE,
     sha256: WIN_CUDA_SHA256,
-    dest: "sd-kokon-dfaab76-bin-win-cuda12-x64.zip",
+    dest: "sd-kokon-1814814-bin-win-cuda12-x64.zip",
     provides: &["sd-server.exe", "stable-diffusion.dll", "ggml-cuda.dll"],
     engine_tag: Some(ENGINE_TAG),
 };
@@ -167,12 +167,12 @@ pub const ENGINE_VULKAN: Download = Download {
     id: "engine_vulkan",
     label: "stable-diffusion.cpp (Vulkan)",
     kind: FileKind::Engine,
-    url: "https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/download/kokon-992-dfaab76/sd-kokon-dfaab76-bin-win-vulkan-x64.zip",
+    url: "https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/download/kokon-1013-1814814/sd-kokon-1814814-bin-win-vulkan-x64.zip",
     fallback_urls: &[],
     page: KOKON_RELEASE,
     size: WIN_VULKAN_SIZE,
     sha256: WIN_VULKAN_SHA256,
-    dest: "engine-vulkan/sd-kokon-dfaab76-bin-win-vulkan-x64.zip",
+    dest: "engine-vulkan/sd-kokon-1814814-bin-win-vulkan-x64.zip",
     provides: &["engine-vulkan/sd-server.exe", "engine-vulkan/stable-diffusion.dll", "engine-vulkan/ggml-vulkan.dll"],
     engine_tag: Some(ENGINE_TAG),
 };
@@ -184,12 +184,12 @@ pub const ENGINE_CUDA: Download = Download {
     id: "engine_cuda",
     label: "stable-diffusion.cpp (CUDA 12)",
     kind: FileKind::Engine,
-    url: "https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/download/kokon-992-dfaab76/sd-kokon-dfaab76-bin-Linux-Ubuntu-22.04-x86_64-cuda12.zip",
+    url: "https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/download/kokon-1013-1814814/sd-kokon-1814814-bin-Linux-Ubuntu-22.04-x86_64-cuda12.zip",
     fallback_urls: &[],
     page: KOKON_RELEASE,
     size: LINUX_CUDA_SIZE,
     sha256: LINUX_CUDA_SHA256,
-    dest: "sd-kokon-dfaab76-bin-Linux-Ubuntu-22.04-x86_64-cuda12.zip",
+    dest: "sd-kokon-1814814-bin-Linux-Ubuntu-22.04-x86_64-cuda12.zip",
     provides: &["sd-server", "libstable-diffusion.so", "libggml-cuda.so"],
     engine_tag: Some(ENGINE_TAG),
 };
@@ -216,12 +216,12 @@ pub const ENGINE_VULKAN: Download = Download {
     id: "engine_vulkan",
     label: "stable-diffusion.cpp (Vulkan)",
     kind: FileKind::Engine,
-    url: "https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/download/kokon-992-dfaab76/sd-kokon-dfaab76-bin-Linux-Ubuntu-22.04-x86_64-vulkan.zip",
+    url: "https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/download/kokon-1013-1814814/sd-kokon-1814814-bin-Linux-Ubuntu-22.04-x86_64-vulkan.zip",
     fallback_urls: &[],
     page: KOKON_RELEASE,
     size: LINUX_VULKAN_SIZE,
     sha256: LINUX_VULKAN_SHA256,
-    dest: "engine-vulkan/sd-kokon-dfaab76-bin-Linux-Ubuntu-22.04-x86_64-vulkan.zip",
+    dest: "engine-vulkan/sd-kokon-1814814-bin-Linux-Ubuntu-22.04-x86_64-vulkan.zip",
     provides: &["engine-vulkan/sd-server", "engine-vulkan/libstable-diffusion.so", "engine-vulkan/libggml-vulkan.so"],
     engine_tag: Some(ENGINE_TAG),
 };
@@ -232,35 +232,35 @@ pub const ENGINE_METAL: Download = Download {
     id: "engine_metal",
     label: "stable-diffusion.cpp (Metal)",
     kind: FileKind::Engine,
-    url: "https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/download/kokon-992-dfaab76/sd-kokon-dfaab76-bin-Darwin-macOS-15.0-universal.zip",
+    url: "https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/download/kokon-1013-1814814/sd-kokon-1814814-bin-Darwin-macOS-15.0-universal.zip",
     fallback_urls: &[],
     page: KOKON_RELEASE,
     size: MACOS_METAL_SIZE,
     sha256: MACOS_METAL_SHA256,
-    dest: "engine-metal/sd-kokon-dfaab76-bin-Darwin-macOS-15.0-universal.zip",
+    dest: "engine-metal/sd-kokon-1814814-bin-Darwin-macOS-15.0-universal.zip",
     provides: &["engine-metal/sd-server", "engine-metal/libstable-diffusion.dylib"],
     engine_tag: Some(ENGINE_TAG),
 };
 
-// From the kokon-992-dfaab76 release (GitHub asset digests, run 39228893955).
+// From the kokon-1013-1814814 release (GitHub asset digests, run 39850202406).
 #[cfg(not(target_os = "linux"))]
-const WIN_CUDA_SIZE: u64 = 343_689_852;
+const WIN_CUDA_SIZE: u64 = 343_854_810;
 #[cfg(not(target_os = "linux"))]
-const WIN_CUDA_SHA256: &str = "d4655d52d28cc8c60e01d11b6ef443671befad6731d68ff7bf75e56b5c324a10";
+const WIN_CUDA_SHA256: &str = "5ef1a5306c280e871991893a41d0f8af853a3394b9a639d554f9c0734ee0ad35";
 #[cfg(not(target_os = "linux"))]
-const WIN_VULKAN_SIZE: u64 = 29_407_760;
+const WIN_VULKAN_SIZE: u64 = 29_559_595;
 #[cfg(not(target_os = "linux"))]
-const WIN_VULKAN_SHA256: &str = "856310e71bec67a3323013d07af0cff48a73b915e2a95fe485070e9bfb8303f4";
+const WIN_VULKAN_SHA256: &str = "29427c56a00f35d8f61180a6ff352563dd3a726b7d0b9b6f8732e87f876511eb";
 #[cfg(target_os = "linux")]
-const LINUX_CUDA_SIZE: u64 = 352_447_322;
+const LINUX_CUDA_SIZE: u64 = 352_747_528;
 #[cfg(target_os = "linux")]
-const LINUX_CUDA_SHA256: &str = "6977f8d57acdc551bdaf3471aeca3076989717f16a8464ea0bfefbccab2adc65";
+const LINUX_CUDA_SHA256: &str = "a7a712f86f5d605883d2496dacf283009d00d2d5880b4b8b1cb8cf9e595bb62f";
 #[cfg(target_os = "linux")]
-const LINUX_VULKAN_SIZE: u64 = 37_904_697;
+const LINUX_VULKAN_SIZE: u64 = 38_181_852;
 #[cfg(target_os = "linux")]
-const LINUX_VULKAN_SHA256: &str = "3a45ef1f2c4ea128d03edbcf162017fb1b6ff8bb2a8997a957a66879ba8b3842";
-const MACOS_METAL_SIZE: u64 = 36_587_314;
-const MACOS_METAL_SHA256: &str = "af7e6b376cca3cf86fffafc1efb48ddfc480bbf34364f6d648a3388dc7f1b07d";
+const LINUX_VULKAN_SHA256: &str = "9c085070da4ea07356f92bddfb5882133de40ef36de30d8e8d6ddde064f33890";
+const MACOS_METAL_SIZE: u64 = 36_981_824;
+const MACOS_METAL_SHA256: &str = "0cba039a1ce063daa977e3ea927dab0a0bf1414002e74e80902afdf0ef6bb274";
 
 /// The engine files of a backend, in download order: the engine manifest's release when one
 /// newer than the built-in pins was applied ([`apply_engine_release`]), else the pins.
@@ -323,7 +323,7 @@ pub struct EngineManifest {
     pub kokon: Option<KokonEngines>,
 }
 
-/// Build number of a Kokon engine release tag (`kokon-992-dfaab76` -> 992).
+/// Build number of a Kokon engine release tag (`kokon-1013-1814814` -> 1013).
 pub fn release_number(tag: &str) -> Option<u32> {
     tag.strip_prefix("kokon-")?.split('-').next()?.parse().ok()
 }
@@ -833,16 +833,16 @@ mod tests {
     #[test]
     fn engine_manifest_overrides_only_newer_releases() {
         let _guard = ENGINE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        assert_eq!(release_number(ENGINE_TAG), Some(992));
-        assert_eq!(apply_engine_release(&manifest(992), "0.10.0"), Ok(false), "same as built in");
+        assert_eq!(release_number(ENGINE_TAG), Some(1013));
+        assert_eq!(apply_engine_release(&manifest(1013), "0.10.0"), Ok(false), "same as built in");
         assert_eq!(engine_tag(), ENGINE_TAG);
-        assert_eq!(apply_engine_release(&manifest(1000), "0.9.4"), Ok(false), "too old an app");
-        assert_eq!(apply_engine_release(&manifest(1000), "0.10.0"), Ok(true));
-        assert_eq!(engine_tag(), "kokon-1000-abcdef0");
+        assert_eq!(apply_engine_release(&manifest(1100), "0.9.4"), Ok(false), "too old an app");
+        assert_eq!(apply_engine_release(&manifest(1100), "0.10.0"), Ok(true));
+        assert_eq!(engine_tag(), "kokon-1100-abcdef0");
         let cuda = &engine_downloads(GpuBackend::Cuda);
-        assert_eq!(cuda[0].engine_tag, Some("kokon-1000-abcdef0"));
+        assert_eq!(cuda[0].engine_tag, Some("kokon-1100-abcdef0"));
         assert_eq!(cuda[0].provides, ENGINE_CUDA.provides);
-        assert!(cuda[0].page.ends_with("/kokon-1000-abcdef0"));
+        assert!(cuda[0].page.ends_with("/kokon-1100-abcdef0"));
         assert_eq!(cuda[1].id, "cuda_runtime");
         let vulkan = engine_downloads(GpuBackend::Vulkan)[0];
         if cfg!(target_os = "linux") {
@@ -854,12 +854,12 @@ mod tests {
         }
         assert_eq!(engine_downloads(GpuBackend::Metal)[0].dest, "engine-metal/sd-kokon-abcdef0-bin-Darwin-macOS-15.0-universal.zip");
         // Only that release's downloads in the fork, with a real hash; any bad build rejects it all.
-        assert!(apply_engine_release(&edit(1001, |k| k.win_cuda.url = "https://example.com/sd.zip".into()), "0.10.0").is_err());
-        assert!(apply_engine_release(&edit(1001, |k| k.macos.sha256 = "xyz".into()), "0.10.0").is_err());
-        let other_commit = "https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/download/kokon-1001-abcdef0/sd-kokon-1234567-bin-win-vulkan-x64.zip";
-        assert!(apply_engine_release(&edit(1001, |k| k.linux_vulkan.url = other_commit.into()), "0.10.0").is_err(), "another commit's build");
-        assert!(apply_engine_release(&edit(1001, |k| k.tag = "master-1001-abcdef0".into()), "0.10.0").is_err());
-        assert_eq!(engine_tag(), "kokon-1000-abcdef0", "a bad manifest keeps the last good release");
+        assert!(apply_engine_release(&edit(1101, |k| k.win_cuda.url = "https://example.com/sd.zip".into()), "0.10.0").is_err());
+        assert!(apply_engine_release(&edit(1101, |k| k.macos.sha256 = "xyz".into()), "0.10.0").is_err());
+        let other_commit = "https://github.com/GabrieleLozupone/stable-diffusion.cpp/releases/download/kokon-1101-abcdef0/sd-kokon-1234567-bin-win-vulkan-x64.zip";
+        assert!(apply_engine_release(&edit(1101, |k| k.linux_vulkan.url = other_commit.into()), "0.10.0").is_err(), "another commit's build");
+        assert!(apply_engine_release(&edit(1101, |k| k.tag = "master-1101-abcdef0".into()), "0.10.0").is_err());
+        assert_eq!(engine_tag(), "kokon-1100-abcdef0", "a bad manifest keeps the last good release");
         // An app that pins a newer engine drops an older manifest release.
         assert_eq!(apply_engine_release(&manifest(980), "0.10.0"), Ok(false));
         assert_eq!(engine_tag(), ENGINE_TAG);

@@ -7,11 +7,13 @@ import { SIZES } from "./fixtures";
 const IDS = Object.keys(SIZES);
 const SRCS = [...IDS.map((id) => staticFile(`img/${id}.jpg`)), ...IDS.map((id) => staticFile(`thumb/${id}.jpg`))];
 
-export function Preload() {
+/** `extra`: more images to hold the first frame for (paths under public/). */
+export function Preload({ extra = [] }: { extra?: string[] }) {
+  const srcs = [...SRCS, ...extra.map((p) => staticFile(p))];
   const [handle] = useState(() => delayRender("Loading fonts and images"));
   useEffect(() => {
     const fonts = Promise.all(["400", "500", "600", "700"].map((w) => document.fonts.load(`${w} 16px "Inter Variable"`)));
-    const images = SRCS.map(
+    const images = srcs.map(
       (src) =>
         new Promise<void>((resolve) => {
           const img = new Image();
@@ -24,7 +26,7 @@ export function Preload() {
   }, [handle]);
   return (
     <div style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", opacity: 0.001, pointerEvents: "none" }}>
-      {SRCS.map((s) => (
+      {srcs.map((s) => (
         <img key={s} src={s} alt="" style={{ width: 64, height: 64 }} />
       ))}
     </div>

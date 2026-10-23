@@ -1,6 +1,6 @@
 """The music of the "Kokon 0.10" update video, cut from an ACE-Step take (gen_music.py update).
 
-    D:/AI/tts/.venv/Scripts/python make_update_music.py [1|1b|3]   -> ../video/public/<out>
+    D:/AI/tts/.venv/Scripts/python make_update_music.py [1|1b|3|usecases|usecases-house4]   -> ../video/public/<out>
 
 Both takes are 118 BPM (beats every 0.50849 s, grids measured with librosa). The video needs the
 take's drop on its beat 26 (the image hatching) and about 12 bars after it, then a stop for the
@@ -13,6 +13,14 @@ join is on a bar line with a 10 ms crossfade.
   the drop at 24.44 s (bar 12), 4 bars, an ending bar. Two beats of silence, then bars 6-11 (the
   break under the logo forming), the drop, bars 12-15, the drop again (on the LoRA part), bars
   13-15 and the ending bar.
+
+The "use cases" video uses it too (plan "usecases", ../video/public/music-usecases.m4a): take
+house4-cover-20261023-015102-4 (gen_music.py house4-cover, a close version of the launch film's
+house-4), 118 BPM in 8-bar phrases: a pause in bar 6, groove 7-14 and 15-22, a lighter part without
+hats in 23-28, a build in 29-30, the drop 31-38, the ending 39-41. The video plays the pause under
+"Why Kokon?" and the groove from "Private" (bars 6-14), the lighter part under its serious block
+(23-28, then 23-30, so the build ends it and the drop lands on the flamingo cut), the drop (31-38,
+33-38) and the ending (39-43).
 """
 import subprocess
 import sys
@@ -22,8 +30,8 @@ import numpy as np
 import soundfile as sf
 
 HERE = Path(__file__).parent
-BEAT = 60 / 118
-BAR = 4 * BEAT
+# The 0.10 takes' grid (118 BPM); a plan with "bpm" uses its own.
+BAR = 4 * 60 / 118
 FADE = 0.010
 
 PLANS = {
@@ -35,6 +43,11 @@ PLANS = {
     # longer. Stop at 39.64 s.
     "1b": {"take": "update-20261020-175836-1.wav", "out": "music-0.10-long.m4a", "first": 16.252 - 8 * BAR,
            "lead": 0, "bars": [(1.5, 15), (10, 15), (15, 16)], "tail": 3.5},
+    "usecases": {"take": "house4-cover-20261023-015102-4.wav", "out": "music-usecases.m4a", "bpm": 118, "first": 1.534,
+                 "lead": 0, "bars": [(6, 15), (23, 29), (23, 31), (31, 39), (33, 39), (39, 44)], "tail": 0},
+    # The same cut on the launch film's own house-4 (its bars sit one later): music-usecases-house4.m4a.
+    "usecases-house4": {"take": "C:/AI/qwen-local-studio/marketing/audio/takes/house-4.wav", "out": "music-usecases-house4.m4a", "bpm": 118,
+                        "first": 0.013, "lead": 0, "bars": [(7, 16), (24, 30), (24, 32), (32, 40), (34, 40), (40, 45)], "tail": 0},
     3: {"take": "update-20261020-175836-3.wav", "out": "music-0.10-take3.m4a", "first": 0.0287,
         "lead": 2, "bars": [(6, 16), (12, 16), (13, 17)], "tail": 2.5},
 }
@@ -42,10 +55,12 @@ PLANS = {
 
 def main(n: int | str) -> None:
     plan = PLANS[n]
+    beat = 60 / plan.get("bpm", 118)
+    bar_len = 4 * beat
     y, sr = sf.read(HERE / "takes" / plan["take"], dtype="float32", always_2d=True)
     at = lambda t: int(round(t * sr))
-    bar = lambda i: plan["first"] + i * BAR
-    parts = [np.zeros((at(plan["lead"] * BEAT), y.shape[1]), np.float32)] if plan["lead"] else []
+    bar = lambda i: plan["first"] + i * bar_len
+    parts = [np.zeros((at(plan["lead"] * beat), y.shape[1]), np.float32)] if plan["lead"] else []
     last = len(plan["bars"]) - 1
     for k, (a, b) in enumerate(plan["bars"]):
         end = bar(b) + (plan["tail"] if k == last else 0)

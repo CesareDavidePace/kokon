@@ -50,6 +50,34 @@ D:/AI/tts/.venv/Scripts/python audio/gen_voice.py build --from audio/voice/updat
 npx remotion render Update010 out/kokon-0.10-update.mp4            # in video/, 1920×1080
 ```
 
+**"Use cases" video** (`UseCases`, ~87 s, English, narrated, for the site and YouTube): it opens
+on why Kokon (private, unlimited), then thirteen everyday edits (photobombers removed, a blink
+fixed, an old photo restored and coloured, a missing person added, a haircut and a jacket tried on,
+a room tidied, a home redone, a headshot, an invitation with text), each shown as the before photo,
+the prompt typed into the prompt box (the app's `.composer` markup and styles), a wipe to the after
+landing on the spoken word, and a caption. Every image was made with Kokon (`public/img/usecases/`,
+web copies of `%USERPROFILE%\Pictures\Kokon\use-cases-2k`); the video says so on screen. No camera
+moves: hard cuts on the beat, wipes and type. Its clock is `src/app/timelineUseCases.ts` (beat
+lengths, moods, where each voice line starts, the word each wipe lands on), its scene
+`src/scenes/UseCases.tsx`, its script `audio/voiceover-usecases.md`: one narrator with a tone per
+section, the launch voice on Chatterbox, and Chatterbox Turbo cloned from it for the playful lines
+(with its `[chuckle]` and `[happy]` tags). The music is one ACE-Step track with a calm piano part,
+cut on bar lines so that part covers the serious beats and the groove returns on the flamingo. The
+YouTube thumbnail is `UseCasesThumb`.
+
+```powershell
+D:/AI/tts/.venv/Scripts/python audio/gen_voice.py audition-usecases --seeds 4   # voice/usecases/audition-<stamp>
+D:/AI/tts/.venv/Scripts/python audio/gen_voice.py build-usecases --from audio/voice/usecases/audition-<stamp> --pick 1.0:14,...
+python audio/gen_music.py usecases                                               # takes/usecases-<stamp>-N.wav (ACE-Step API running)
+D:/AI/tts/.venv/Scripts/python audio/make_update_music.py usecases              # video/public/music-usecases.m4a
+python audio/make_sfx.py pop swipe deep                                          # only this video's effects
+npx remotion render UseCases out/usecases-1.mp4                                  # in video/, 1920×1080
+npx remotion still UseCasesThumb out/usecases-thumb.png                          # 1280×720
+```
+
+The word each wipe lands on comes from `src/app/voice-usecases-words.json` (Whisper word times of
+the built lines, whisper-small.en): regenerate it after a new build.
+
 `src/app/timeline.ts` is the film's clock: scene lengths, the frame where each voice-over sentence
 plays, the frames of the actions the voice names (Remove, Add, the montage cuts) and the music's
 beat grid. Retime there and pictures, voice and music move together.

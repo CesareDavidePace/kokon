@@ -186,7 +186,43 @@ def riser(sec: float = 1.6) -> np.ndarray:
     return x * np.linspace(0.2, 1, x.size) ** 1.5
 
 
+def pop() -> np.ndarray:
+    """A soft, round pop: a caption landing. A short pitch drop on a sine, a breath of air."""
+    x = t(0.18)
+    f = 330 + 520 * np.exp(-x / 0.018)
+    body = np.sin(2 * np.pi * np.cumsum(f) / SR) * env(x.size, 0.001, 0.04)
+    air = band(noise(0.18), 1500, 5000) * env(x.size, 0.0005, 0.008) * 0.25
+    return fade(body + air, 0.0005, 0.04)
+
+
+def swipe() -> np.ndarray:
+    """A short, light whoosh panned left to right: a before/after wipe."""
+    x = swish(0.42, 700, 2500, 2500, 8000)
+    pan = np.linspace(0.1, 0.9, x.size)
+    st = room(x, 0.15)[: x.size]
+    return np.stack([st[:, 0] * np.cos(pan * np.pi / 2) * 1.3, st[:, 1] * np.sin(pan * np.pi / 2) * 1.3], axis=1)
+
+
+def deep() -> np.ndarray:
+    """A low, soft hit with a long dark tail, under the privacy line."""
+    x = t(3.2)
+    f = 41 + 30 * np.exp(-x / 0.08)
+    sub = np.sin(2 * np.pi * np.cumsum(f) / SR) * env(x.size, 0.008, 1.1)
+    body = low(noise(3.2), 600) * env(x.size, 0.004, 0.25) * 0.3
+    return fade(sub + body, 0.002, 0.6)
+
+
+# The "use cases" video's effects; write only these with:  python make_sfx.py pop swipe deep
+EXTRA = {"pop": (pop, -8), "swipe": (swipe, -8), "deep": (deep, -4)}
+
 if __name__ == "__main__":
+    import sys
+
+    if sys.argv[1:]:
+        for name in sys.argv[1:]:
+            make, peak = EXTRA[name]
+            save(name, make(), peak)
+        raise SystemExit
     save("click", click(), -6)
     save("typing", typing(), -6)
     save("send", send(), -6)

@@ -17,6 +17,10 @@ const LEVEL = {
   brush: 0.16,
   hit: 0.55,
   riser: 0.22,
+  // the "use cases" video
+  pop: 0.2,
+  swipe: 0.2,
+  deep: 0.3,
 } as const;
 /** Music level under the voice (about -8 dB), and how fast it dips and comes back. */
 const DUCK = { level: 0.4, attack: 8, release: 16 };
@@ -84,7 +88,8 @@ function duck(f: number, cues: Cue[]): number {
 }
 
 /** Music for the whole film, under the voice (`cues`), fading out over the last `fadeOut` frames.
- * `src` and `from` (seconds into the file) pick the track and where it starts. */
-export function Music({ frames, fadeOut = 45, cues = CUES, src = "music.m4a", from = 0 }: { frames: number; fadeOut?: number; cues?: Cue[]; src?: string; from?: number }) {
-  return <Html5Audio src={staticFile(src)} trimBefore={Math.round(from * FPS)} volume={(f) => LEVEL.music * duck(f, cues) * Math.min(1, Math.max(0, (frames - f) / fadeOut))} />;
+ * `src` and `from` (seconds into the file) pick the track and where it starts; `gain` shapes its level
+ * over the video. */
+export function Music({ frames, fadeOut = 45, cues = CUES, src = "music.m4a", from = 0, gain }: { frames: number; fadeOut?: number; cues?: Cue[]; src?: string; from?: number; gain?: (f: number) => number }) {
+  return <Html5Audio src={staticFile(src)} trimBefore={Math.round(from * FPS)} volume={(f) => LEVEL.music * (gain ? gain(f) : 1) * duck(f, cues) * Math.min(1, Math.max(0, (frames - f) / fadeOut))} />;
 }

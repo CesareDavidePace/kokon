@@ -292,7 +292,9 @@ svg { display: block; flex: none; }
 .login .input { width: 100%; box-sizing: border-box; }
 .login .btn { width: 100%; justify-content: center; }
 .login-error { color: var(--text); font-weight: 500; }
-.remote-url { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 15px; color: var(--text); user-select: all; }
+.remote-open { align-items: flex-start; gap: 16px; }
+.qr { width: 148px; height: 148px; flex: none; border-radius: 10px; }
+.remote-url { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; color: var(--text); user-select: all; }
 
 /* version timeline: a line per image and the versions made from it; arcs join versions made
    from earlier ones or from several */

@@ -2,8 +2,15 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Kokon</title>
+    <!-- In a browser on another device: the tab icon, and Kokon on the home screen like an app
+         (Settings → Other devices shows how). The desktop app ignores these. -->
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Kokon" />
     <!-- Painted before any JavaScript runs, so the window never shows an empty white page
          (the dev server can take seconds to compile; the web view itself needs a moment).
          React replaces #root's content when the app mounts. Colors match styles.css. -->

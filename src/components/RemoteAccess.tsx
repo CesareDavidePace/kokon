@@ -3,14 +3,31 @@
 // opens the network port only then (crates/qls-service/src/remote.rs).
 
 import { Copy, ExternalLink } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { encode } from "uqr";
 import { api, type RemoteStatus } from "../lib/api";
 import { native } from "../lib/native";
 import { toastError, toastInfo } from "../lib/store";
 import { Switch } from "./ui";
 
 const GUIDE_URL = "https://github.com/GabrieleLozupone/kokon/blob/master/docs/remote-access.md";
+
+/** The address as a QR code for the phone's camera: black on white in both themes, so every scanner reads it. */
+function QrCode({ text }: { text: string }) {
+  const { path, size } = useMemo(() => {
+    const qr = encode(text, { border: 2 });
+    let d = "";
+    qr.data.forEach((row, y) => row.forEach((on, x) => on && (d += `M${x} ${y}h1v1h-1z`)));
+    return { path: d, size: qr.size };
+  }, [text]);
+  return (
+    <svg className="qr" viewBox={`0 0 ${size} ${size}`} role="img" aria-label={`QR code for ${text}`} shapeRendering="crispEdges">
+      <rect width={size} height={size} fill="#fff" />
+      <path d={path} fill="#000" />
+    </svg>
+  );
+}
 
 function PasswordForm({ status, onSaved }: { status: RemoteStatus; onSaved: (s: RemoteStatus) => void }) {
   const [password, setPassword] = useState("");
@@ -98,14 +115,18 @@ export function RemoteAccess() {
           </div>
           {st.forced && <span className="muted">Turned on for this run by kokon-service --remote.</span>}
           {st.listening && st.url && (
-            <div className="setting-card">
+            <div className="setting-card remote-open">
+              <QrCode text={st.url} />
               <div className="setting-card-text">
-                <strong>Open this address on the other device</strong>
-                <span className="remote-url">{st.url}</span>
+                <strong>Scan it with your phone's camera</strong>
+                <span className="muted">
+                  Or open <span className="remote-url">{st.url}</span> on the other device. To keep Kokon on the home screen like an app: on iPhone, Share → Add to Home Screen; on
+                  Android, the browser's menu → Add to Home screen.
+                </span>
+                <button className="btn" style={{ alignSelf: "flex-start", marginTop: 6 }} onClick={() => writeText(st.url!).then(() => toastInfo("Address copied"), toastError)}>
+                  <Copy size={14} /> Copy address
+                </button>
               </div>
-              <button className="btn" onClick={() => writeText(st.url!).then(() => toastInfo("Address copied"), toastError)}>
-                <Copy size={14} /> Copy
-              </button>
             </div>
           )}
           {st.listening && !st.url && <span className="muted">On, at port {st.port} of this computer's network address.</span>}

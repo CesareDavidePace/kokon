@@ -777,6 +777,15 @@ impl AppConfig {
         }
     }
 
+    /// `--vae-tile-size` the engine runs with: the setting, at most
+    /// [`crate::planner::VULKAN_VAE_TILE`] on Vulkan; 0 = no server-side tiling.
+    pub fn server_vae_tile_size(&self) -> u32 {
+        match self.gpu_backend {
+            GpuBackend::Vulkan => self.vae_tile_size.min(crate::planner::VULKAN_VAE_TILE),
+            _ => self.vae_tile_size,
+        }
+    }
+
     /// SageAttention is requested and the engine and card support it.
     pub fn uses_sage_attention(&self) -> bool {
         self.sage_attention && !self.sage_unsupported && self.gpu_backend == GpuBackend::Cuda

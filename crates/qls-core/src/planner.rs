@@ -384,6 +384,8 @@ pub struct PlanInputs {
     pub upscale_tile: u32,
     /// The Metal engine (Apple Silicon): much slower upscaler.
     pub metal: bool,
+    /// The Vulkan engine: every decode in [`VULKAN_VAE_TILE`] tiles.
+    pub vulkan: bool,
     /// The server was launched with `--vae-tiling` (tiles every decode by default).
     pub server_vae_tiling: bool,
     /// SageAttention is enabled (faster steps; used for estimates only).
@@ -628,6 +630,12 @@ pub fn max_untiled_vae_area(vram_total_mib: Option<u64>) -> u64 {
         }
     }
 }
+/// Decode tile side on Vulkan, whatever the card's memory. AMD's driver allows at most 2 GiB per
+/// buffer, and a decode's largest tensor passes that at about 0.5 MP per tile: an RX 9070 XT
+/// logged "Requested buffer size exceeds device buffer size limit" with 0.55-0.72 MP tiles and
+/// decoded 1-1.4 MP in 24-57 s; an RX 6700 XT took 71 s for 1 MP with 768 px tiles and 6 s with
+/// 256 px ones (2026-10-23). 512 px (0.26 MP) keeps about half of the limit free.
+pub const VULKAN_VAE_TILE: u32 = 512;
 /// Overlap the server is launched with (`--vae-tile-overlap`), also sent with per-job tiles.
 pub const VAE_TILE_OVERLAP: f32 = 0.125;
 /// Pixels per latent of Qwen-Image 2.1's VAE.
@@ -1153,16 +1161,21 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
     };
     // The server's `--vae-tiling` is only a fallback on large GPUs: a decode within the
     // budget is sent with tiling turned off (only an explicit choice overrides).
-    let vae_tiling = adv.vae_tiling.unwrap_or(server_tiling || auto_tiling);
-    if vae_tiling && adv.vae_tiling.is_none() && !inputs.server_vae_tiling && !quick_upscale {
+    // Vulkan tiles every decode (`VULKAN_VAE_TILE`).
+    let vae_tiling = adv.vae_tiling.unwrap_or(inputs.vulkan || server_tiling || auto_tiling);
+    if vae_tiling && adv.vae_tiling.is_none() && !inputs.server_vae_tiling && !inputs.vulkan && !quick_upscale {
         optimized = true;
         notes.push("Memory optimization enabled for this size.".into());
     }
     // Large discrete GPUs: decode tiles shaped to the image (fewer, larger tiles); others keep
     // the server's square tiles.
     let large_gpu = !inputs.unified_memory && inputs.vram_total_mib.map(|m| m as f64 / 1024.0 >= 15.0).unwrap_or(false);
-    let vae_tile = (vae_tiling && large_gpu && !quick_upscale && total_area > LARGE_GPU_VAE_TILE_AREA)
-        .then(|| vae_decode_tile(working.canvas, LARGE_GPU_VAE_TILE_AREA));
+    let vae_tile = if inputs.vulkan {
+        (vae_tiling && !quick_upscale).then_some((VULKAN_VAE_TILE, VULKAN_VAE_TILE))
+    } else {
+        (vae_tiling && large_gpu && !quick_upscale && total_area > LARGE_GPU_VAE_TILE_AREA)
+            .then(|| vae_decode_tile(working.canvas, LARGE_GPU_VAE_TILE_AREA))
+    };
     if (working.content.area() as f64) < output.area() as f64 * 0.98 && matches!(mode, ResolvedMode::Generate | ResolvedMode::Edit | ResolvedMode::MultiReference | ResolvedMode::Compose) {
         notes.push(format!(
             "Rendered at {}×{}, then enlarged to {}×{} with {}.",
@@ -1956,6 +1969,26 @@ mod tests {
         assert!(p.vae_tile.is_none(), "12 GB card: the server's tiles");
         r.advanced.vae_tiling = Some(false);
         assert!(plan(&r, &big, &rec()).unwrap().vae_tile.is_none(), "tiling off");
+    }
+
+    #[test]
+    fn vulkan_decodes_every_size_in_small_tiles() {
+        let t = Some((VULKAN_VAE_TILE, VULKAN_VAE_TILE));
+        for (quality, vram) in [(Quality::Fast, 12_282), (Quality::Fast, 16_303), (Quality::Quality, 16_303), (Quality::Quality, 24_560), (Quality::Fast, 32_607)] {
+            let mut r = req("a lighthouse at dusk");
+            r.quality = quality;
+            for server_vae_tiling in [true, false] {
+                let i = PlanInputs { vram_total_mib: Some(vram), vulkan: true, server_vae_tiling, ..inputs(&[]) };
+                let p = plan(&r, &i, &rec()).unwrap();
+                assert!(p.vae_tiling, "{quality:?} {vram}");
+                assert_eq!(p.vae_tile, t, "{quality:?} {vram}: untiled or 1 MP tiles pass AMD's 2 GiB buffer limit");
+                assert!(!p.notes.iter().any(|n| n.contains("Memory optimization")), "not a memory note on Vulkan");
+            }
+        }
+        let mut r = req("a lighthouse at dusk");
+        r.advanced.vae_tiling = Some(false);
+        let i = PlanInputs { vram_total_mib: Some(16_303), vulkan: true, ..inputs(&[]) };
+        assert!(plan(&r, &i, &rec()).unwrap().vae_tile.is_none(), "an explicit off is kept");
     }
 
     #[test]

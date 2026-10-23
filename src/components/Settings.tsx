@@ -634,6 +634,7 @@ export function Settings() {
                 <span>VAE tile size (px, 0 = off)</span>
                 <input className="input" type="number" min={0} max={2048} step={128} style={{ width: 90 }} value={cfg.vaeTileSize} onChange={(e) => set({ vaeTileSize: Math.max(0, Math.round(Number(e.target.value) || 0)) })} />
               </label>
+              {cfg.gpuBackend === "vulkan" && <span className="muted" style={{ marginTop: -10 }}>With Vulkan, images are decoded in tiles of 512 px at most: larger tiles exceed the driver's buffer limit on AMD cards and get much slower.</span>}
               <div className="field">
                 <span>Edit prefix cache</span>
                 <Seg<string>

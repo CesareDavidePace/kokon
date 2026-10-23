@@ -214,7 +214,8 @@ pub fn plan_inputs(cfg: &AppConfig, image_sizes: Vec<Size>, mask: Option<(Size, 
         upscale_tile: crate::planner::upscale_tile(cfg.upscale_tile_size, vram_total_mib, &cfg.upscaler().map(|u| u.0).unwrap_or_default()),
         upscaler: cfg.upscaler().map(|u| u.0),
         metal: cfg.gpu_backend == crate::config::GpuBackend::Metal,
-        server_vae_tiling: cfg.vae_tile_size > 0,
+        vulkan: cfg.gpu_backend == crate::config::GpuBackend::Vulkan,
+        server_vae_tiling: cfg.server_vae_tile_size() > 0,
         sage_attention: cfg.uses_sage_attention(),
         speed_factor: None,
         hide_uncalibrated: !crate::speed::trust_uncalibrated(cfg),
@@ -1037,7 +1038,7 @@ impl Engine {
             let plan2 = plan.clone();
             let prompt = request.prompt.clone();
             let mask_img: Option<GrayImage> = mask.as_ref().map(|(m, _)| m.clone());
-            let opts = pipeline::BackendOptions { server_vae_tile_size: cfg.vae_tile_size };
+            let opts = pipeline::BackendOptions { server_vae_tile_size: cfg.server_vae_tile_size() };
             let prepared = tokio::task::spawn_blocking(move || pipeline::prepare(&plan2, &prompt, seed, &images, mask_img.as_ref(), &opts))
                 .await
                 .map_err(AppError::internal)??;

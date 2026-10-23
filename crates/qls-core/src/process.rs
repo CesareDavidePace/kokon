@@ -75,11 +75,11 @@ pub fn build_server_args(cfg: &AppConfig, profile: &ModelProfile) -> Vec<String>
         // Falls back to flash/default attention for layers it can't handle.
         a.push("--sage-attn".into());
     }
-    if cfg.vae_tile_size > 0 {
+    if cfg.server_vae_tile_size() > 0 {
         a.extend([
             "--vae-tiling".into(),
             "--vae-tile-size".into(),
-            cfg.vae_tile_size.to_string(),
+            cfg.server_vae_tile_size().to_string(),
             "--vae-tile-overlap".into(),
             "0.125".into(),
         ]);
@@ -930,6 +930,11 @@ mod tests {
         assert!(s.contains("--fa"));
         assert!(!s.contains("--sage-attn"), "SageAttention is CUDA only");
         assert!(s.contains("qwen_image_2_1_prefix_cache_type=q8_0"));
+        assert!(s.contains("--vae-tiling --vae-tile-size 512 "), "the default 768 is capped: {s}");
+        cfg.vae_tile_size = 256;
+        assert!(build_server_args(&cfg, cfg.profile()).join(" ").contains("--vae-tile-size 256 "), "smaller tiles are kept");
+        cfg.vae_tile_size = 0;
+        assert!(!build_server_args(&cfg, cfg.profile()).join(" ").contains("--vae-tiling"), "off stays off");
     }
 
     #[test]

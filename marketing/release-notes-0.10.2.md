@@ -27,7 +27,8 @@ NVIDIA cards need the proprietary driver (the CUDA runtime comes with Kokon). AM
 ### Thanks
 
 - @shrinivas-sn, for `kokon-mcp --help` (#36) and the HTTP API reference (#37).
-- Solembumm3 on Reddit, for the RX 6700 XT logs that led to the Vulkan fix.
+- Solembumm3 on Reddit, for the RX 6700 XT logs and tests with Resizable BAR and VAE tile sizes.
+- hakanavgin on Reddit, for tracking the slow decode on an RX 9070 XT down to AMD's 2 GiB buffer limit.
 
 ### Downloads
 

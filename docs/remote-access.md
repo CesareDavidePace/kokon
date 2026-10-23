@@ -103,6 +103,8 @@ your home network, then open the same address as at home.
 
 - Check that both devices are on the same network (or both on Tailscale) and that **Settings → Other
   devices** shows the address.
-- A firewall may block the port. Windows: allow Kokon on private networks (Windows Security →
-  Firewall → Allow an app). Linux with ufw: `sudo ufw allow from 192.168.0.0/16 to any port 39152`.
+- A firewall may block the port. Windows: set your home network as **Private** (Settings → Network &
+  internet → your connection), then allow Kokon on private networks only (Windows Security →
+  Firewall → Allow an app). If Windows calls your home network Public and you allowed Kokon there,
+  it would also be reachable on any public Wi-Fi you join. Linux with ufw: `sudo ufw allow from 192.168.0.0/16 to any port 39152`.
 - Another program may use port 39152: Settings shows the error; choose another port there.

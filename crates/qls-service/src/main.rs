@@ -118,6 +118,11 @@ pub fn say(line: &str) {
     let _ = out.flush();
 }
 
+/// Running in Kokon's Docker image.
+pub fn in_container() -> bool {
+    std::env::var_os("KOKON_CONTAINER").is_some()
+}
+
 pub fn service_info_path() -> PathBuf {
     data_dir().join("service.json")
 }
@@ -310,7 +315,11 @@ async fn run(args: Vec<String>) {
         remote: remote::RemoteState::new(&dir, forced_remote),
     });
     say(&format!("Kokon {APP_VERSION} is running."));
-    say(&format!("  On this computer:  http://localhost:{port}"));
+    // In the Docker image (KOKON_CONTAINER, docker/Dockerfile) the loopback port and the container's
+    // own address mean nothing outside: name the published port instead (remote.rs).
+    if !in_container() {
+        say(&format!("  On this computer:  http://localhost:{port}"));
+    }
     remote::sync_listener(&state);
     let cfg_now = engine.config();
     if forced_remote && !state.remote.password_set() {

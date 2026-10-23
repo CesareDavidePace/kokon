@@ -168,9 +168,13 @@ pub fn sync_listener(state: &Arc<AppState>) {
             });
             tracing::info!("access from other devices open on port {port} (all interfaces)");
             let here = format!("http://localhost:{port}");
-            match lan_address() {
+            if crate::in_container() {
+                crate::say(&format!("  Open in a browser: {here} on the computer running Docker, or http://<its address>:{port} from other devices (password required)"));
+            } else {
+                match lan_address() {
                 Some(ip) => crate::say(&format!("  Other devices:     http://{ip}:{port}  (password required; {here} here)")),
                 None => crate::say(&format!("  Other devices:     port {port} of this computer's address  (password required; {here} here)")),
+                }
             }
             *r.error.lock().unwrap() = None;
             *cur = Some(Lan { port, task });

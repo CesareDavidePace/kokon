@@ -37,7 +37,7 @@ ENV QLS_DATA_DIR=/data \
     QLS_CONFIG_DIR=/config \
     QLS_OUTPUT_DIR=/gallery \
     NVIDIA_VISIBLE_DEVICES=all \
-    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility     KOKON_CONTAINER=1
 USER kokon
 VOLUME ["/data", "/config", "/gallery"]
 # The browser UI (password required). The token API on 39151 stays inside the container.

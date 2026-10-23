@@ -240,7 +240,7 @@ preset later from Settings → Models → **Set up models…**
 | 8 GB (beta) | Qwen-Image 2.1 Turbo Q4_K (4.1 GB) | Qwen3-VL 8B Q4_K_M | ~12 GB | by users: RTX 3060 Ti, RTX 5050 Laptop |
 | 12 GB | Qwen-Image 2.1 Turbo Q4_K | Qwen3-VL 8B Q4_K_M | ~12 GB | ✅ RTX 5070 (12 GB) |
 | 16 GB | Qwen-Image 2.1 Turbo Q4_K | Qwen3-VL 8B Q4_K_M | ~12 GB | ✅ RTX 5070 Ti |
-| 24 GB | Qwen-Image 2.1 Turbo Q4_K | Qwen3-VL 8B Q4_K_M | ~12 GB | not yet |
+| 24 GB | Qwen-Image 2.1 Turbo Q4_K | Qwen3-VL 8B Q4_K_M | ~12 GB | by users: RX 7900 XTX (Vulkan) |
 | 32 GB+ | Qwen-Image 2.1 Turbo Q4_K | Qwen3-VL 8B Q8_0 (8.7 GB) | ~16 GB | not yet |
 
 Every preset also gets stable-diffusion.cpp (the CUDA 12 build on NVIDIA, the Vulkan build on AMD and Intel, the Metal build on a Mac), the Qwen-Image 2.1 VAE with

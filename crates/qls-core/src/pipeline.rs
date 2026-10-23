@@ -157,7 +157,7 @@ pub fn effective_prompt(plan: &Plan, prompt: &str) -> String {
     }
 }
 
-/// The prompt sent for an enhanced job (text-to-image, edit, combine): the enhancer's text,
+/// The prompt sent for an enhanced job (text-to-image, compose, edit, combine): the enhancer's text,
 /// wrapped for transparency when the user's own words asked for it (not the rewrite's, which
 /// may mention "transparent glass").
 pub fn enhanced_prompt(original: &str, enhanced: &str) -> String {
@@ -211,7 +211,7 @@ pub fn prepare(plan: &Plan, prompt: &str, seed: i64, images: &[LoadedImage], mas
 
     match plan.mode {
         ResolvedMode::Generate => {}
-        ResolvedMode::Edit | ResolvedMode::MultiReference => {
+        ResolvedMode::Edit | ResolvedMode::MultiReference | ResolvedMode::Compose => {
             need_images(plan.references.len())?;
             for r in &plan.references {
                 let img = &images[r.index].pixels;

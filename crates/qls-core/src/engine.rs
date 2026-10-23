@@ -971,6 +971,19 @@ impl Engine {
                     sd_req.prompt = pipeline::enhanced_prompt(&request.prompt, text);
                 }
             }
+            // Prompt+ review: the prompt is the result; the user's next job makes the image.
+            if request.enhance_only {
+                if enhanced.is_none() {
+                    let why = self.job(id).map(|j| j.notes.join(" ")).unwrap_or_default();
+                    return Err(AppError::new(ErrorCode::GenerationFailed, "Prompt+ could not write a prompt; yours is unchanged.").detail(why));
+                }
+                self.update(id, |j| {
+                    j.view.status = JobStatus::Done;
+                    j.view.finished_at = Some(now_rfc3339());
+                    j.view.stage = None;
+                });
+                return Ok(());
+            }
 
             // 4c. The user's LoRAs, trigger words in front of the final prompt.
             loras = self.job_loras(id, &cfg, &request, &caps);
@@ -1168,8 +1181,28 @@ impl Engine {
             j.view.stage = None;
             j.view.enhanced_prompt = Some(String::new());
         });
-        let req = enhancer::request(cfg, mode, prompt, images.to_vec(), seed);
         let started = Instant::now();
+        // A new image from references: each reference is labelled alone first, then the scene is
+        // written from the labels without the images (see `enhancer::COMPOSE_SYSTEM_PROMPT`).
+        let req = if mode == ResolvedMode::Compose {
+            let mut labels = Vec::with_capacity(images.len());
+            for img in images {
+                let r = client.text_gen(&enhancer::label_request(img.clone(), prompt, seed), Duration::from_secs(120), |_| {}, || self.is_cancelled(id)).await;
+                match r {
+                    Ok(done) => labels.push(enhancer::clean_label(&done.text)),
+                    Err(e) if e.code == ErrorCode::Cancelled => return Err(e),
+                    // A missing label leaves the image model to see that reference by itself.
+                    Err(e) => {
+                        tracing::warn!("prompt enhancer: labelling a reference failed: {} {:?}", e.message, e.detail);
+                        labels.push("the subject of this reference".into());
+                    }
+                }
+            }
+            tracing::info!("prompt enhancer: {} reference labels in {:.1} s: {:?}", labels.len(), started.elapsed().as_secs_f32(), labels);
+            enhancer::compose_request(cfg, &labels, prompt, seed)
+        } else {
+            enhancer::request(cfg, mode, prompt, images.to_vec(), seed)
+        };
         let mut text = String::new();
         let mut last_emit = Instant::now();
         let on_delta = |d: &str| {
@@ -1424,6 +1457,7 @@ impl Engine {
             ResolvedMode::Inpaint => "inpaint",
             ResolvedMode::Outpaint => "outpaint",
             ResolvedMode::MultiReference => "multi_reference",
+            ResolvedMode::Compose => "compose",
             ResolvedMode::Upscale => "upscale",
         };
         let mut rec = GenerationRecord {
@@ -1431,7 +1465,8 @@ impl Engine {
             created_at: now_rfc3339(),
             mode: mode.into(),
             // An enhanced job records the prompt the image was made from, and the user's.
-            original_prompt: enhanced_prompt.is_some().then(|| req.prompt.clone()),
+            // A reviewed prompt (written by Prompt+, then sent by the user) keeps the user's words too.
+            original_prompt: enhanced_prompt.is_some().then(|| req.prompt.clone()).or_else(|| req.enhanced_from.clone().filter(|p| !p.trim().is_empty())),
             prompt: enhanced_prompt.unwrap_or_else(|| req.prompt.clone()),
             loras,
             negative_prompt: plan.negative_prompt.clone(),
@@ -1873,6 +1908,97 @@ mod tests {
         });
         let err = e.enhance_prompt(&id, &SdcppClient::new(port), &caps, &cfg, ResolvedMode::Generate, "un gatto", &[], 1).await.unwrap_err();
         assert_eq!(err.code, ErrorCode::Cancelled);
+    }
+
+    /// A text_gen endpoint that answers each request in turn with the next of `answers` (SSE),
+    /// and reports the bodies it got.
+    async fn fake_text_server(answers: Vec<&'static str>) -> (u16, Arc<Mutex<Vec<serde_json::Value>>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        tokio::spawn(async move {
+            for answer in answers {
+                let Ok((mut sock, _)) = listener.accept().await else { return };
+                let mut req = Vec::new();
+                let mut buf = [0u8; 65536];
+                let body = loop {
+                    let n = sock.read(&mut buf).await.unwrap();
+                    req.extend_from_slice(&buf[..n]);
+                    let text = String::from_utf8_lossy(&req).to_string();
+                    if let Some(end) = text.find("\r\n\r\n") {
+                        let len = text.lines().find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap())).unwrap_or(0);
+                        if req.len() >= end + 4 + len {
+                            break req[end + 4..end + 4 + len].to_vec();
+                        }
+                    }
+                };
+                log.lock().unwrap().push(serde_json::from_slice(&body).unwrap());
+                let _ = sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n").await;
+                for c in crate::sdcpp::sse_answer(&[answer], "stop") {
+                    let _ = sock.write_all(c.as_bytes()).await;
+                }
+            }
+        });
+        (port, seen)
+    }
+
+    #[tokio::test]
+    async fn compose_labels_each_reference_then_writes_the_scene_without_images() {
+        let dir = tempfile::tempdir().unwrap();
+        // SAFETY: test-only env override, single-threaded setup.
+        unsafe { std::env::set_var("QLS_CONFIG_DIR", dir.path().join("cfg")) };
+        let mut cfg = AppConfig::default();
+        cfg.sdcpp_dir = dir.path().join("sdcpp");
+        cfg.normalize();
+        std::fs::create_dir_all(cfg.engine_dir()).unwrap();
+        std::fs::write(cfg.server_exe(), b"").unwrap();
+        for (_, p, _) in cfg.profile().files() {
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, b"").unwrap();
+        }
+        let e = Engine::new(cfg.clone(), dir.path()).unwrap();
+        let caps = Capabilities { text_generation: true, ..Default::default() };
+        let id = e.submit(GenerationRequest { prompt: "lei sul divano con il gatto".into(), enhance: true, ..Default::default() }, None).unwrap().id;
+        let (port, seen) = fake_text_server(vec!["person, female, long brown hair.\n", "cat, orange tabby", "A photograph of the woman from <image1> on a sofa."]).await;
+        let images = vec!["PNG1".to_string(), "PNG2".to_string()];
+        let out = e.enhance_prompt(&id, &SdcppClient::new(port), &caps, &cfg, ResolvedMode::Compose, "lei sul divano con il gatto", &images, 9).await.unwrap();
+        assert_eq!(out.as_deref(), Some("A photograph of the woman from <image1> on a sofa."));
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 3);
+        for (i, img) in ["PNG1", "PNG2"].iter().enumerate() {
+            assert_eq!((seen[i]["images"][0].as_str(), seen[i]["system_prompt"].as_str()), (Some(*img), Some(enhancer::COMPOSE_LABEL_PROMPT)), "one reference per label");
+        }
+        assert!(seen[2].get("images").is_none(), "the scene is written without the images");
+        assert_eq!(seen[2]["system_prompt"], enhancer::COMPOSE_SYSTEM_PROMPT);
+        assert_eq!(seen[2]["prompt"], "References:\n<image1>: person, female, long brown hair\n<image2>: cat, orange tabby\n\nRequest: lei sul divano con il gatto");
+    }
+
+    #[test]
+    fn reviewed_prompts_keep_the_users_words() {
+        let dir = tempfile::tempdir().unwrap();
+        // SAFETY: test-only env override, single-threaded setup.
+        unsafe { std::env::set_var("QLS_CONFIG_DIR", dir.path().join("cfg")) };
+        let cfg = AppConfig { output_dir: dir.path().join("out"), ..AppConfig::default() };
+        let e = Engine::new(cfg, dir.path()).unwrap();
+        let img = image::RgbaImage::from_pixel(64, 64, image::Rgba([40, 90, 160, 255]));
+        let inputs = crate::planner::PlanInputs { vram_total_mib: Some(16303), ..Default::default() };
+        let save = |req: &GenerationRequest, enhanced: Option<String>| {
+            let plan = crate::planner::plan(req, &inputs, &crate::config::RecommendedSettings::default()).unwrap();
+            e.save_result(&img, req, &plan, 1, &[], None, None, 10, None, 0, None, None, enhanced, Vec::new()).unwrap()
+        };
+        // Prompt+ review: the user sends the text Prompt+ wrote (maybe changed), with their words.
+        let long = "A ginger cat asleep on a sunlit windowsill, soft morning light from the left.";
+        let reviewed = GenerationRequest { prompt: long.into(), enhanced_from: Some("un gatto rosso".into()), ..Default::default() };
+        let rec = save(&reviewed, None);
+        assert_eq!((rec.prompt.as_str(), rec.original_prompt.as_deref()), (long, Some("un gatto rosso")));
+        // Written in the same job: as before.
+        let rec = save(&GenerationRequest { prompt: "un gatto rosso".into(), enhance: true, ..Default::default() }, Some(long.into()));
+        assert_eq!((rec.prompt.as_str(), rec.original_prompt.as_deref()), (long, Some("un gatto rosso")));
+        // The user's own prompt.
+        let rec = save(&GenerationRequest { prompt: "un gatto".into(), enhanced_from: Some(" ".into()), ..Default::default() }, None);
+        assert_eq!((rec.prompt.as_str(), rec.original_prompt), ("un gatto", None));
     }
 
     #[test]

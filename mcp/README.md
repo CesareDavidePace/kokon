@@ -40,11 +40,14 @@ clutter from screenshot.png"*. The first call takes about a minute while the mod
 
 ## Tools
 
+Prompts are used exactly as your assistant writes them: Kokon's own prompt writer (Prompt+) does not
+run for MCP, so the assistant writes the full description. The tool descriptions tell it how.
+
 | Tool | What it does |
 | --- | --- |
-| `generate_image` | Text to image. Size chosen automatically, or set width/height or aspect ratio. |
+| `generate_image` | Text to image, optionally with up to 10 reference images (a person, a product, a style) in a new scene. Size chosen automatically, or set width/height or aspect ratio. |
 | `edit_image` | Edit an image with an instruction. Keeps its size; never overwrites the input. |
-| `edit_images` | Create an image from up to 10 reference images ("image 1", "image 2"...). |
+| `edit_images` | Edit image 1 with the help of up to 9 more images ("image 1", "image 2"...). |
 | `inpaint_image` | Change only a masked area: edit, remove, replace or add something. |
 | `outpaint_image` | Extend an image beyond its borders. |
 | `upscale_image` | Enlarge an image (default 2x, up to 8192 px). |

@@ -18,6 +18,8 @@ describe("input validation", () => {
     expect(obj("generate_image").safeParse({ prompt: "x", quality: "ultra" }).success).toBe(false);
     expect(obj("generate_image").safeParse({ prompt: "x", quality: "max" }).success).toBe(false);
     expect(obj("generate_image").safeParse({ prompt: "x", seed: -2 }).success).toBe(false);
+    expect(obj("generate_image").safeParse({ prompt: "x", reference_images: ["a.png", "b.png"] }).data?.reference_images).toEqual(["a.png", "b.png"]);
+    expect(obj("generate_image").safeParse({ prompt: "x", reference_images: Array(11).fill("a.png") }).success).toBe(false);
   });
   it("edit_images limits and order", () => {
     expect(obj("edit_images").safeParse({ prompt: "x", image_paths: [] }).success).toBe(false);
@@ -27,6 +29,22 @@ describe("input validation", () => {
   it("outpaint defaults", () => {
     const r = obj("outpaint_image").parse({ image_path: "a.png", prompt: "x", left: 256 });
     expect(r).toMatchObject({ left: 256, right: 0, top: 0, bottom: 0, units: "pixels" });
+  });
+  it("sends the caller's prompt as written: Kokon's Prompt+ never runs for MCP", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const client = {
+      call: async (method: string, _path: string, body?: Record<string, unknown>) => {
+        if (method === "POST" && body) sent.push(body);
+        return { id: "j", status: "failed", error: { code: "x", message: "stop here" }, results: [], notes: [], queue_position: 0, plan: null, stage: null, step: null };
+      },
+    };
+    const ctx = { client: client as never, cwd: process.cwd(), progress: () => {} };
+    await handlers.generate_image({ prompt: "A watercolour fox in snow." } as never, ctx);
+    await handlers.generate_image({ prompt: "x", enhance: true } as never, ctx);
+    expect(sent.map((b) => [b.prompt, b.enhance, b.mode])).toEqual([
+      ["A watercolour fox in snow.", false, "generate"],
+      ["x", false, "generate"],
+    ]);
   });
   it("width without height is rejected before any service call", async () => {
     const ctx = { client: {} as never, cwd: process.cwd(), progress: () => {} };

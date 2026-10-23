@@ -182,7 +182,7 @@ export function Settings() {
   const [legacy, setLegacy] = useState<{ files: string[]; bytes: number } | null>(null);
   const [dirty, setDirty] = useState(false);
   const [theme, setTheme] = useState(themeChoice);
-  const [enhancerDefaults, setEnhancerDefaults] = useState<{ t2i: string; edit: string; max_chars: number } | null>(null);
+  const [enhancerDefaults, setEnhancerDefaults] = useState<{ t2i: string; edit: string; compose?: string; max_chars: number } | null>(null);
   const textGeneration = useStore((s) => s.status?.server.text_generation);
 
   useEffect(() => {
@@ -373,11 +373,11 @@ export function Settings() {
                 </button>
               </div>
 
-              <h4 style={{ margin: "14px 0 0", fontSize: 14, fontWeight: 600 }}>Prompt enhancer</h4>
+              <h4 style={{ margin: "14px 0 0", fontSize: 14, fontWeight: 600 }}>Prompt+</h4>
               <span className="muted" style={{ marginTop: -8 }}>
-                With Enhance on (next to the prompt), the model's own language model rewrites your prompt before making the image, following these instructions. It
-                always writes in English.
-                {textGeneration === false && " The inference engine in use cannot write prompts: Enhance appears with an engine that can."}
+                With Prompt+ on (next to the prompt), the model's own language model rewrites your prompt before making the image, following these instructions. It
+                always writes in English. Its menu also lets you read and change the prompt before the image is made.
+                {textGeneration === false && " The inference engine in use cannot write prompts: Prompt+ appears with an engine that can."}
               </span>
               <div className="setting-card" style={{ alignItems: "flex-start" }}>
                 <span className="muted">
@@ -400,6 +400,14 @@ export function Settings() {
                 builtin={enhancerDefaults?.edit ?? null}
                 max={enhancerDefaults?.max_chars ?? 20000}
                 onChange={(v) => set({ enhancerEditPrompt: v })}
+              />
+              <EnhancerPrompt
+                label="New images from references"
+                help="Used for a new image that uses your images as references (New image with images added). Each image is first labelled on its own; these instructions then write the scene from the labels."
+                value={cfg.enhancerComposePrompt ?? ""}
+                builtin={enhancerDefaults?.compose ?? null}
+                max={enhancerDefaults?.max_chars ?? 20000}
+                onChange={(v) => set({ enhancerComposePrompt: v })}
               />
             </>
           )}

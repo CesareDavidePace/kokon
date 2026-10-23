@@ -27,7 +27,7 @@ function rememberProgress(m: Partial<ProgressMemory>) {
   }
 }
 
-const ENHANCED_MODES = new Set(["generate", "edit", "multi_reference"]);
+const ENHANCED_MODES = new Set(["generate", "compose", "edit", "multi_reference"]);
 
 /** Live percentage of a whole job (`jobPercent`), computed a few times a second, only ever going
  * up, and eased so it counts up smoothly. Tracks when the job and each phase started; `learn`

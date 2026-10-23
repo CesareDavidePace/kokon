@@ -16,7 +16,7 @@ const DESCRIPTIONS: Record<keyof typeof schemas, { title: string; description: s
   generate_image: {
     title: "Generate image",
     description:
-      "Generate an image from a text prompt with the local Qwen-Image 2.1 model. Dimensions are chosen automatically (aspect ratio can be inferred from the prompt, e.g. '16:9 hero image') unless width/height or aspect_ratio are given. Returns the absolute path of the saved PNG. Runs fully offline; typically 45 s–4 min.",
+      "Generate an image from a text prompt with the local Qwen-Image 2.1 model, optionally using reference images (a person, a product, a style) in a new scene. Write the full, detailed prompt yourself (see the prompt field): it is used as is. Dimensions are chosen automatically (aspect ratio can be inferred from the prompt, e.g. '16:9 hero image') unless width/height or aspect_ratio are given. Returns the absolute path of the saved PNG. Runs fully offline; typically 45 s–4 min.",
   },
   edit_image: {
     title: "Edit image",
@@ -26,7 +26,7 @@ const DESCRIPTIONS: Record<keyof typeof schemas, { title: string; description: s
   edit_images: {
     title: "Edit with multiple references",
     description:
-      "Create an image from several reference images (up to 10) and an instruction. Order matters: refer to them as image 1, image 2, ... in the prompt. The output follows image 1's aspect ratio unless width/height or aspect_ratio are given.",
+      "Edit image 1 with the help of other images (up to 10 in all) and an instruction, e.g. put the product from image 2 in the hand of the person in image 1. Order matters: refer to them as image 1, image 2, ... in the prompt. The output follows image 1's aspect ratio unless width/height or aspect_ratio are given. For a new scene that only uses the images as references, use generate_image with reference_images.",
   },
   outpaint_image: {
     title: "Expand image (outpaint)",

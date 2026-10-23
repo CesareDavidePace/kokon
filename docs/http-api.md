@@ -72,7 +72,12 @@ Simple-operation fields: `prompt`, `image` / `images[]`, `mask`, `action`
 (`edit|remove|replace|add`, inpainting), `width`, `height`, `aspect_ratio`, `quality`
 (`fast|balanced|quality`), `seed`, `output_path`, `preserve_dimensions`, `private`,
 `left/right/top/bottom` + `units` (`pixels|percent`) for outpainting, `scale` for upscaling.
-Full requests (`/jobs`) also accept `"mode": "upscale"` with `"upscale": {"scale" | "width"/"height"}`.
+`/generate` with `images[]` makes a new image that uses them as references (people, products, a
+style), sized like any new image; `/edit` with several images edits image 1 with the others.
+Full requests (`/jobs`) also accept `"mode": "upscale"` with `"upscale": {"scale" | "width"/"height"}`,
+`"mode": "compose"` (the references case of `/generate`), and with `"enhance": true` (Prompt+)
+`"enhance_only": true`: the job only writes the prompt (`enhanced_prompt` in the job, no image), so it
+can be read and changed; send it back as `prompt` with `"enhanced_from"` set to your original words.
 
 ## Input images
 

@@ -8,7 +8,7 @@
 import { useSyncExternalStore } from "react";
 import { markFresh } from "../components/Cocoon";
 import { api, ApiError, setPrivateInputs, subscribe } from "./api";
-import { activeLoras, buildRequest, emptyComposer, needsPrompt, newKey, persistentAdvanced, refFromGen, refFromInput, starPromptDue, timelineLinks, undoTarget, versionLabels, type CompareMode, type Composer, type Ref } from "./logic";
+import { activeLoras, buildRequest, composing, emptyComposer, needsPrompt, newKey, persistentAdvanced, refFromGen, refFromInput, reviewRequest, starPromptDue, timelineLinks, undoTarget, versionLabels, wantsPromptReview, type CompareMode, type Composer, type Ref } from "./logic";
 import type { AppErrorBody, GenerationRecord, GenerationRequest, InputRecord, JobView, LoraItem, ServerState, StatusResponse } from "./types";
 
 export type Overlay = null | "gallery" | "settings" | "inpaint" | "expand" | "welcome" | "whats-new" | "prompt-tips" | "shortcuts";
@@ -92,6 +92,8 @@ export interface State {
   loras: LoraItem[];
   /** Tab Settings opens on (then cleared). */
   settingsTab: string | null;
+  /** Prompt+ is writing a prompt into the box for review: its job, and the user's words. */
+  review: { jobId: string; prompt: string } | null;
 }
 
 const PREFS_KEY = "qls.prefs.v1";
@@ -110,9 +112,9 @@ function loadPrefs(): Partial<Composer> {
 
 function savePrefs(c: Composer) {
   try {
-    const { quality, resolution, aspect, customWidth, customHeight, enhance } = c;
+    const { quality, resolution, aspect, customWidth, customHeight, enhance, enhanceReview } = c;
     const advanced = persistentAdvanced(c.advanced);
-    localStorage.setItem(PREFS_KEY, JSON.stringify({ quality, resolution, aspect, customWidth, customHeight, advanced, enhance }));
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ quality, resolution, aspect, customWidth, customHeight, advanced, enhance, enhanceReview }));
   } catch {
     /* storage unavailable */
   }
@@ -302,6 +304,7 @@ let state: State = {
   starPrompt: false,
   loras: [],
   settingsTab: null,
+  review: null,
 };
 
 const listeners = new Set<() => void>();
@@ -446,6 +449,11 @@ function onJob(job: JobView) {
   if (job.status === "done" && prev?.status !== "done" && getState().session.some((i) => i.jobId === job.id && i.kind === "job")) {
     markFresh(job.results.map((g) => g.id));
   }
+  // Prompt+ review: the prompt it wrote goes into the box (no image, no version).
+  if (getState().review?.jobId === job.id) {
+    onReviewJob(job);
+    return;
+  }
   // Made with this app (it had a pending version), not by another client such as MCP.
   let made = false;
   setState((s) => {
@@ -459,10 +467,11 @@ function onJob(job: JobView) {
       const pending = s.session[idx];
       const session = [...s.session.slice(0, idx), ...results, ...s.session.slice(idx + 1)];
       const wasSelected = s.selected === pending.key;
-      // Editing carries on from the new version; creating new images stays in create mode.
+      // Editing carries on from the new version; creating new images (also from references)
+      // stays in create mode with the same references.
       let composer = s.composer;
       const src = pending.request?.images?.[0];
-      if (wasSelected && results[0]?.gen && src && composer.refs[0]?.source === src) {
+      if (wasSelected && results[0]?.gen && src && composer.refs[0]?.source === src && !composer.create) {
         composer = { ...composer, refs: [refFromGen(results[0].gen), ...composer.refs.slice(1)], mask: null, outpaint: null };
       }
       return { jobs, session, composer, selected: wasSelected && results[0] ? results[0].key : s.selected };
@@ -486,6 +495,21 @@ function onJob(job: JobView) {
   });
   if (made && job.results.length) countImageMade();
   if (job.status === "failed" && job.error) toastError(new ApiError(job.error, 500));
+}
+
+/** A Prompt+ review job changed: the text streams into the box; when done the box keeps it
+ * (with the user's words, for Undo); a failure or a cancel leaves the user's prompt. */
+function onReviewJob(job: JobView) {
+  setState((s) => {
+    const jobs = { ...s.jobs, [job.id]: job };
+    if (!["done", "failed", "cancelled"].includes(job.status)) return { jobs };
+    const words = s.review?.prompt ?? s.composer.prompt;
+    const text = job.status === "done" ? job.enhanced_prompt?.trim() : "";
+    const composer = text ? { ...s.composer, prompt: text, enhancedFrom: words } : { ...s.composer, prompt: words };
+    return { jobs, review: null, composer };
+  });
+  if (job.status === "failed" && job.error) toastError(new ApiError(job.error, 500));
+  if (job.status === "done") focusPrompt(true);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -708,7 +732,7 @@ export async function openGeneration(g: GenerationRecord) {
   const items: SessionItem[] = [];
   const root = chain[0];
   const ref = root.references[0];
-  if (ref && root.references.length === 1 && root.mode !== "generate") {
+  if (ref && root.references.length === 1 && root.mode !== "generate" && root.mode !== "compose") {
     try {
       const r = inputCache.get(ref.input_id) ?? (await api.input(ref.input_id));
       items.push({ key: newKey(), kind: "input", input: r });
@@ -762,23 +786,33 @@ export function selectItem(key: string, keepRedo = false) {
   setState((s) => {
     const it = s.session.find((i) => i.key === key);
     if (!it) return {};
-    const ref = s.composer.refs.length ? refOf(it) : null;
+    const ref = s.composer.refs.length && !s.composer.create ? refOf(it) : null;
     return { selected: key, composer: ref ? retarget(s.composer, ref) : s.composer, ...(keepRedo ? {} : { redo: [] }) };
   });
 }
 
-/** "New image": the prompt creates an image from scratch; the versions stay to look at. */
+/** "New image": the prompt creates a new image; images in the prompt stay, as references
+ * (people, products, a style) instead of the image to edit. The versions stay to look at. */
 export function startNewImage() {
-  setState((s) => ({ composer: { ...s.composer, refs: [], mask: null, outpaint: null } }));
+  setState((s) => ({ composer: { ...s.composer, create: true, mask: null, outpaint: null } }));
   focusPrompt();
 }
 
-/** "Edit image": the prompt edits the version shown (or the latest image). */
+/** "Edit image": the prompt edits the version shown (or the latest image). When it is one of a
+ * new image's references it becomes image 1 and the others stay; a version that is not (such as
+ * the new image just made) is edited on its own. */
 export function editShownImage() {
   setState((s) => {
     const shown = s.session.find((i) => i.key === s.selected);
     const ref = refOf(shown) ?? refOf([...s.session].reverse().find((i) => i.gen || i.input));
-    return ref ? { composer: retarget(s.composer, ref) } : {};
+    if (!ref) return composing(s.composer) ? { composer: { ...s.composer, create: false, aspect: "auto" } } : {};
+    const c = s.composer;
+    if (composing(c)) {
+      const here = c.refs.find((r) => r.source === ref.source);
+      const refs = here ? [here, ...c.refs.filter((r) => r !== here)] : [ref];
+      return { composer: { ...c, refs, create: false, mask: null, outpaint: null, aspect: "auto" } };
+    }
+    return { composer: { ...retarget(c, ref), create: false } };
   });
   focusPrompt();
 }
@@ -788,7 +822,8 @@ export function editShownImage() {
 export function itemOrigin(i: SessionItem): { from: string[]; variant: boolean } {
   const req = i.gen?.request ?? i.request;
   const mode = i.gen?.mode ?? req?.mode;
-  const images = mode === "generate" ? [] : req?.images ?? [];
+  // A new image (also one made from references) starts a line of its own.
+  const images = mode === "generate" || mode === "compose" ? [] : req?.images ?? [];
   if (images.length) return { from: images, variant: false };
   const parent = i.gen?.parent_id ?? req?.parent_id;
   return parent ? { from: [`gen:${parent}`], variant: true } : { from: [], variant: false };
@@ -808,7 +843,8 @@ export const sessionLinks = (session: SessionItem[]) => timelineLinks(lineage(se
 export function reusePrompt(g: GenerationRecord) {
   setState((s) => {
     const c = s.composer;
-    const sources = itemOrigin({ key: "", kind: "gen", gen: g });
+    const compose = g.mode === "compose";
+    const sources = compose ? { from: g.request?.images ?? [], variant: false } : itemOrigin({ key: "", kind: "gen", gen: g });
     const refs: Ref[] = [];
     if (!sources.variant) {
       sources.from.forEach((src, i) => {
@@ -823,17 +859,25 @@ export function reusePrompt(g: GenerationRecord) {
       composer: {
         ...c,
         prompt: g.prompt,
-        // The enhancer's text is a full prompt already: rewriting it again would drift.
-        enhance: g.original_prompt ? false : c.enhance,
+        // The enhancer's text is a full prompt already: sent as it is (rewriting it again would
+        // drift); Undo in the box brings back the user's words.
+        enhancedFrom: g.original_prompt ?? null,
+        create: compose && refs.length > 0,
         refs,
         mask,
         inpaintAction: mask ? g.request?.inpaint_action ?? "edit" : c.inpaintAction,
         outpaint: g.outpaint && refs.length ? { ...g.outpaint, units: "pixels" } : null,
-        aspect: refs.length && !c.refs.length ? "auto" : c.aspect,
+        aspect: refs.length && !c.refs.length && !compose ? "auto" : c.aspect,
         seed: null,
       },
     };
   });
+  focusPrompt(true);
+}
+
+/** Back to the user's own words from a prompt Prompt+ wrote (the box's Undo). */
+export function undoEnhancedPrompt() {
+  setState((s) => (s.composer.enhancedFrom == null ? {} : { composer: { ...s.composer, prompt: s.composer.enhancedFrom, enhancedFrom: null } }));
   focusPrompt(true);
 }
 
@@ -864,14 +908,16 @@ export function redoVersion() {
   setState({ redo });
 }
 
-/** New images: into an empty project (or with nothing being edited) they become versions to
- * work on; while editing they are added as extra references. */
+/** New images: into an empty project they become versions to work on (the photo to edit);
+ * in a project they are added to the prompt: as extra references while editing, else as
+ * references for a new image ("New image" stays; Edit image edits image 1). */
 export function addInputs(records: InputRecord[]) {
   if (!records.length) return;
   setState((s) => {
     const added = records.map(refFromInput);
-    if (s.composer.refs.length && s.session.length) {
-      return { composer: { ...s.composer, refs: [...s.composer.refs, ...added].slice(0, 10), outpaint: null } };
+    if (s.session.length) {
+      const create = s.composer.refs.length ? s.composer.create : true;
+      return { composer: { ...s.composer, refs: [...s.composer.refs, ...added].slice(0, 10), create, outpaint: null } };
     }
     const items: SessionItem[] = records.map((r) => ({ key: newKey(), kind: "input", input: r }));
     return {
@@ -911,7 +957,9 @@ export function addResult(g: GenerationRecord) {
 
 export async function submitComposer() {
   const s = getState();
-  const target = s.composer.refs[0]?.source;
+  if (s.review) return;
+  if (wantsPromptReview(s.composer)) return startPromptReview();
+  const target = composing(s.composer) ? undefined : s.composer.refs[0]?.source;
   const parent = target?.startsWith("gen:") ? target.slice(4) : null;
   const req: GenerationRequest = { ...buildRequest(s.composer, parent), loras: activeLoras(s.composer, s.loras) };
   if (!req.prompt && needsPrompt(s.composer)) {
@@ -919,7 +967,39 @@ export async function submitComposer() {
     return;
   }
   if (await submitRequest(req)) {
-    setState((st) => ({ lastPrompt: req.prompt, composer: { ...st.composer, prompt: st.composer.prompt.trim() === req.prompt ? "" : st.composer.prompt, seed: null } }));
+    setState((st) => {
+      const sent = st.composer.prompt.trim() === req.prompt;
+      return {
+        lastPrompt: st.composer.enhancedFrom ?? req.prompt,
+        composer: { ...st.composer, prompt: sent ? "" : st.composer.prompt, enhancedFrom: sent ? null : st.composer.enhancedFrom, seed: null },
+      };
+    });
+  }
+}
+
+/** Prompt+ review: the prompt is written into the box first (a job that makes no image). */
+async function startPromptReview() {
+  const s = getState();
+  let req = reviewRequest(s.composer);
+  if (s.privateMode) req = { ...req, private: true };
+  try {
+    const job = await api.submit(req);
+    setState((st) => ({ jobs: { ...st.jobs, [job.id]: job }, review: { jobId: job.id, prompt: st.composer.prompt } }));
+  } catch (e) {
+    if (isMissingModel(e)) openModelSetup();
+    toastError(e);
+  }
+}
+
+/** Stops Prompt+ writing a prompt for review; the user's words stay in the box. */
+export async function cancelPromptReview() {
+  const r = getState().review;
+  if (!r) return;
+  try {
+    onReviewJob(await api.cancel(r.jobId));
+  } catch (e) {
+    setState((s) => ({ review: null, composer: { ...s.composer, prompt: r.prompt } }));
+    toastError(e);
   }
 }
 
@@ -932,7 +1012,8 @@ export async function cancelJob(jobId: string) {
   }
 }
 
-/** Adds a version as an extra reference (or as the image to edit when there is none). */
+/** Adds a version to the prompt: an extra reference while editing, else a reference for a new
+ * image ("New image" stays; Edit image edits image 1). */
 export function addAsReference(item: SessionItem) {
   const ref = item.gen ? refFromGen(item.gen) : item.input ? refFromInput(item.input) : null;
   if (!ref) return;
@@ -944,7 +1025,7 @@ export function addAsReference(item: SessionItem) {
     toastInfo("Up to 10 reference images are supported.");
     return;
   }
-  setState((s) => ({ composer: { ...s.composer, refs: [...s.composer.refs, ref].slice(0, 10), outpaint: null, aspect: s.composer.refs.length ? s.composer.aspect : "auto" } }));
+  setState((s) => ({ composer: { ...s.composer, refs: [...s.composer.refs, ref].slice(0, 10), create: s.composer.refs.length ? s.composer.create : true, outpaint: null } }));
 }
 
 export function focusPrompt(cursorToEnd = false) {

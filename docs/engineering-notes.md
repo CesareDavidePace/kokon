@@ -269,6 +269,30 @@ edits) before the image is made, so there is no second model in memory.
 - **Sampling:** Qwen3-VL's values (temperature 0.7, top-p 0.8, top-k 20, presence penalty 1.5 counted
   on generated tokens only), seeded with a portable RNG, so the same seed gives the same text on every
   platform. Regenerate makes a new prompt and a new seed; greedy is the engine default and test mode.
+- **Length:** the prompts ask for a length that fits the request (t2i ~80-150 words, up to ~250 for
+  crowded scenes; edits 20-60, up to ~150 for several changes; compose 100-200, up to ~300). The token
+  cap is 1024 (was 512, which cut crowded scenes mid-sentence; ~8 s at ~127 tok/s). sd.cpp's Qwen-Image
+  conditioning does not truncate the prompt.
+- **Three system prompts:** text-to-image, edit (edits and combines, where image 1 is changed) and
+  compose (a new image that uses the images as references, `mode: compose`). Compose runs in two
+  steps: each reference is labelled alone (a short list of its own features, never its place, pose or
+  what it holds), then the scene is written from the request and the labels, without the images. Shown
+  the images, the 8B described the references instead of the requested scene with every system prompt
+  tried; from labels it follows the request. The image model still gets the references, so identities
+  come from them. No "keep … unchanged" sentence (it turns a composition into an edit of image 1).
+  Cost: ~0.3 s per reference plus the scene. Still to be A/B-tested on composition cases.
+- **Review first:** `enhance_only` runs a job that stops after the prompt (no image, nothing saved); the
+  app streams it into the prompt box. The next job sends the text with `enhanced_from` (the user's
+  words), so the record keeps both and nothing is rewritten twice.
+
+### New image from references (compose)
+
+`mode: compose` is a new image whose size follows text-to-image (chosen size, ratio, a ratio in the
+prompt, else square, at the quality preset), never image 1's: an edit's output takes image 1's shape
+and, in Auto, at most its area, so a small reference gave a small result. The references share the
+token budget with the output as in edits (`cap_for_sources`), each at most the reference cap
+(Standard 1 MP) and never larger than the output. In the app, **New image** with images added sends
+compose; **Edit image** keeps today's edit/combine.
 
 ## HDR
 

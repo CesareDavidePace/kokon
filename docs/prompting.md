@@ -168,15 +168,28 @@ Brush over the part you want to change, pick an action, and write only about tha
 Paint a bit larger than the object, including its shadow. Everything outside the brush stays
 exactly as it was.
 
-### Combine images
+### Combine images (Edit image)
 
-Add several images and call them **image 1, image 2…** in the order they appear:
+With **Edit image**, image 1 is the photo being changed and the others bring something into it.
+Call them **image 1, image 2…** in the order they appear:
 
 > Place the white sneaker from image 2 on the rug in image 1, in front of the armchair, with
 > natural shadows matching the room light. Keep the room from image 1 unchanged.
 
 The result takes the shape of image 1. Say which image gives what (the person, the place, the
 light, the style).
+
+### A new image from references (New image)
+
+With **New image**, the images you add are references: a person, a product, a pet, a style. The
+result is a new picture with its own scene, framing and light, sized by the quality and aspect
+ratio you choose (not by image 1). Describe the whole scene and say what to take from each image:
+
+> A photo of the woman from image 1 sitting at a café table by a sunny window, holding the
+> coffee cup from image 2 near her face, looking at the camera.
+
+A reference's background stays out unless you ask for it. Prompt+ looks at the references and
+writes the details that make them recognizable.
 
 ### Expand a photo
 

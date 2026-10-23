@@ -476,7 +476,7 @@ async fn get_config(State(s): St) -> Json<AppConfig> {
 /// The prompt enhancer's built-in system prompts (Settings shows them for "" and restores them).
 async fn enhancer_defaults() -> Json<Value> {
     use qls_core::enhancer;
-    Json(json!({ "t2i": enhancer::T2I_SYSTEM_PROMPT, "edit": enhancer::EDIT_SYSTEM_PROMPT, "max_chars": enhancer::MAX_SYSTEM_PROMPT_CHARS }))
+    Json(json!({ "t2i": enhancer::T2I_SYSTEM_PROMPT, "edit": enhancer::EDIT_SYSTEM_PROMPT, "compose": enhancer::COMPOSE_SYSTEM_PROMPT, "max_chars": enhancer::MAX_SYSTEM_PROMPT_CHARS }))
 }
 
 async fn put_config(State(s): St, Json(cfg): Json<AppConfig>) -> ApiResult<Json<Value>> {
@@ -738,8 +738,11 @@ async fn run_simple(s: Arc<AppState>, mode: Mode, op: SimpleOp, wait: bool) -> A
     Ok(Json(wait_for(&s, &j.id, Duration::from_secs(3600)).await?))
 }
 
+/// A new image; with `images`, a new image that uses them as references (sized like
+/// text-to-image, not like image 1).
 async fn op_generate(State(s): St, Query(q): Query<OpQ>, Json(op): Json<SimpleOp>) -> ApiResult<Json<JobView>> {
-    run_simple(s, Mode::Generate, op, q.wait.unwrap_or(true)).await
+    let mode = if op.images.is_empty() && op.image.is_none() { Mode::Generate } else { Mode::Compose };
+    run_simple(s, mode, op, q.wait.unwrap_or(true)).await
 }
 async fn op_edit(State(s): St, Query(q): Query<OpQ>, Json(op): Json<SimpleOp>) -> ApiResult<Json<JobView>> {
     let mode = if op.images.len() + op.image.is_some() as usize > 1 { Mode::MultiReference } else { Mode::Edit };

@@ -25,6 +25,7 @@ export const MODE_ICON: Record<Mode | "lut", React.ReactNode> = {
   generate: <Wand2 size={11} />,
   edit: <Pencil size={11} />,
   multi_reference: <Combine size={11} />,
+  compose: <Wand2 size={11} />,
   inpaint: <Brush size={11} />,
   outpaint: <Expand size={11} />,
   upscale: <ImageUpscale size={11} />,
@@ -36,6 +37,7 @@ const MODE_DOING: Record<Mode, string> = {
   generate: "Creating",
   edit: "Editing",
   multi_reference: "Combining images",
+  compose: "Creating from references",
   inpaint: "Inpainting",
   outpaint: "Expanding",
   upscale: "Upscaling",
@@ -71,11 +73,12 @@ function Pending({ job, item, labels }: { job: JobView; item: SessionItem; label
   const o = job.plan?.output;
   const { ref, box } = useFit(o ? o.width / o.height : 1);
   const session = useStore((s) => s.session);
-  const src = item.request?.mode === "generate" ? undefined : item.request?.images?.[0];
+  // A new image (also one from references) has no source to grow from.
+  const src = item.request?.mode === "generate" || item.request?.mode === "compose" ? undefined : item.request?.images?.[0];
   const from = src ? session.find((i) => itemSource(i) === src) : undefined;
   const mode = job.plan?.mode;
   // "v3 · Editing v2", "v1 · Creating"
-  const title = [imageName(labels[item.key]), mode && `${MODE_DOING[mode]}${from && mode !== "multi_reference" ? ` ${imageName(labels[from.key]).toLowerCase()}` : ""}`].filter(Boolean).join(" · ");
+  const title = [imageName(labels[item.key]), mode && `${MODE_DOING[mode]}${from && mode !== "multi_reference" && mode !== "compose" ? ` ${imageName(labels[from.key]).toLowerCase()}` : ""}`].filter(Boolean).join(" · ");
   // The source keeps its own shape inside an expansion; elsewhere it fills the frame.
   const outpaint = item.request?.outpaint;
   const { pct, clock } = useJobPercent(job, item.request, true);
@@ -90,7 +93,7 @@ function Pending({ job, item, labels }: { job: JobView; item: SessionItem; label
             title={title}
             text={job.enhanced_prompt!}
             streaming={job.status === "enhancing_prompt"}
-            withImage={!!src}
+            withImage={!!src || item.request?.mode === "compose"}
             budget={job.plan?.estimated_seconds || null}
             onCancel={() => cancelJob(job.id)}
             onGone={() => setPromptGone(true)}
@@ -389,7 +392,7 @@ function MoreMenu({ item, path }: { item: SessionItem; path: string | null }) {
 function GenActions({ item, g, showOriginal, onLut }: { item: SessionItem; g: GenerationRecord; showOriginal: boolean; onLut: (lut: LutEntry) => void }) {
   // Save, copy and "show in folder" act on the image on screen: the result or its pre-upscale original.
   const shownPath = (showOriginal && g.pipeline?.original_path) || g.file_path;
-  const original = g.references[0] && g.mode !== "generate" && g.mode !== "upscale" && g.mode !== "lut" ? { width: g.references[0].width, height: g.references[0].height } : null;
+  const original = g.references[0] && g.mode !== "generate" && g.mode !== "compose" && g.mode !== "upscale" && g.mode !== "lut" ? { width: g.references[0].width, height: g.references[0].height } : null;
   const [fav, setFav] = useState(g.favorite);
   return (
     <div className="actions">
@@ -681,7 +684,7 @@ function Timeline({ labels }: { labels: Record<string, string> }) {
           const making = pending && !failed;
           const mode: Mode | "lut" | undefined = it.gen?.mode ?? job?.plan?.mode;
           const link = links[it.key];
-          const pendingSrc = pending && it.request?.mode !== "generate" ? it.request?.images?.[0] : undefined;
+          const pendingSrc = pending && it.request?.mode !== "generate" && it.request?.mode !== "compose" ? it.request?.images?.[0] : undefined;
           const prompt = it.gen?.prompt || it.request?.prompt || "";
           const what = mode ? (mode === "generate" && link?.kind === "start" ? "New image" : MODE_LABEL[mode]) : it.input ? "Imported" : "";
           const tip = [[imageName(labels[it.key]), what, linkText(link, labels)].filter(Boolean).join(" · "), prompt, src ? "Drag onto the prompt box to use it there" : ""].filter(Boolean).join("\n");

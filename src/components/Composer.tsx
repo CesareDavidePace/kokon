@@ -1,10 +1,10 @@
-import { ArrowUp, Brush, Check, ChevronDown, Expand, FolderOpen, Gauge, ImagePlus, Layers, Lightbulb, Maximize, Pencil, Settings2, SlidersHorizontal, Sparkles, WandSparkles, X } from "lucide-react";
+import { ArrowUp, Brush, Check, ChevronDown, Expand, Eye, FolderOpen, Gauge, ImagePlus, Layers, Lightbulb, Maximize, Pencil, Settings2, SlidersHorizontal, Sparkles, Square, Undo2, WandSparkles, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, urls } from "../lib/api";
-import { activeLoras, activeOverrides, aspectLabel, buildRequest, enhancerApplies, expansionPixels, formatDuration, hasOutpaint, imageName, MAX_LORAS, moveRef, needsPrompt, parseRatio, toggleLora, type Ref } from "../lib/logic";
+import { activeLoras, activeOverrides, aspectLabel, buildRequest, composing, editing, enhancerApplies, expansionPixels, formatDuration, hasOutpaint, imageName, MAX_LORAS, moveRef, needsPrompt, parseRatio, toggleLora, wantsPromptReview, type Ref } from "../lib/logic";
 import { native } from "../lib/native";
 import {
-  addAsReference, addInputs, editShownImage, enhancerAvailable, getState, itemSource, openSettings, selectedItem, sessionLabels, setProjectLoras, setState, startNewImage, submitComposer, toastError, updateComposer, useStore, type SessionItem,
+  addAsReference, addInputs, cancelPromptReview, editShownImage, enhancerAvailable, getState, itemSource, openSettings, selectedItem, sessionLabels, setProjectLoras, setState, startNewImage, submitComposer, toastError, undoEnhancedPrompt, updateComposer, useStore, type SessionItem,
 } from "../lib/store";
 import type { InpaintAction, Plan, Quality } from "../lib/types";
 import { AdvancedPanel } from "./Advanced";
@@ -122,18 +122,26 @@ function RefStrip() {
   );
 }
 
-/** Edit image | New image: whether the prompt changes an image or makes a new one. */
+/** Edit image | New image: whether the prompt changes an image or makes a new one (with the
+ * images in the prompt as references). */
 function ModeSwitch({ editing }: { editing: boolean }) {
   const sel = useStore(selectedItem);
   const session = useStore((s) => s.session);
   const img = sel && (sel.gen || sel.input) ? sel : [...session].reverse().find((i) => i.gen || i.input);
-  const name = img ? imageName(sessionLabels(session)[img.key]).toLowerCase() : "";
+  const refs = useStore((s) => s.composer.refs);
+  const name = refs.length ? "image 1 of the prompt" : img ? `${imageName(sessionLabels(session)[img.key]).toLowerCase()}, the image shown` : "";
   return (
     <div className="mode-switch" role="radiogroup" aria-label="What the prompt does">
-      <button className={editing ? "" : "on"} role="radio" aria-checked={!editing} onClick={() => editing && startNewImage()} title="Make a new image from the prompt alone; your images stay in the timeline">
+      <button
+        className={editing ? "" : "on"}
+        role="radio"
+        aria-checked={!editing}
+        onClick={() => startNewImage()}
+        title="Make a new image. Images you add are references (a person, a product, a style) for it, not edited; your images stay in the timeline"
+      >
         <Sparkles size={14} /> <span className="lbl">New image</span>
       </button>
-      <button className={editing ? "on" : ""} role="radio" aria-checked={editing} onClick={() => !editing && editShownImage()} title={editing ? "The prompt edits this image" : `Edit ${name}, the image shown`}>
+      <button className={editing ? "on" : ""} role="radio" aria-checked={editing} onClick={() => !editing && editShownImage()} title={editing ? "The prompt edits this image" : `Edit ${name}`}>
         <Pencil size={14} /> <span className="lbl">Edit image</span>
       </button>
     </div>
@@ -153,7 +161,21 @@ function TargetBar() {
         <ModeSwitch editing={false} />
         <span className="target-text">
           <span className="what">New image</span>
-          <span className="sub">Made from the prompt alone</span>
+          <span className="sub">From the prompt; images you add are references</span>
+        </span>
+      </div>
+    );
+  }
+
+  if (composing(c)) {
+    const n = c.refs.length;
+    return (
+      <div className="target create">
+        <ModeSwitch editing={false} />
+        <RefStrip />
+        <span className="target-text">
+          <span className="what">New image with {n === 1 ? "1 reference" : `${n} references`}</span>
+          <span className="sub">{n > 1 ? "Refer to them as image 1, image 2… in the prompt" : "Say what to take from it: the person, the product, the style…"}</span>
         </span>
       </div>
     );
@@ -208,6 +230,7 @@ function TargetBar() {
 function AddImage() {
   const session = useStore((s) => s.session);
   const refs = useStore((s) => s.composer.refs);
+  const create = useStore((s) => s.composer.create);
   const labels = useMemo(() => sessionLabels(session), [session]);
   const used = new Set(refs.map((r) => r.source));
   const candidates = session.filter((i) => {
@@ -215,7 +238,9 @@ function AddImage() {
     return s && !used.has(s);
   });
   const browse = async () => importPaths(await native.pickImages());
-  const title = refs.length ? "Add a reference image" : "Add an image to edit";
+  // In a project, images added while not editing are references for a new image.
+  const asReference = refs.length > 0 || create || session.length > 0;
+  const title = asReference ? "Add a reference image" : "Add an image to edit";
 
   if (!candidates.length) {
     return (
@@ -235,7 +260,7 @@ function AddImage() {
     >
       {(close) => (
         <div className="add-menu">
-          <div className="label">{refs.length ? "Add an image as reference" : "Edit an image"}</div>
+          <div className="label">{asReference ? (refs.length && !create ? "Add an image as reference" : "Add a reference for the new image") : "Edit an image"}</div>
           <div className="add-grid">
             {candidates.map((it: SessionItem) => (
               <button key={it.key} title={it.gen?.prompt ?? imageName(labels[it.key])} onClick={() => (addAsReference(it), close())}>
@@ -355,6 +380,63 @@ function LoraBadge() {
   );
 }
 
+/** Prompt+: off; on (writes the prompt, then the image is made); or on with the prompt written
+ * into the box first, to read and change before pressing Enter again. */
+function PromptPlus() {
+  const c = useStore((s) => s.composer);
+  const mode = !c.enhance ? "off" : c.enhanceReview ? "review" : "write";
+  const title =
+    mode === "off"
+      ? "Prompt+: let the model rewrite a short prompt, in any language, as a detailed English description before making the image. Adds a few seconds."
+      : mode === "write"
+        ? "Prompt+ on: before making the image, the model rewrites your prompt as a detailed English description (looking at your images). You see it being written; the result keeps both."
+        : "Prompt+ on, review first: the model writes the detailed prompt into the box; change it if you like, then press Enter to make the image.";
+  const pick = (m: "off" | "write" | "review") => updateComposer({ enhance: m !== "off", enhanceReview: m === "off" ? c.enhanceReview : m === "review" });
+  return (
+    <Popover
+      className="prompt-plus"
+      trigger={(open, toggle) => (
+        <button className={`pill toggle ${c.enhance || open ? "on" : ""}`} onClick={toggle} title={title} aria-label={`Prompt+: ${mode === "off" ? "off" : mode === "write" ? "on" : "on, review first"}`}>
+          <WandSparkles size={15} />
+          <span className="lbl">Prompt+</span>
+          {mode === "review" && <Eye size={13} aria-hidden />}
+          <ChevronDown size={13} className="chev" />
+        </button>
+      )}
+    >
+      {(close) => (
+        <>
+          <div className="label">Prompt+</div>
+          <Option selected={mode === "off"} label="Off" onClick={() => (pick("off"), close())} />
+          <Option selected={mode === "write"} label="On" sub="writes, then makes" onClick={() => (pick("write"), close())} />
+          <Option selected={mode === "review"} label="Review first" sub="you edit it first" onClick={() => (pick("review"), close())} />
+          <button className="opt" onClick={() => (close(), openSettings("general"))}>
+            <span className="check">
+              <Settings2 size={15} />
+            </span>
+            <span>Prompt+ instructions…</span>
+          </button>
+        </>
+      )}
+    </Popover>
+  );
+}
+
+/** Under the prompt: the prompt in the box was written by Prompt+ from the user's words. */
+function EnhancedFrom({ words }: { words: string }) {
+  return (
+    <div className="enhanced-from">
+      <WandSparkles size={12} aria-hidden />
+      <span className="text" title={words}>
+        Written by Prompt+ from “{words}”. Change it if you like; Enter makes the image.
+      </span>
+      <button className="link" onClick={undoEnhancedPrompt} title="Back to your own words">
+        <Undo2 size={12} /> Undo
+      </button>
+    </div>
+  );
+}
+
 export function Composer() {
   const c = useStore((s) => s.composer);
   const hasProject = useStore((s) => s.session.length > 0);
@@ -363,6 +445,11 @@ export function Composer() {
   const hasImages = c.refs.length > 0;
   const overrides = activeOverrides(c.advanced);
   const canEnhance = useStore(enhancerAvailable) && enhancerApplies(c);
+  const newImage = !editing(c);
+  // Prompt+ review: the prompt it is writing streams into the box, which is read-only meanwhile.
+  const review = useStore((s) => s.review);
+  const reviewJob = useStore((s) => (s.review ? s.jobs[s.review.jobId] : undefined));
+  const reviewing = !!review;
 
   useEffect(() => {
     const ta = taRef.current;
@@ -383,14 +470,24 @@ export function Composer() {
     });
     ro.observe(ta);
     return () => ro.disconnect();
-  }, [c.prompt]);
+  }, [c.prompt, reviewJob?.enhanced_prompt]);
 
   const outPx = hasOutpaint(c.outpaint) && c.refs[0] ? expansionPixels(c.outpaint!, c.refs[0].width, c.refs[0].height) : null;
 
-  const placeholder = !hasImages
+  const placeholder = reviewing
+    ? reviewJob?.status === "starting_backend" || reviewJob?.status === "queued"
+      ? "Prompt+ is getting ready…"
+      : hasImages
+        ? "Prompt+ is looking at your images…"
+        : "Prompt+ is reading your idea…"
+    : !hasImages
     ? hasProject
       ? "Describe a new image: subject, what it's doing, setting…"
       : "Describe an image (subject, action, setting) or drop one in to edit…"
+    : composing(c)
+      ? c.refs.length > 1
+        ? "Describe the new image: who or what from image 1, image 2… and the scene…"
+        : "Describe the new image with the reference: the scene, what it's doing…"
     : c.refs.length > 1
       ? "Describe how to combine image 1, image 2…"
       : c.mask
@@ -429,11 +526,13 @@ export function Composer() {
         <textarea
           id="prompt"
           ref={taRef}
-          className="prompt"
+          className={`prompt ${reviewing ? "writing" : ""}`}
           rows={1}
-          value={c.prompt}
+          value={reviewing ? (reviewJob?.enhanced_prompt ?? "") : c.prompt}
+          readOnly={reviewing}
           placeholder={placeholder}
-          onChange={(e) => updateComposer({ prompt: e.target.value })}
+          // Emptying a prompt Prompt+ wrote starts over with the user's own words.
+          onChange={(e) => updateComposer({ prompt: e.target.value, ...(e.target.value.trim() ? {} : { enhancedFrom: null }) })}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
@@ -448,6 +547,7 @@ export function Composer() {
           }}
           spellCheck
         />
+        {c.enhancedFrom && !reviewing && <EnhancedFrom words={c.enhancedFrom} />}
         <div className="controls">
           <AddImage />
 
@@ -466,7 +566,7 @@ export function Composer() {
                 </button>
               )}
             >
-              {(close) => <AspectGrid value={custom ? aspectLabel(c.customWidth, c.customHeight) : c.aspect} onPick={(r) => (pickAspect(r), close())} auto={{ sub: hasImages ? "Same as image 1" : "From the prompt, else square" }} />}
+              {(close) => <AspectGrid value={custom ? aspectLabel(c.customWidth, c.customHeight) : c.aspect} onPick={(r) => (pickAspect(r), close())} auto={{ sub: newImage ? "From the prompt, else square" : "Same as image 1" }} />}
             </Popover>
           )}
 
@@ -497,22 +597,7 @@ export function Composer() {
             }
           </Popover>
 
-          {canEnhance && (
-            <button
-              className={`pill toggle ${c.enhance ? "on" : ""}`}
-              role="switch"
-              aria-checked={c.enhance}
-              onClick={() => updateComposer({ enhance: !c.enhance })}
-              title={
-                c.enhance
-                  ? "Prompt+ on: before making the image, the model rewrites your prompt as a detailed English description (looking at your image for edits). You see it being written; the result keeps both. Click to turn off."
-                  : "Prompt+: let the model rewrite a short prompt, in any language, as a detailed English description before making the image. Adds a few seconds."
-              }
-            >
-              <WandSparkles size={15} />
-              <span className="lbl">Prompt+</span>
-            </button>
-          )}
+          {canEnhance && <PromptPlus />}
 
           <LoraBadge />
 
@@ -543,9 +628,21 @@ export function Composer() {
           <span className="plan-hint" title={hintTitle}>
             {hint}
           </span>
-          <button className="send" title={hasImages ? "Apply (Enter)" : "Create (Enter)"} aria-label="Generate" disabled={!c.prompt.trim() && needsPrompt(c)} onClick={() => submitComposer()}>
-            <ArrowUp size={18} strokeWidth={2.4} />
-          </button>
+          {reviewing ? (
+            <button className="send" title="Stop Prompt+ (your prompt stays)" aria-label="Stop Prompt+" onClick={() => cancelPromptReview()}>
+              <Square size={14} strokeWidth={2.4} />
+            </button>
+          ) : (
+            <button
+              className="send"
+              title={wantsPromptReview(c) ? "Write the prompt with Prompt+ (Enter)" : newImage ? "Create (Enter)" : "Apply (Enter)"}
+              aria-label={wantsPromptReview(c) ? "Write the prompt" : "Generate"}
+              disabled={!c.prompt.trim() && needsPrompt(c)}
+              onClick={() => submitComposer()}
+            >
+              {wantsPromptReview(c) ? <WandSparkles size={17} strokeWidth={2.2} /> : <ArrowUp size={18} strokeWidth={2.4} />}
+            </button>
+          )}
         </div>
       </div>
     </div>

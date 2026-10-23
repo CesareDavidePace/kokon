@@ -28,6 +28,9 @@ pub enum Mode {
     Inpaint,
     Outpaint,
     MultiReference,
+    /// A new image that uses the input images as references (people, products, a style):
+    /// sized like text-to-image, not like image 1.
+    Compose,
     Upscale,
 }
 
@@ -39,6 +42,7 @@ pub enum ResolvedMode {
     Inpaint,
     Outpaint,
     MultiReference,
+    Compose,
     Upscale,
 }
 
@@ -50,6 +54,7 @@ impl ResolvedMode {
             Self::Inpaint => "Inpainting",
             Self::Outpaint => "Outpainting",
             Self::MultiReference => "Multi-reference",
+            Self::Compose => "New image from references",
             Self::Upscale => "Upscale",
         }
     }
@@ -245,7 +250,8 @@ pub struct GenerationRequest {
     pub quality: Quality,
     #[serde(default)]
     pub resolution: ResolutionMode,
-    /// "auto", "1:1", "16:9", ... (text-to-image, edit, multi-reference; image 1's shape when unset).
+    /// "auto", "1:1", "16:9", ... (text-to-image, compose, edit, multi-reference). Unset: image 1's
+    /// shape for edits and combines; from the prompt, else square, for new images.
     #[serde(default)]
     pub aspect_ratio: Option<String>,
     #[serde(default)]
@@ -272,9 +278,17 @@ pub struct GenerationRequest {
     #[serde(default)]
     pub private: bool,
     /// Prompt enhancer: the text encoder's LLM rewrites `prompt` into a full prompt before
-    /// generating (text-to-image, edits, combines; engines with text generation only).
+    /// generating (text-to-image, compositions, edits, combines; engines with text generation only).
     #[serde(default)]
     pub enhance: bool,
+    /// Prompt+ review: with `enhance`, only write the prompt. The job ends with it in
+    /// `JobView::enhanced_prompt` and no image, so the user can read and change it first.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub enhance_only: bool,
+    /// The user's own words when `prompt` was written by Prompt+ in a review (and maybe changed
+    /// by the user since): kept as the record's original prompt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enhanced_from: Option<String>,
     /// The user's LoRAs to use, by id or name (Settings → LoRA); sent by the app only, None =
     /// no LoRA (MCP and the HTTP API don't use LoRAs for now). Not used by upscales.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -822,6 +836,9 @@ fn detect_mode(req: &GenerationRequest, inputs: &PlanInputs) -> Result<(Resolved
             need(n >= 1, "Add at least one reference image.")?;
             explicit(ResolvedMode::MultiReference, "Selected")
         }
+        Mode::Compose => {
+            if n == 0 { explicit(ResolvedMode::Generate, "Selected (no reference images)") } else { explicit(ResolvedMode::Compose, "Selected") }
+        }
         Mode::Inpaint => {
             need(n >= 1, "Add an image to inpaint.")?;
             need(has_mask, "Paint the area to change first.")?;
@@ -879,6 +896,9 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
         return Err(AppError::invalid(format!("Use at most {} reference images.", rec.max_references)));
     }
     let (mode, auto_mode, mode_reason) = detect_mode(req, inputs)?;
+    if req.enhance_only && !(req.enhance && crate::enhancer::applies(mode)) {
+        return Err(AppError::invalid("Prompt+ writes prompts for new images, edits and combines only."));
+    }
     let inpaint_action = (mode == ResolvedMode::Inpaint).then(|| req.inpaint_action.resolve(&req.prompt));
     // Upscales and removals need no description.
     let prompt_optional = mode == ResolvedMode::Upscale || inpaint_action == Some(InpaintAction::Remove);
@@ -941,7 +961,18 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
     let working: WorkingCanvas;
 
     match mode {
-        ResolvedMode::Generate => {
+        ResolvedMode::Generate | ResolvedMode::Compose => {
+            // A new image: sized from the chosen size, ratio or prompt, never from the
+            // references, which share the token budget with it (as in edits).
+            let refs: &[Size] = if mode == ResolvedMode::Compose { &inputs.image_sizes } else { &[] };
+            let mut cap = |wanted: u64, notes: &mut Vec<String>| {
+                if refs.is_empty() {
+                    return cap_for_refs(wanted, 0.0, notes);
+                }
+                let a = cap_for_sources(wanted, refs, notes);
+                sources_reduced |= a < wanted;
+                a
+            };
             let explicit_dims = match (req.width, req.height) {
                 (Some(w), Some(h)) => Some((w, h)),
                 _ => match req.aspect_ratio.as_deref().and_then(parse_aspect) {
@@ -958,7 +989,7 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
                 }
                 let src = Size::new(w, h);
                 // Above the VRAM budget: render smaller, then enlarge to the exact size.
-                let area = cap_for_refs(src.area(), 0.0, &mut notes);
+                let area = cap(src.area(), &mut notes);
                 working = plan_working_canvas(src, &CanvasLimits { min_side: 64, ..limits(area, rec) });
                 output = src;
             } else {
@@ -972,10 +1003,15 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
                     })
                     .unwrap_or((1.0, "1:1".into()));
                 let wanted = tier_area.unwrap_or(rec.area_balanced);
-                let area = cap_for_refs(wanted, 0.0, &mut notes);
+                let area = cap(wanted, &mut notes);
                 let size = size_for_aspect(aspect, area, rec);
                 working = plan_working_canvas(size, &limits(size.area(), rec));
                 output = size;
+            }
+            // Each reference at most the reference cap and never larger than the output.
+            let ref_area = ref_cap.min(working.canvas.area());
+            for (i, s) in refs.iter().enumerate() {
+                references.push(RefPlan { index: i, source: *s, canvas: ref_canvas(*s, ref_area, rec) });
             }
         }
         ResolvedMode::Edit | ResolvedMode::MultiReference => {
@@ -1127,7 +1163,7 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
     let large_gpu = !inputs.unified_memory && inputs.vram_total_mib.map(|m| m as f64 / 1024.0 >= 15.0).unwrap_or(false);
     let vae_tile = (vae_tiling && large_gpu && !quick_upscale && total_area > LARGE_GPU_VAE_TILE_AREA)
         .then(|| vae_decode_tile(working.canvas, LARGE_GPU_VAE_TILE_AREA));
-    if (working.content.area() as f64) < output.area() as f64 * 0.98 && matches!(mode, ResolvedMode::Generate | ResolvedMode::Edit | ResolvedMode::MultiReference) {
+    if (working.content.area() as f64) < output.area() as f64 * 0.98 && matches!(mode, ResolvedMode::Generate | ResolvedMode::Edit | ResolvedMode::MultiReference | ResolvedMode::Compose) {
         notes.push(format!(
             "Rendered at {}×{}, then enlarged to {}×{} with {}.",
             working.content.width,
@@ -1188,7 +1224,7 @@ pub fn plan(req: &GenerationRequest, inputs: &PlanInputs, rec: &RecommendedSetti
         upscale,
         custom_sigmas: if quick_upscale { Vec::new() } else { TURBO_SIGMAS.to_vec() },
         vae_tile,
-        reference_detail: matches!(mode, ResolvedMode::Edit | ResolvedMode::MultiReference | ResolvedMode::Inpaint).then(|| adv.reference_detail.unwrap_or_default()),
+        reference_detail: matches!(mode, ResolvedMode::Edit | ResolvedMode::MultiReference | ResolvedMode::Compose | ResolvedMode::Inpaint).then(|| adv.reference_detail.unwrap_or_default()),
     })
 }
 
@@ -1695,6 +1731,67 @@ mod tests {
             assert!(r.canvas.canvas.is_aligned(32));
             assert!(r.canvas.canvas.area() <= p.working.area());
         }
+    }
+
+    #[test]
+    fn compose_is_sized_like_a_new_image_not_like_its_references() {
+        let budget = (planning_token_budget(Some(16303), false) * PIXELS_PER_TOKEN) as f64 * 1.05;
+        let mut r = req("the woman from image 1 drinking the coffee from image 2 in a bar");
+        r.mode = Mode::Compose;
+        // A small portrait and a product shot: Balanced, square (no ratio chosen or in the prompt).
+        let sizes = [(480, 720), (1200, 1200)];
+        let p = plan(&r, &inputs(&sizes), &rec()).unwrap();
+        assert_eq!((p.mode, p.auto_mode), (ResolvedMode::Compose, false));
+        assert_eq!(p.output, Size::new(1536, 1536), "the preset's size, not image 1's");
+        let idx: Vec<usize> = p.references.iter().map(|r| r.index).collect();
+        assert_eq!(idx, vec![0, 1]);
+        for x in &p.references {
+            assert!(x.canvas.canvas.area() <= STANDARD_REFERENCE_AREA && x.canvas.canvas.is_aligned(32));
+        }
+        assert!((p.working.area() + p.references.iter().map(|r| r.canvas.canvas.area()).sum::<u64>()) as f64 <= budget);
+        assert_eq!(p.reference_detail, Some(ReferenceDetail::Standard));
+        assert_eq!(p.strength, None);
+        // The chosen ratio, a ratio in the prompt and an exact size all apply, as in text-to-image.
+        r.aspect_ratio = Some("16:9".into());
+        let p = plan(&r, &inputs(&sizes), &rec()).unwrap();
+        assert!((p.output.width as f64 / p.output.height as f64 / (16.0 / 9.0) - 1.0).abs() < 0.02, "{:?}", p.output);
+        r.aspect_ratio = None;
+        r.prompt = "poster 9:16 of the person from image 1".into();
+        assert!(plan(&r, &inputs(&sizes), &rec()).unwrap().output.height > plan(&r, &inputs(&sizes), &rec()).unwrap().output.width);
+        r.resolution = ResolutionMode::Custom;
+        (r.width, r.height) = (Some(1200), Some(800));
+        assert_eq!(plan(&r, &inputs(&sizes), &rec()).unwrap().output, Size::new(1200, 800));
+        // Quality on 16 GB: native 2K shares the budget with the references.
+        let mut r = req("both of them on a beach");
+        (r.mode, r.quality) = (Mode::Compose, Quality::Quality);
+        let p = plan(&r, &inputs(&[(4000, 3000), (4000, 3000), (3000, 4000)]), &rec()).unwrap();
+        assert!((p.working.area() + p.references.iter().map(|r| r.canvas.canvas.area()).sum::<u64>()) as f64 <= budget);
+        assert!(p.references.iter().all(|x| x.canvas.canvas.area() <= p.working.area()));
+        // Full detail: references up to the output's area.
+        r.advanced.reference_detail = Some(ReferenceDetail::Full);
+        r.quality = Quality::Fast;
+        let p = plan(&r, &inputs(&[(4000, 3000)]), &rec()).unwrap();
+        assert!(p.references[0].canvas.canvas.area() <= p.working.area() && p.references[0].canvas.canvas.area() > STANDARD_REFERENCE_AREA / 2);
+        // Without images it is text-to-image.
+        let p = plan(&r, &inputs(&[]), &rec()).unwrap();
+        assert!(p.mode == ResolvedMode::Generate && p.references.is_empty());
+    }
+
+    #[test]
+    fn prompt_review_needs_the_enhancer_and_a_prompt_it_writes() {
+        let mut r = req("un gatto");
+        r.enhance_only = true;
+        assert!(plan(&r, &inputs(&[]), &rec()).is_err(), "review without Prompt+");
+        r.enhance = true;
+        assert!(plan(&r, &inputs(&[]), &rec()).is_ok());
+        r.mode = Mode::Compose;
+        assert_eq!(plan(&r, &inputs(&[(800, 800)]), &rec()).unwrap().mode, ResolvedMode::Compose);
+        r.mode = Mode::Outpaint;
+        r.outpaint = Some(OutpaintSpec { left: 0.2, right: 0.0, top: 0.0, bottom: 0.0, units: Default::default() });
+        assert!(plan(&r, &inputs(&[(800, 800)]), &rec()).is_err(), "expansions wrap the prompt themselves");
+        // The fields stay out of saved requests unless used.
+        let v = serde_json::to_value(req("x")).unwrap();
+        assert!(v.get("enhance_only").is_none() && v.get("enhanced_from").is_none());
     }
 
     #[test]

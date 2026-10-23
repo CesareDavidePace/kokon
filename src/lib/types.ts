@@ -1,6 +1,6 @@
 // Mirrors the kokon-service JSON contract (crates/qls-core).
 
-export type Mode = "auto" | "generate" | "edit" | "inpaint" | "outpaint" | "multi_reference" | "upscale";
+export type Mode = "auto" | "generate" | "edit" | "inpaint" | "outpaint" | "multi_reference" | "compose" | "upscale";
 export type ResolvedMode = Exclude<Mode, "auto">;
 /** What made a saved result: a generation mode, or a colour LUT applied to an image. */
 export type RecordMode = ResolvedMode | "lut";
@@ -61,6 +61,10 @@ export interface GenerationRequest {
   private?: boolean;
   /** Prompt enhancer: the model's language model rewrites the prompt first (new images, edits, combines). */
   enhance?: boolean;
+  /** Prompt+ review: only write the prompt (the job ends with `enhanced_prompt` and no image). */
+  enhance_only?: boolean;
+  /** The user's own words when `prompt` was written by Prompt+ in a review. */
+  enhanced_from?: string | null;
   /** LoRA ids to use (the app always sends its list; omitted = none, as for MCP). */
   loras?: string[] | null;
 }
@@ -302,9 +306,10 @@ export interface AppConfig {
   hardwarePreset: string;
   /** Plan as if the GPU had this much VRAM (MiB); 0 = detected. */
   vramOverrideMib: number;
-  /** Prompt enhancer instructions for new images and for edits; "" = the built-in ones. */
+  /** Prompt enhancer instructions for new images, edits and new images from references; "" = the built-in ones. */
   enhancerT2iPrompt?: string;
   enhancerEditPrompt?: string;
+  enhancerComposePrompt?: string;
   ui: Record<string, unknown>;
 }
 

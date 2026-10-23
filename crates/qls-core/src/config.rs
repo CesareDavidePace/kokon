@@ -335,10 +335,12 @@ pub struct AppConfig {
     /// Plan as if the GPU had this much VRAM (MiB); 0 = use the detected size. For testing
     /// smaller cards on a larger one, together with a VRAM ballast (scripts/dev).
     pub vram_override_mib: u64,
-    /// System prompts of the prompt enhancer for text-to-image and for edits; "" = the
-    /// built-in ones (`enhancer::T2I_SYSTEM_PROMPT`, `enhancer::EDIT_SYSTEM_PROMPT`).
+    /// System prompts of the prompt enhancer for text-to-image, edits and new images from
+    /// references; "" = the built-in ones (`enhancer::T2I_SYSTEM_PROMPT`, `EDIT_SYSTEM_PROMPT`,
+    /// `COMPOSE_SYSTEM_PROMPT`).
     pub enhancer_t2i_prompt: String,
     pub enhancer_edit_prompt: String,
+    pub enhancer_compose_prompt: String,
     /// The user's LoRAs (Settings → LoRA), each a copy in `lora_dir`. Changed only through the
     /// LoRA endpoints: a whole-config save keeps the current list (`Engine::set_config`).
     pub loras: Vec<LoraEntry>,
@@ -379,6 +381,7 @@ impl Default for AppConfig {
             vram_override_mib: 0,
             enhancer_t2i_prompt: String::new(),
             enhancer_edit_prompt: String::new(),
+            enhancer_compose_prompt: String::new(),
             loras: vec![],
             ui: serde_json::json!({}),
         }
@@ -595,7 +598,11 @@ impl AppConfig {
     /// other profile is the user's, and the active profile exists.
     pub fn normalize(&mut self) {
         // A prompt equal to the built-in one is saved as "" so it follows future defaults.
-        for (custom, default) in [(&mut self.enhancer_t2i_prompt, crate::enhancer::T2I_SYSTEM_PROMPT), (&mut self.enhancer_edit_prompt, crate::enhancer::EDIT_SYSTEM_PROMPT)] {
+        for (custom, default) in [
+            (&mut self.enhancer_t2i_prompt, crate::enhancer::T2I_SYSTEM_PROMPT),
+            (&mut self.enhancer_edit_prompt, crate::enhancer::EDIT_SYSTEM_PROMPT),
+            (&mut self.enhancer_compose_prompt, crate::enhancer::COMPOSE_SYSTEM_PROMPT),
+        ] {
             if custom.trim().is_empty() || custom.trim() == default {
                 custom.clear();
             }
@@ -834,7 +841,7 @@ impl AppConfig {
             return Err(AppError::new(ErrorCode::InvalidConfig, "Simulated VRAM must be between 4096 and 196608 MiB (or 0 to detect it)."));
         }
         let max = crate::enhancer::MAX_SYSTEM_PROMPT_CHARS;
-        if self.enhancer_t2i_prompt.chars().count() > max || self.enhancer_edit_prompt.chars().count() > max {
+        if [&self.enhancer_t2i_prompt, &self.enhancer_edit_prompt, &self.enhancer_compose_prompt].iter().any(|p| p.chars().count() > max) {
             return Err(AppError::new(ErrorCode::InvalidConfig, format!("Prompt enhancer instructions can be at most {max} characters.")));
         }
         Ok(())
@@ -875,7 +882,7 @@ mod tests {
         assert!(c.enhancer_t2i_prompt.is_empty() && c.enhancer_edit_prompt.is_empty(), "built-in by default");
         // Older settings files have no such keys.
         let old: AppConfig = serde_json::from_str(r#"{"schemaVersion":9}"#).unwrap();
-        assert!(old.enhancer_edit_prompt.is_empty());
+        assert!(old.enhancer_edit_prompt.is_empty() && old.enhancer_compose_prompt.is_empty());
         // A restored default is saved blank, so it follows future defaults; a custom one stays.
         c.enhancer_t2i_prompt = format!("{}\n", crate::enhancer::T2I_SYSTEM_PROMPT);
         c.enhancer_edit_prompt = "Retouch jewelry only.".into();
@@ -884,7 +891,13 @@ mod tests {
         let v = serde_json::to_value(&c).unwrap();
         assert_eq!(v["enhancerEditPrompt"], "Retouch jewelry only.");
         assert!(c.validate().is_ok());
+        c.enhancer_compose_prompt = format!(" {} ", crate::enhancer::COMPOSE_SYSTEM_PROMPT);
+        c.normalize();
+        assert!(c.enhancer_compose_prompt.is_empty());
         c.enhancer_edit_prompt = "x".repeat(crate::enhancer::MAX_SYSTEM_PROMPT_CHARS + 1);
+        assert!(c.validate().is_err());
+        c.enhancer_edit_prompt.clear();
+        c.enhancer_compose_prompt = "x".repeat(crate::enhancer::MAX_SYSTEM_PROMPT_CHARS + 1);
         assert!(c.validate().is_err());
     }
 

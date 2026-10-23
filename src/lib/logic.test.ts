@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  activeLoras, activeOverrides, buildRequest, toggleLora, MAX_LORAS, jobPercent, compareBase, composerFromRecord, enhancerApplies, diffPixels, emptyComposer, expansionPixels, expansionPreset, jobLabel, jobSecondsLeft, lutInfo, moveRef, needsPrompt, normalizeQuality, persistentAdvanced, pipelineSummary,
+  activeLoras, activeOverrides, buildRequest, composing, editing, reviewRequest, wantsPromptReview, toggleLora, MAX_LORAS, jobPercent, compareBase, composerFromRecord, enhancerApplies, diffPixels, emptyComposer, expansionPixels, expansionPreset, jobLabel, jobSecondsLeft, lutInfo, moveRef, needsPrompt, normalizeQuality, persistentAdvanced, pipelineSummary,
   planPipeline, remainingSeconds, sizeForWidth, timeAgo, upscaleRequest, upscaleTargets, versionLabels, type JobClock, type Ref,
   neighbourAfterRemoval, previewIndex, starPromptDue, STAR_PROMPT_AFTER, formatBytes, formatDuration, installItemShort, installItemText, installProgress, installStep, installTimeLeft, timelineLinks, undoTarget, aspectLabel, parseRatio, sizeForRatio, expandToRatio, expandToSize, arcLayout,
 } from "./logic";
@@ -116,6 +116,44 @@ describe("buildRequest", () => {
     expect([c.prompt, c.enhance]).toEqual(["un gatto", true]);
     const plain = composerFromRecord({ ...g, original_prompt: null }, { ...emptyComposer(), enhance: true });
     expect([plain.prompt, plain.enhance]).toEqual(["A tabby cat sleeping on a sunlit windowsill.", false]);
+  });
+  it("New image with images makes a new image that uses them as references", () => {
+    const c = { ...emptyComposer(), prompt: "lei che beve questo caffè", refs: [ref(1), ref(2)], create: true, aspect: "4:5" };
+    expect(composing(c) && !editing(c)).toBe(true);
+    const r = buildRequest(c);
+    expect([r.mode, r.images, r.aspect_ratio]).toEqual(["compose", ["input:1", "input:2"], "4:5"]);
+    // A mask or an expansion left from editing image 1 does not apply to a new image.
+    const leftovers = { ...c, mask: { inputId: "m", refKey: "k1" }, outpaint: { left: 10, right: 0, top: 0, bottom: 0, units: "percent" as const } };
+    const r2 = buildRequest({ ...leftovers, enhance: true });
+    expect([r2.mask, r2.outpaint, r2.aspect_ratio, r2.enhance]).toEqual([null, null, "4:5", true]);
+    // Without images it is text-to-image; editing sends the images as before.
+    expect(buildRequest({ ...c, refs: [] }).mode).toBe("auto");
+    expect(buildRequest({ ...c, create: false }).mode).toBe("auto");
+    expect(editing({ ...c, create: false })).toBe(true);
+  });
+  it("reopening a result made from references goes back to New image with them", () => {
+    const g = { prompt: "x", original_prompt: null, mode: "compose", references: [{ index: 0, input_id: "a", width: 10, height: 10 }], mask_input_id: null, outpaint: null, quality: "fast", request: { mode: "compose", images: ["input:a"] } } as unknown as GenerationRecord;
+    const c = composerFromRecord(g, emptyComposer());
+    expect([c.create, c.mode, buildRequest(c).mode]).toEqual([true, "auto", "compose"]);
+  });
+  it("Prompt+ review: Enter first writes the prompt into the box, then sends it as written", () => {
+    expect(emptyComposer().enhanceReview).toBe(false);
+    expect(emptyComposer({ enhanceReview: true }).enhanceReview).toBe(true);
+    const c = { ...emptyComposer(), prompt: "un gatto", enhance: true, enhanceReview: true };
+    expect(wantsPromptReview(c)).toBe(true);
+    expect(wantsPromptReview({ ...c, enhanceReview: false })).toBe(false);
+    expect(wantsPromptReview({ ...c, enhance: false })).toBe(false);
+    expect(wantsPromptReview({ ...c, prompt: "  " })).toBe(false);
+    expect(wantsPromptReview({ ...c, refs: [ref(1)], mask: { inputId: "m", refKey: "k1" } })).toBe(false);
+    const r = reviewRequest(c);
+    expect([r.enhance, r.enhance_only, r.prompt]).toEqual([true, true, "un gatto"]);
+    // The written prompt is sent as is, with the user's words, and not rewritten again.
+    const written = { ...c, prompt: "A ginger cat asleep on a windowsill.", enhancedFrom: "un gatto" };
+    expect(wantsPromptReview(written)).toBe(false);
+    const sent = buildRequest(written);
+    expect([sent.prompt, sent.enhanced_from, "enhance" in sent, "enhance_only" in sent]).toEqual(["A ginger cat asleep on a windowsill.", "un gatto", false, false]);
+    // Emptied box: the user's next words are rewritten again.
+    expect("enhanced_from" in buildRequest({ ...written, prompt: " " })).toBe(false);
   });
 });
 

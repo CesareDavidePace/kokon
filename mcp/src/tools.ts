@@ -23,7 +23,14 @@ const preview = z.boolean().describe("Also return a small JPEG preview in the to
 
 export const schemas = {
   generate_image: {
-    prompt: prompt.describe("What to generate, in natural language"),
+    prompt: prompt.describe(
+      "The final prompt, written by you in English and used as is (Kokon does not rewrite it): one paragraph of about 60-200 words describing the finished image: medium and style first, the subject and what it does, the setting and background, composition and camera view, and the light. Copy any text to show exactly, in double quotes. No quality tags or sizes. With reference_images: refer to them as image 1, image 2..., say what to take from each (a person's face and look, a product with its shape, colours and logo, a style) and describe the new scene around them; never ask to keep a reference unchanged.",
+    ),
+    reference_images: z
+      .array(z.string().min(1))
+      .max(10)
+      .optional()
+      .describe("Optional images the new image uses (a person, a product, a place, a style), in order; refer to them as image 1, image 2, ... in the prompt. The output is sized like any new image, not like the references. To change an image instead, use edit_image or edit_images."),
     width: dim.optional().describe("Output width in pixels (needs height too). Omit to choose automatically."),
     height: dim.optional().describe("Output height in pixels (needs width too)."),
     aspect_ratio: aspect.optional(),
@@ -34,7 +41,9 @@ export const schemas = {
   },
   edit_image: {
     image_path: z.string().min(1).describe("Image to edit (absolute, or relative to the project)"),
-    prompt: prompt.describe("The change to make, e.g. 'make the background nighttime, keep the foreground unchanged'"),
+    prompt: prompt.describe(
+      "The edit instruction, written by you in English and used as is (Kokon does not rewrite it): start with the operation (Change, Replace, Remove, Add, Turn...), say exactly what changes, where, and what it becomes, in 20-60 words; describe only what changes and end with 'Keep everything else in the image unchanged.' For a whole-image style or mood change, end with 'Keep the composition and the subjects unchanged.' instead.",
+    ),
     output_path: outputPath.optional(),
     quality: quality.optional(),
     preserve_dimensions: z.boolean().optional().describe("Keep the input's exact width/height (default true)"),
@@ -43,7 +52,9 @@ export const schemas = {
   },
   edit_images: {
     image_paths: z.array(z.string().min(1)).min(1).max(10).describe("Reference images in order; refer to them as image 1, image 2, ... in the prompt"),
-    prompt: prompt.describe("e.g. 'Use the person from image 1, the clothing from image 2 and the lighting of image 3'"),
+    prompt: prompt.describe(
+      "The edit instruction, written by you in English and used as is (Kokon does not rewrite it): image 1 is the image being changed; start with Place or Combine, say what is taken from each image (image 2, image 3...) and exactly where it goes in image 1, with matching light and shadows, and end with 'Keep everything else in image 1 unchanged.'",
+    ),
     width: dim.optional(),
     height: dim.optional(),
     aspect_ratio: aspect.optional(),
@@ -162,7 +173,8 @@ export function label(j: JobView): string {
 }
 
 async function runJob(ctx: ToolContext, body: Record<string, unknown>, includePreview: boolean): Promise<ToolResult> {
-  const job = await ctx.client.call<JobView>("POST", "/jobs", { ...body, workspace: ctx.cwd, client: "mcp" });
+  // The calling model writes the prompt: Kokon's own prompt writer (Prompt+) never runs for MCP.
+  const job = await ctx.client.call<JobView>("POST", "/jobs", { ...body, enhance: false, workspace: ctx.cwd, client: "mcp" });
   let last = "";
   let cancelled = false;
   const onAbort = () => {
@@ -245,13 +257,15 @@ function validateDims(w?: number, h?: number) {
 export const handlers = {
   async generate_image(a: Args<"generate_image">, ctx: ToolContext) {
     validateDims(a.width, a.height);
-    const out = a.output_path ? checkOutput(a.output_path, ctx.cwd, await roots(ctx)) : undefined;
+    const r = await roots(ctx);
+    const refs = (a.reference_images ?? []).map((x) => checkInput(x, ctx.cwd, r));
+    const out = a.output_path ? checkOutput(a.output_path, ctx.cwd, r) : undefined;
     return runJob(
       ctx,
       {
         prompt: a.prompt,
-        mode: "generate",
-        images: [],
+        mode: refs.length ? "compose" : "generate",
+        images: refs,
         width: a.width,
         height: a.height,
         resolution: a.width ? "custom" : "auto",

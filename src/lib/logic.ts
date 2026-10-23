@@ -31,6 +31,15 @@ export interface Composer {
   advanced: Advanced;
   /** Prompt enhancer on (remembered; used only where `enhancerApplies`). */
   enhance: boolean;
+  /** Prompt+ writes its prompt into the box first, to read and change before making the image
+   * (remembered); otherwise it writes and the image follows. */
+  enhanceReview: boolean;
+  /** The user's own words when the prompt in the box was written by Prompt+ (a review, or a
+   * reused enhanced prompt): sent as is, without rewriting it again. */
+  enhancedFrom: string | null;
+  /** "New image" chosen: images added to the prompt are references for a new image (people,
+   * products, a style), not the image to edit. */
+  create: boolean;
   /** LoRAs switched on in this project; null = the ones on by default (`activeLoras`). */
   loras: string[] | null;
 }
@@ -58,8 +67,17 @@ export const emptyComposer = (prefs?: Partial<Composer>): Composer => ({
   seed: null,
   advanced: newChatAdvanced(prefs?.advanced),
   enhance: prefs?.enhance === true,
+  enhanceReview: prefs?.enhanceReview === true,
+  enhancedFrom: null,
+  create: false,
   loras: null,
 });
+
+/** The prompt makes a new image from the reference images (rather than editing image 1). */
+export const composing = (c: Pick<Composer, "create" | "refs">): boolean => c.create && c.refs.length > 0;
+
+/** The prompt edits image 1 (with any other images as references). */
+export const editing = (c: Pick<Composer, "create" | "refs">): boolean => !c.create && c.refs.length > 0;
 
 /** LoRAs one image can use at once (`lora::MAX_ACTIVE`). */
 export const MAX_LORAS = 3;
@@ -113,19 +131,24 @@ export function hasOutpaint(o: OutpaintSpec | null): boolean {
   return !!o && (o.left > 0 || o.right > 0 || o.top > 0 || o.bottom > 0);
 }
 
+/** A mask painted on image 1 that the request uses (not for a new image from references). */
+const maskInUse = (c: Composer) => !composing(c) && !!c.mask && !!c.refs[0] && c.mask.refKey === c.refs[0].key;
+const outpaintInUse = (c: Composer) => !composing(c) && hasOutpaint(c.outpaint);
+
 /** Composer state -> stable service request. */
 export function buildRequest(c: Composer, parentId?: string | null): GenerationRequest {
-  const maskValid = c.mask && c.refs[0] && c.mask.refKey === c.refs[0].key;
+  const maskValid = maskInUse(c);
   const custom = c.resolution === "custom";
   // Inpaint and expand keep the source's shape; create, edit and combine take the chosen ratio.
-  const shaped = !maskValid && !hasOutpaint(c.outpaint);
+  const shaped = !maskValid && !outpaintInUse(c);
+  const reviewed = !!c.enhancedFrom && !!c.prompt.trim();
   return {
     prompt: c.prompt.trim(),
-    mode: c.mode,
-    images: c.mode === "generate" ? [] : c.refs.map((r) => r.source),
+    mode: composing(c) ? "compose" : c.mode,
+    images: c.mode === "generate" && !composing(c) ? [] : c.refs.map((r) => r.source),
     mask: maskValid ? `input:${c.mask!.inputId}` : null,
     ...(maskValid ? { inpaint_action: c.inpaintAction } : {}),
-    outpaint: hasOutpaint(c.outpaint) ? c.outpaint : null,
+    outpaint: outpaintInUse(c) ? c.outpaint : null,
     quality: c.quality,
     resolution: c.resolution,
     aspect_ratio: shaped && c.aspect !== "auto" && !custom ? c.aspect : null,
@@ -136,21 +159,30 @@ export function buildRequest(c: Composer, parentId?: string | null): GenerationR
     advanced: cleanAdvanced(c.advanced),
     client: "ui",
     parent_id: parentId ?? null,
-    ...(c.enhance && enhancerApplies(c) ? { enhance: true } : {}),
+    // A prompt Prompt+ wrote already is sent as it is, with the user's words kept beside it.
+    ...(reviewed ? { enhanced_from: c.enhancedFrom } : c.enhance && enhancerApplies(c) ? { enhance: true } : {}),
   };
+}
+
+/** Prompt+ in review mode: Enter first has the prompt written into the box (no image yet). */
+export function wantsPromptReview(c: Composer): boolean {
+  return c.enhance && c.enhanceReview && enhancerApplies(c) && !c.enhancedFrom && !!c.prompt.trim();
+}
+
+/** The request that only writes the prompt (Prompt+ review). */
+export function reviewRequest(c: Composer): GenerationRequest {
+  return { ...buildRequest(c), enhance: true, enhance_only: true };
 }
 
 /** The prompt enhancer works on new images, edits and combines; a painted area or an expansion
  * wraps the prompt in its own instruction. */
 export function enhancerApplies(c: Composer): boolean {
-  const maskValid = c.mask && c.refs[0] && c.mask.refKey === c.refs[0].key;
-  return !maskValid && !hasOutpaint(c.outpaint);
+  return !maskInUse(c) && !outpaintInUse(c);
 }
 
 /** False only for a removal in a painted area, which needs no description. */
 export function needsPrompt(c: Composer): boolean {
-  const maskValid = c.mask && c.refs[0] && c.mask.refKey === c.refs[0].key;
-  return !(maskValid && c.inpaintAction === "remove");
+  return !(maskInUse(c) && c.inpaintAction === "remove");
 }
 
 /** Advanced fields that change how the model samples. They last for the session only: a value
@@ -192,12 +224,14 @@ export function composerFromRecord(g: GenerationRecord, base: Composer): Compose
     // An enhanced result is the user's prompt with the enhancer on (Reuse prompt takes its text).
     prompt: g.original_prompt ?? g.prompt,
     enhance: !!g.original_prompt,
+    enhancedFrom: null,
+    create: g.mode === "compose" && refs.length > 0,
     refs,
     mask: g.mask_input_id && refs[0] ? { inputId: g.mask_input_id, refKey: refs[0].key } : null,
     inpaintAction: req?.inpaint_action ?? "edit",
     outpaint: g.outpaint ? { ...g.outpaint, units: "pixels" } : null,
     // Upscales are started from the image toolbar, not the composer.
-    mode: req?.mode && req.mode !== "upscale" && g.mode !== "lut" ? req.mode : "auto",
+    mode: req?.mode && req.mode !== "upscale" && req.mode !== "compose" && g.mode !== "lut" ? req.mode : "auto",
     quality: normalizeQuality(g.quality, base.quality),
     resolution: req?.resolution ?? base.resolution,
     aspect: req?.aspect_ratio ?? "auto",
@@ -226,6 +260,7 @@ export const MODE_LABEL: Record<Mode | "lut", string> = {
   inpaint: "Inpaint",
   outpaint: "Expand",
   multi_reference: "Combine",
+  compose: "From references",
   upscale: "Upscale",
   lut: "LUT",
 };
@@ -406,7 +441,7 @@ export interface JobClock {
 }
 
 /** About how many words the built-in enhancer prompts ask for. */
-const ENHANCER_WORDS = { generate: 110, edit: 35 };
+const ENHANCER_WORDS = { generate: 110, compose: 150, edit: 35 };
 const SAVE_SECONDS = 1;
 
 /** Time left of a phase estimated at `est` seconds, `t` seconds in. Past ~80 % of the
@@ -432,7 +467,7 @@ export function jobSecondsLeft(j: JobView, c: JobClock): number {
   const decodeS = genS * 0.1;
   const batch = Math.max(1, p?.batch_count ?? 1);
   const imagesAfter = j.image && j.image[1] > 1 ? j.image[1] - j.image[0] : 0;
-  const words = ENHANCER_WORDS[p?.mode === "generate" ? "generate" : "edit"];
+  const words = ENHANCER_WORDS[p?.mode === "generate" || p?.mode === "compose" ? p.mode : "edit"];
   const enhanceS = c.enhance ? 0.5 + words * c.enhancerSecondsPerWord : 0;
   const fromGeneration = genS + upS + SAVE_SECONDS;
   switch (j.status) {

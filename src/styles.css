@@ -384,6 +384,15 @@ svg { display: block; flex: none; }
 
 .prompt { width: 100%; border: 0; outline: 0; resize: none; background: transparent; font-size: 15.5px; line-height: 1.5; padding: 4px 2px; max-height: 200px; min-height: 26px; }
 .prompt::placeholder { color: var(--text-3); }
+/* Prompt+ review: its prompt streams into the box, read-only until it is done */
+.prompt.writing { color: var(--text-2); cursor: progress; }
+.prompt.writing::placeholder { animation: writing-pulse 1.6s ease-in-out infinite; }
+@keyframes writing-pulse { 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .prompt.writing::placeholder { animation: none; } }
+.enhanced-from { display: flex; align-items: center; gap: 6px; margin-top: 4px; padding: 0 2px; color: var(--text-3); font-size: 12px; min-width: 0; }
+.enhanced-from .text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.enhanced-from button.link { display: inline-flex; align-items: center; gap: 3px; text-decoration: none; color: var(--text-2); flex-shrink: 0; }
+.enhanced-from button.link:hover { color: var(--text); text-decoration: underline; }
 .controls { display: flex; align-items: center; gap: 5px; margin-top: 6px; }
 .controls .spacer { flex: 1; }
 .plan-hint { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-right: 6px; }
@@ -664,6 +673,9 @@ pre.diag { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font
 
 /* ---------- aspect ratio and size menus ---------- */
 .popover.wide { min-width: 0; }
+/* Prompt+ menu: one line per choice */
+.popover.prompt-plus { width: 260px; }
+.popover.prompt-plus .opt > span:not(.check) { white-space: nowrap; }
 .ratio-icon { display: inline-grid; place-items: center; flex: none; }
 .ratio-icon i { display: block; border: 1.5px solid currentColor; border-radius: 3px; box-sizing: border-box; }
 .aspect-menu { width: 296px; display: flex; flex-direction: column; gap: 6px; }

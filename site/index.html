@@ -57,7 +57,7 @@
       "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
       "screenshot": "https://kokon.app/assets/kokon-poster.jpg?v=3",
       "image": "https://kokon.app/assets/og.png",
-      "featureList": ["Edit photos with a sentence", "Create images from text", "Prompt+: a few words become a detailed prompt, written by the model already loaded", "Your own Qwen-Image 2.1 LoRAs (beta)", "Paint an area to change only that area (inpainting)", "Remove, replace and add objects", "Expand images beyond their borders (outpainting)", "Before/after comparison and version history", "Private mode", "MCP server and local HTTP API for AI agents", "Runs offline on NVIDIA, AMD, Intel and Apple Silicon"],
+      "featureList": ["Edit photos with a sentence", "Create images from text", "Prompt+: a few words become a detailed prompt, written by the model already loaded", "Your own Qwen-Image 2.1 LoRAs (beta)", "Paint an area to change only that area (inpainting)", "Remove, replace and add objects", "Expand images beyond their borders (outpainting)", "Before/after comparison and version history", "Use it from a phone, tablet or laptop in the browser, behind a password", "Docker image for NVIDIA GPUs", "Private mode", "MCP server and local HTTP API for AI agents", "Runs offline on NVIDIA, AMD, Intel and Apple Silicon"],
       "author": { "@id": "https://gabrielelozupone.github.io/#me" },
       "sameAs": ["https://github.com/GabrieleLozupone/kokon", "https://www.npmjs.com/package/kokon-mcp", "https://www.youtube.com/watch?v=y2NAJkZ4vH0"]
     },
@@ -92,7 +92,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/style.css?v=9">
+<link rel="stylesheet" href="assets/style.css?v=10">
+<link rel="stylesheet" href="assets/devices.css?v=1">
 <script type="application/ld+json">
 {
  "@context": "https://schema.org",
@@ -191,7 +192,7 @@
    "name": "Does it run on Linux?",
    "acceptedAnswer": {
     "@type": "Answer",
-    "text": "Yes, in beta, on x86-64: a .deb for Ubuntu, Debian and Mint and an .rpm for Fedora, from the latest GitHub release. NVIDIA cards need the proprietary driver; AMD and Intel cards use Vulkan. A headless server with the interface in your browser, then Docker, come next."
+    "text": "Yes, in beta, on x86-64: a .deb for Ubuntu, Debian and Mint and an .rpm for Fedora, from the latest GitHub release. NVIDIA cards need the proprietary driver; AMD and Intel cards use Vulkan. Since 0.11 it also runs as a headless server with the interface in your browser, and as a Docker image for NVIDIA cards (kokon.app/self-hosted)."
    }
   },
   {
@@ -228,6 +229,14 @@
   },
   {
    "@type": "Question",
+   "name": "Can I use Kokon from my phone?",
+   "acceptedAnswer": {
+    "@type": "Answer",
+    "text": "Yes, since 0.11. On the computer with the graphics card, open Settings, Other devices, set a password and scan the QR code with your phone. The phone uses Kokon in its browser; the computer makes the images and keeps them in its gallery. Away from home, use Tailscale or another VPN. Guide: kokon.app/self-hosted."
+   }
+  },
+  {
+   "@type": "Question",
    "name": "How do I write good prompts for Qwen-Image 2.1?",
    "acceptedAnswer": {
     "@type": "Answer",
@@ -257,6 +266,7 @@
   <div class="wrap">
     <a class="logo" href="#top" aria-label="Kokon home"><svg><use href="#mark"/></svg>Kokon</a>
     <nav class="nav-links" aria-label="Sections">
+      <a href="#devices">Other devices</a>
       <a href="#examples">Examples</a>
       <a href="#features">Features</a>
       <a href="#agents">AI agents</a>
@@ -293,6 +303,67 @@
         </div>
         <p class="reel-link"><a href="https://youtu.be/y2NAJkZ4vH0" rel="noopener">Watch in 4K on YouTube</a> · <a href="https://youtu.be/qGiGXasJJNI" rel="noopener">What's new in 0.10</a></p>
       </div>
+    </div>
+  </section>
+
+  <section class="sec devices-top" id="devices">
+    <div class="wrap center">
+      <p class="kicker rv">New in 0.11 · Other devices</p>
+      <h2 class="rv d1">Your GPU at home. Kokon on your phone.</h2>
+      <p class="sec-lede rv d2">Open Kokon in a browser on your phone, tablet or laptop. The images are still made by the computer with the graphics card and saved in its gallery, and nothing goes through a cloud.</p>
+      <div class="scene-box rv" id="scene-box">
+        <div class="scene" aria-label="A computer with a graphics card runs Kokon; a MacBook and an iPhone use it in the browser over the home network">
+          <svg class="links only-wide" viewBox="0 0 1160 650" aria-hidden="true">
+            <path class="halo" d="M240 330 C 290 330, 300 362, 352 362"/><path d="M240 330 C 290 330, 300 362, 352 362"/>
+            <path class="halo" d="M130 150 C 230 0, 760 10, 884 150"/><path d="M130 150 C 230 0, 760 10, 884 150"/>
+          </svg>
+          <svg class="links only-narrow" viewBox="0 0 720 720" aria-hidden="true">
+            <path class="halo" d="M260 400 C 310 400, 330 380, 372 380"/><path d="M260 400 C 310 400, 330 380, 372 380"/>
+            <path class="halo" d="M150 190 C 190 40, 300 20, 380 100"/><path d="M150 190 C 190 40, 300 20, 380 100"/>
+          </svg>
+          <div class="pc" aria-hidden="true" style="left:20px;top:150px" data-narrow="left:40px;top:190px">
+            <div class="glass">
+              <div class="board"><span class="fan cpu"></span></div>
+              <div class="gpu"><span class="fan"></span><span class="fan"></span><span class="fan"></span></div>
+            </div>
+            <div class="front"><svg><use href="#mark"/></svg><i></i></div>
+          </div>
+          <div class="device device-macbook-pro dv-mac only-wide" style="left:330px;top:190px">
+            <div class="device-frame">
+              <div class="device-screen">
+                <div class="bar"><i></i><i></i><i></i><span>192.168.1.20:39152</span></div>
+                <img src="assets/img/remote-laptop.webp" width="1440" height="900" alt="Kokon's gallery in a browser on a MacBook" loading="lazy">
+              </div>
+            </div>
+            <div class="device-stripe"></div><div class="device-header"></div><div class="device-sensors"></div><div class="device-btns"></div><div class="device-power"></div>
+          </div>
+          <div class="device device-iphone-14-pro dv-phone" style="left:868px;top:40px;transform:scale(0.66);transform-origin:top left" data-narrow="left:360px;top:20px;transform:scale(0.78);transform-origin:top left">
+            <div class="device-frame">
+              <div class="device-screen">
+                <div class="status"><span>9:41</span><span class="icons">
+                  <svg viewBox="0 0 18 12"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
+                  <svg viewBox="0 0 16 12"><path d="M8 2.6c2.3 0 4.4.9 6 2.4l1.3-1.4A10.4 10.4 0 0 0 8 .6 10.4 10.4 0 0 0 .7 3.6L2 5c1.6-1.5 3.7-2.4 6-2.4zm0 3.6c1.3 0 2.5.5 3.4 1.3l1.3-1.4A6.9 6.9 0 0 0 8 4.2c-1.8 0-3.5.7-4.7 1.9l1.3 1.4C5.5 6.7 6.7 6.2 8 6.2zm0 3.5c-.6 0-1.1.2-1.5.6L8 11.9l1.5-1.6c-.4-.4-.9-.6-1.5-.6z"/></svg>
+                  <svg viewBox="0 0 27 13"><rect x="0.5" y="0.5" width="23" height="12" rx="3.5" fill="none" stroke="#000" opacity="0.4"/><rect x="2" y="2" width="20" height="9" rx="2"/><path d="M25 4.5v4c.8-.3 1.3-1.1 1.3-2s-.5-1.7-1.3-2z" opacity="0.45"/></svg>
+                </span></div>
+                <img src="assets/img/remote-phone.webp" width="786" height="1530" alt="A Kokon project on an iPhone: a photo edited into a man surfing on a pink flamingo float, with the prompt box below" loading="lazy">
+              </div>
+            </div>
+            <div class="device-stripe"></div><div class="device-header"></div><div class="device-sensors"></div><div class="device-btns"></div><div class="device-power"></div><div class="device-home"></div>
+          </div>
+          <div class="net" style="left:400px;top:22px" data-narrow="left:40px;top:650px"><b>Home Wi-Fi</b> · or Tailscale from anywhere</div>
+        </div>
+      </div>
+      <div class="devices-captions rv">
+        <p><b>Your computer</b>Kokon and the graphics card do the work</p>
+        <p><b>A laptop</b>any browser on the same network</p>
+        <p><b>Your phone</b>scan the QR code, add it to the home screen</p>
+      </div>
+      <div class="privacy" style="text-align:left">
+        <article class="card rv"><h3>Scan, sign in, edit</h3><p>Settings → Other devices shows a QR code. Scan it, type the password once, and add Kokon to the home screen like an app. Photos from the phone go in with the + button.</p></article>
+        <article class="card rv d1"><h3>Locked until you open it</h3><p>Nothing listens on the network until you set a password, and 5 wrong tries make that device wait. Away from home, use Tailscale or another VPN, never an open port on the router.</p></article>
+        <article class="card rv d2"><h3>Or run it as a server</h3><p>No screen needed: <code>kokon-service</code> on Linux, or the Docker image for NVIDIA cards. Run <code>docker compose up -d</code>, set the password, open the address.</p></article>
+      </div>
+      <p class="rv" style="margin-top:28px"><a class="btn ghost" href="self-hosted/">Read the setup guide</a></p>
     </div>
   </section>
 
@@ -553,10 +624,11 @@
           <p>If macOS instead only says <strong>The application &ldquo;Kokon&rdquo; can&#39;t be opened</strong>, with just an <strong>OK</strong> button, and Privacy &amp; Security shows no <em>Open Anyway</em>: open <strong>Terminal</strong>, run <code>xattr -dr com.apple.quarantine /Applications/Kokon.app</code>, then open Kokon as usual. This removes the &ldquo;downloaded from the internet&rdquo; flag from Kokon only.</p>
         </details>
         <details><summary>How do I write good prompts for Qwen-Image 2.1?</summary><p>Describe the scene, not just the subject: who, doing what, where, in what light. Never write &ldquo;no X&rdquo; (it adds X), put text in quotes, and for edits name the exact thing to change. The <a href="prompt-guide/" style="text-decoration:underline">prompt guide</a> shows each rule with a vague and a clear prompt side by side.</p></details>
-        <details><summary>Does it run on Linux?</summary><p>Yes, in beta, on x86-64: a .deb for Ubuntu, Debian and Mint and an .rpm for Fedora, from the <a href="https://github.com/GabrieleLozupone/kokon/releases/latest" rel="noopener" style="text-decoration:underline">latest release</a>. Install it with <code>sudo apt install ./Kokon_&lt;version&gt;_amd64.deb</code> or <code>sudo dnf install ./Kokon-&lt;version&gt;-1.x86_64.rpm</code>. NVIDIA cards need the proprietary driver; AMD and Intel cards use Vulkan. A headless server with the interface in your browser, then Docker, come next.</p></details>
+        <details><summary>Does it run on Linux?</summary><p>Yes, in beta, on x86-64: a .deb for Ubuntu, Debian and Mint and an .rpm for Fedora, from the <a href="https://github.com/GabrieleLozupone/kokon/releases/latest" rel="noopener" style="text-decoration:underline">latest release</a>. Install it with <code>sudo apt install ./Kokon_&lt;version&gt;_amd64.deb</code> or <code>sudo dnf install ./Kokon-&lt;version&gt;-1.x86_64.rpm</code>. NVIDIA cards need the proprietary driver; AMD and Intel cards use Vulkan. Since 0.11 it also runs as a headless server, with the interface in your browser, and as a <a href="self-hosted/" style="text-decoration:underline">Docker image for NVIDIA cards</a>.</p></details>
         <details><summary>What is Prompt+?</summary><p>An optional helper next to the prompt box. Write a short idea in any language and Prompt+ writes a detailed English prompt from it (looking at your photo for edits), then makes the image; the result keeps both prompts. It runs on Qwen3-VL, the text encoder Qwen-Image 2.1 already loads, inside Kokon&#x27;s own build of stable-diffusion.cpp, so there is no second model to download. It adds about 2 seconds per image on an RTX 5070 Ti.</p></details>
         <details><summary>Can I use LoRAs?</summary><p>Yes, in beta: your own LoRA files made for Qwen-Image 2.1 (.safetensors). Load them in Settings &rarr; LoRA and turn them on for each project with the LoRA button next to the prompt, up to 3 at a time. LoRAs for older Qwen-Image versions don&#x27;t work with 2.1. Tested on Windows so far; there is no LoRA catalog yet, because the popular LoRAs we tested didn&#x27;t improve on what Turbo does with a good prompt.</p></details>
         <details><summary>Does it work offline?</summary><p>Yes. After setup has downloaded the models, everything runs offline.</p></details>
+        <details><summary>Can I use Kokon from my phone?</summary><p>Yes, since 0.11. On the computer with the graphics card, open Settings &rarr; Other devices, set a password and scan the QR code with your phone. The phone uses Kokon in its browser (or from an icon on the home screen); the computer makes the images and keeps them in its gallery. Away from home, use Tailscale or another VPN. Step by step: <a href="self-hosted/" style="text-decoration:underline">use Kokon from your phone, or run it as a server</a>.</p></details>
       </div>
     </div>
   </section>
@@ -592,6 +664,7 @@
       <a href="remove-objects-from-photos-offline/">Remove objects offline</a>
       <a href="qwen-image-2-1-local/">Run Qwen-Image locally</a>
       <a href="mcp-image-generation/">MCP image generation</a>
+      <a href="self-hosted/">Use it from your phone</a>
       <a href="press/">Press kit</a>
       <a href="support/">Support Kokon</a>
       <a href="prompt-guide/">Prompt guide</a>
@@ -684,6 +757,24 @@
   // Browsers only autoplay muted, so the reel starts silent; the button restarts it with the
   // voice-over and music.
   reelBtn.addEventListener("click", () => { reel.currentTime = 0; reel.muted = false; reel.controls = true; reel.loop = false; reel.play().catch(() => {}); reelBtn.remove(); });
+
+  // Other devices: the scene is drawn at a fixed size and scaled to the column; on a narrow
+  // screen it drops the laptop and moves the parts (data-narrow).
+  const box = $("scene-box");
+  const parts = [...box.querySelectorAll("[data-narrow]")];
+  parts.forEach((el) => (el.dataset.wide = el.getAttribute("style")));
+  const fit = () => {
+    const narrow = box.clientWidth < 640;
+    if (narrow !== box.classList.contains("narrow")) {
+      box.classList.toggle("narrow", narrow);
+      parts.forEach((el) => el.setAttribute("style", narrow ? el.dataset.narrow : el.dataset.wide));
+    }
+    const [w, h] = narrow ? [720, 720] : [1160, 650];
+    const s = Math.min(1, box.clientWidth / w);
+    box.style.setProperty("--s", s);
+    box.style.height = `${h * s}px`;
+  };
+  new ResizeObserver(fit).observe(box); fit();
 
   const nav = $("nav");
   const onScroll = () => nav.classList.toggle("scrolled", scrollY > 10);

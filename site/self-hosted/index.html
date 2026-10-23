@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Self-Hosted AI Photo Editor: Use Kokon from Your Phone, or Run It in Docker</title>
+<meta name="description" content="Kokon 0.11 opens its interface in a browser on your phone, tablet or laptop, while your own computer and GPU make the images. Set it up in two minutes, run it headless on Linux or in Docker (NVIDIA), and reach it from anywhere with Tailscale.">
+<meta name="author" content="Gabriele Lozupone">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<meta name="theme-color" content="#0a0a0a">
+<link rel="canonical" href="https://kokon.app/self-hosted/">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="../assets/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="../assets/apple-touch-icon.png">
+<meta property="og:site_name" content="Kokon">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Use Kokon from your phone, or run it as a server">
+<meta property="og:description" content="Your computer with the GPU makes the images; your phone, tablet or laptop uses Kokon in a browser. Headless Linux, Docker for NVIDIA, Tailscale for outside your home.">
+<meta property="og:url" content="https://kokon.app/self-hosted/">
+<meta property="og:image" content="https://kokon.app/assets/img/remote-laptop.webp">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css?v=10">
+<link rel="stylesheet" href="../assets/devices.css?v=1">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "headline": "Use Kokon from your phone, or run it as a server",
+      "description": "Open Kokon in a browser on other devices on your network, run it headless on Linux or in Docker with an NVIDIA GPU, and reach it from outside your home through Tailscale.",
+      "image": "https://kokon.app/assets/img/remote-laptop.webp",
+      "datePublished": "2026-10-23",
+      "dateModified": "2026-10-23",
+      "author": { "@type": "Person", "name": "Gabriele Lozupone", "url": "https://gabrielelozupone.github.io/" },
+      "about": [{ "@type": "SoftwareApplication", "name": "Kokon", "url": "https://kokon.app/" }],
+      "mainEntityOfPage": "https://kokon.app/self-hosted/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "Kokon", "item": "https://kokon.app/" },
+        { "@type": "ListItem", "position": 2, "name": "Use Kokon from your phone", "item": "https://kokon.app/self-hosted/" }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        { "@type": "Question", "name": "Can I use Kokon from my phone?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, from Kokon 0.11. On the computer with the graphics card, open Settings, Other devices, set a password and scan the QR code with the phone. The phone uses Kokon in its browser; the computer makes the images and keeps them in its gallery." } },
+        { "@type": "Question", "name": "Does it go through a cloud or need an account?", "acceptedAnswer": { "@type": "Answer", "text": "No. The phone talks directly to your computer over your home network. There is no Kokon account and no server of ours in between." } },
+        { "@type": "Question", "name": "Can I open Kokon to the internet?", "acceptedAnswer": { "@type": "Answer", "text": "Not directly: never forward Kokon's port on your router. To use it away from home, connect your devices with Tailscale or another VPN, which encrypts the traffic and keeps Kokon off the public internet." } },
+        { "@type": "Question", "name": "Is there a Docker image?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, for NVIDIA graphics cards: ghcr.io/gabrielelozupone/kokon, published with every release. It contains no models; the setup downloads them once into a volume. An image for AMD and Intel cards (Vulkan) will follow; until then use the Linux packages." } }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="mark" viewBox="0 0 1024 1024"><path d="M0.00 242.81 C0.00 112.17 70.23 25.08 175.59 25.08 C280.94 25.08 351.17 112.17 351.17 242.81 L351.17 781.19 C351.17 911.83 280.94 998.92 175.59 998.92 C70.23 998.92 0.00 911.83 0.00 781.19 Z M389.53 548.95 C389.53 250.35 662.35 25.08 1024.00 25.08 C1024.00 323.68 751.18 548.95 389.53 548.95 Z M389.53 587.31 C389.53 821.93 618.71 998.92 922.49 998.92 C922.49 764.30 693.31 587.31 389.53 587.31 Z" fill="currentColor"/></symbol>
+    <symbol id="sb-signal" viewBox="0 0 18 12"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></symbol>
+    <symbol id="sb-wifi" viewBox="0 0 16 12"><path d="M8 2.6c2.3 0 4.4.9 6 2.4l1.3-1.4A10.4 10.4 0 0 0 8 .6 10.4 10.4 0 0 0 .7 3.6L2 5c1.6-1.5 3.7-2.4 6-2.4zm0 3.6c1.3 0 2.5.5 3.4 1.3l1.3-1.4A6.9 6.9 0 0 0 8 4.2c-1.8 0-3.5.7-4.7 1.9l1.3 1.4C5.5 6.7 6.7 6.2 8 6.2zm0 3.5c-.6 0-1.1.2-1.5.6L8 11.9l1.5-1.6c-.4-.4-.9-.6-1.5-.6z"/></symbol>
+    <symbol id="sb-battery" viewBox="0 0 27 13"><rect x="0.5" y="0.5" width="23" height="12" rx="3.5" fill="none" stroke="#000" opacity="0.4"/><rect x="2" y="2" width="20" height="9" rx="2"/><path d="M25 4.5v4c.8-.3 1.3-1.1 1.3-2s-.5-1.7-1.3-2z" opacity="0.45"/></symbol>
+  </defs>
+</svg>
+
+<header class="nav scrolled" id="nav">
+  <div class="wrap">
+    <a class="logo" href="../" aria-label="Kokon home"><svg><use href="#mark"/></svg>Kokon</a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="../#devices">Other devices</a>
+      <a href="../#examples">Examples</a>
+      <a href="../#features">Features</a>
+      <a href="../prompt-guide/">Prompt guide</a>
+      <a href="../#faq">FAQ</a>
+    </nav>
+    <span class="spacer"></span>
+    <a class="btn primary small" href="https://github.com/GabrieleLozupone/kokon/releases/latest" rel="noopener" data-dl-auto>Download</a>
+  </div>
+</header>
+
+<main class="article">
+  <div class="wrap narrow">
+    <nav class="crumbs" aria-label="Breadcrumb"><a href="../">Kokon</a> <span>/</span> Guide</nav>
+    <h1>Use Kokon from your phone, or run it as a server</h1>
+    <p class="lede-left">Your computer with the graphics card makes the images. Your phone, tablet or laptop uses Kokon in a browser, on the same network or, through a VPN, from anywhere. Kokon 0.11 or newer. Updated October 23, 2026.</p>
+
+    <figure>
+      <div class="scene-box phones-box" id="phones-box" style="margin-top:0">
+        <div class="scene phones" aria-label="Kokon on two iPhones: the gallery, and a project with an edit">
+          <div class="device device-iphone-14-pro dv-phone" style="left:0;top:0;transform:scale(0.66);transform-origin:top left">
+            <div class="device-frame"><div class="device-screen">
+              <div class="status"><span>9:41</span><span class="icons"><svg viewBox="0 0 18 12"><use href="#sb-signal"/></svg><svg viewBox="0 0 16 12"><use href="#sb-wifi"/></svg><svg viewBox="0 0 27 13"><use href="#sb-battery"/></svg></span></div>
+              <img src="../assets/img/remote-phone-gallery.webp" width="786" height="1530" alt="Kokon's gallery on an iPhone, two columns of images made on the home computer" loading="eager">
+            </div></div>
+            <div class="device-stripe"></div><div class="device-header"></div><div class="device-sensors"></div><div class="device-btns"></div><div class="device-power"></div><div class="device-home"></div>
+          </div>
+          <div class="device device-iphone-14-pro dv-phone" style="left:322px;top:0;transform:scale(0.66);transform-origin:top left">
+            <div class="device-frame"><div class="device-screen">
+              <div class="status"><span>9:41</span><span class="icons"><svg viewBox="0 0 18 12"><use href="#sb-signal"/></svg><svg viewBox="0 0 16 12"><use href="#sb-wifi"/></svg><svg viewBox="0 0 27 13"><use href="#sb-battery"/></svg></span></div>
+              <img src="../assets/img/remote-phone.webp" width="786" height="1530" alt="A Kokon project on an iPhone: an edited photo, its versions and the prompt box" loading="eager">
+            </div></div>
+            <div class="device-stripe"></div><div class="device-header"></div><div class="device-sensors"></div><div class="device-btns"></div><div class="device-power"></div><div class="device-home"></div>
+          </div>
+        </div>
+      </div>
+      <figcaption>Kokon on an iPhone, opened from the home screen. The images are made by the computer at home.</figcaption>
+    </figure>
+
+    <h2>How it works</h2>
+    <p>Kokon runs a small service on the computer with the graphics card. In 0.11 that service can also serve Kokon's interface to other devices: open its address in a browser, sign in with a password, and you get the same app as on the desktop. Photos you pick on the phone are uploaded to the computer, the computer makes the image, and the result lands in <strong>its</strong> gallery. You can download any result to the device you are holding.</p>
+    <p>There is no cloud and no Kokon account. The phone talks to your computer directly, over your own network.</p>
+
+    <h2>On your home network</h2>
+    <ol>
+      <li>On the computer running Kokon, open <strong>Settings → Other devices</strong>.</li>
+      <li>Choose a password (at least 8 characters) and click <strong>Set and turn on</strong>.</li>
+      <li>Settings shows a QR code and an address such as <code>http://192.168.1.20:39152</code>. Scan the code with the phone's camera, or type the address in any browser on the same network, and enter the password. That browser stays signed in for 90 days.</li>
+      <li>To keep Kokon on the home screen like an app: on iPhone, <strong>Share → Add to Home Screen</strong>; on Android, the browser's menu → <strong>Add to Home screen</strong>.</li>
+    </ol>
+    <p>The first time, Windows or macOS may ask whether Kokon can use the network. Allow it on <strong>private</strong> networks only, and on Windows make sure your home network is set as Private.</p>
+    <p class="note">The router can give the computer a new address after a restart, and the saved icon then stops working. Reserve the address in the router (often called "DHCP reservation"), or scan the QR code again.</p>
+    <p>This works while Kokon is open on the computer. To keep it running without the window, use a server, below.</p>
+
+    <h2>On a Linux server without a screen</h2>
+    <p><code>kokon-service</code> comes with the <a href="https://github.com/GabrieleLozupone/kokon/releases/latest" rel="noopener">Linux packages</a> (<code>.deb</code> and <code>.rpm</code>). Set the password once, then start it with access on:</p>
+    <pre><code>kokon-service --set-password         # asks twice, nothing is shown while you type
+kokon-service --persistent --remote  # keeps running; the interface is on port 39152</code></pre>
+    <p>Open the address it prints in a browser and follow the setup: it downloads the engine and the model (about 12 GB) once. A password changed while the service runs applies within a few seconds.</p>
+
+    <h2>In Docker (NVIDIA)</h2>
+    <p>Each release publishes the image <code>ghcr.io/gabrielelozupone/kokon</code>. It holds no models, so it stays small; the setup downloads them once into a volume. You need an NVIDIA card with the proprietary driver, Docker with Compose, and the <a href="https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html" rel="noopener">NVIDIA Container Toolkit</a>. On Windows it works through Docker Desktop with WSL 2.</p>
+    <pre><code>mkdir kokon &amp;&amp; cd kokon
+curl -fsSLO https://raw.githubusercontent.com/GabrieleLozupone/kokon/master/docker/compose.yaml
+docker compose up -d
+docker exec -it kokon kokon-service --set-password</code></pre>
+    <p>Then open <code>http://&lt;the server's address&gt;:39152</code>. The models, the settings and the saved images live in three volumes, so they survive updates:</p>
+    <pre><code>docker compose pull &amp;&amp; docker compose up -d   # update to a new version
+docker logs -f kokon                          # what the service is doing</code></pre>
+    <p>The <code>latest</code> tag follows every release; write <code>:0.11</code> in <code>compose.yaml</code> to stay on 0.11.x. An image for AMD and Intel cards (Vulkan) will follow once it can be tested; until then, use the Linux packages. The full reference is in <a href="https://github.com/GabrieleLozupone/kokon/blob/master/docs/docker.md" rel="noopener">docs/docker.md</a>.</p>
+
+    <h2>From outside your home: Tailscale</h2>
+    <p>Never open Kokon's port on your router: anyone on the internet could then try the password. Use a private network instead. <a href="https://tailscale.com" rel="noopener">Tailscale</a> is free for personal use and takes a few minutes:</p>
+    <ol>
+      <li>Install Tailscale on the computer running Kokon and on your phone or laptop, and sign in with the same account on both.</li>
+      <li>Turn on access in Kokon, as above.</li>
+      <li>With Tailscale on, open <code>http://&lt;computer name&gt;:39152</code> on the other device, for example <code>http://gaming-pc:39152</code>.</li>
+    </ol>
+    <p>Tailscale encrypts the traffic between your devices, wherever you are. With HTTPS turned on for your tailnet, <code>tailscale serve --bg 39152</code> on the Kokon computer gives you an <code>https://</code> address, and the browser then also lets Kokon copy images to the clipboard. WireGuard, ZeroTier or your router's own VPN work the same way.</p>
+
+    <h2>What is protected</h2>
+    <ul class="fact-list">
+      <li><strong>Off by default.</strong> Nothing listens on the network until a password exists and access is on.</li>
+      <li><strong>The password</strong> is stored only as an Argon2id hash. After 5 wrong tries in a row that device waits 1 minute, then longer after each new mistake, up to 15 minutes.</li>
+      <li><strong>A browser can do what the interface does</strong>: create, edit, the gallery, Settings. It cannot read or write files on the computer by path, change folders or model files, or turn network access on or off.</li>
+      <li><strong>Kokon's own token</strong>, used by the desktop app and the MCP server, works only on the computer itself.</li>
+      <li><strong>Plain HTTP on the network.</strong> Fine on your home Wi-Fi; on a shared network (office, café) someone nearby could read the traffic. Use Tailscale there, which encrypts everything.</li>
+    </ul>
+
+    <h2>What is different in a browser</h2>
+    <ul>
+      <li><strong>Adding photos:</strong> the + button, dropping files on the page, or pasting.</li>
+      <li><strong>Saving:</strong> the download button saves the image on the device you are using.</li>
+      <li><strong>On the computer only:</strong> showing files in a folder, the logs, LoRA and colour LUT files from disk, choosing model files, and updates.</li>
+    </ul>
+
+    <h2>It does not connect</h2>
+    <ul>
+      <li>Both devices must be on the same network (or both on Tailscale), and Settings → Other devices must show the address.</li>
+      <li>A firewall may block the port. Windows: set your home network as Private, then allow Kokon on private networks in Windows Security → Firewall. Linux with ufw: <code>sudo ufw allow from 192.168.0.0/16 to any port 39152</code>.</li>
+      <li>Another program may use port 39152: Settings shows the error, and you can choose another port there.</li>
+    </ul>
+    <p>Still stuck? <a href="https://github.com/GabrieleLozupone/kokon/issues" rel="noopener">Open an issue</a> with Settings → Diagnostics → Copy.</p>
+
+    <div class="cta-box">
+      <h2>Try it</h2>
+      <p>Free and open source for Windows, macOS and Linux, and as a Docker image for NVIDIA.</p>
+      <div class="ctas" style="justify-content:flex-start">
+        <a class="btn primary" href="https://github.com/GabrieleLozupone/kokon/releases/latest" rel="noopener">Download Kokon</a>
+        <a class="btn ghost" href="https://github.com/GabrieleLozupone/kokon/blob/master/docs/remote-access.md" rel="noopener">Full reference on GitHub</a>
+      </div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <a class="logo" href="../"><svg><use href="#mark"/></svg>Kokon</a>
+    <span>Designed and built by <a class="me" href="https://gabrielelozupone.github.io/" rel="author">Gabriele Lozupone</a>, with the help of Claude Code.</span>
+    <nav aria-label="Links">
+      <a href="../">Home</a>
+      <a href="../qwen-image-2-1-local/">Setup guide</a>
+      <a href="https://github.com/GabrieleLozupone/kokon" rel="noopener">GitHub</a>
+      <a href="../support/">Support Kokon</a>
+    </nav>
+  </div>
+</footer>
+<script>
+// The two phones are drawn at a fixed size and scaled to the column.
+(() => {
+  const box = document.getElementById("phones-box");
+  const fit = () => { const s = Math.min(1, box.clientWidth / 604); box.style.setProperty("--s", s); box.style.height = `${573 * s}px`; };
+  new ResizeObserver(fit).observe(box); fit();
+})();
+</script>
+<script src="/download.js" defer></script>
+</body>
+</html>

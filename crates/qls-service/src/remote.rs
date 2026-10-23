@@ -141,6 +141,7 @@ pub fn sync_listener(state: &Arc<AppState>) {
     {
         l.task.abort();
         tracing::info!("access from other devices closed (port {})", l.port);
+        crate::say("  Other devices:     closed");
         *cur = None;
         // Browsers signed in over the network sign in again next time.
         r.end_sessions();
@@ -166,6 +167,11 @@ pub fn sync_listener(state: &Arc<AppState>) {
                 }
             });
             tracing::info!("access from other devices open on port {port} (all interfaces)");
+            let here = format!("http://localhost:{port}");
+            match lan_address() {
+                Some(ip) => crate::say(&format!("  Other devices:     http://{ip}:{port}  (password required; {here} here)")),
+                None => crate::say(&format!("  Other devices:     port {port} of this computer's address  (password required; {here} here)")),
+            }
             *r.error.lock().unwrap() = None;
             *cur = Some(Lan { port, task });
         }

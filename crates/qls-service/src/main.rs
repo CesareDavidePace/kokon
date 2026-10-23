@@ -109,6 +109,15 @@ async fn running_service() -> Option<u16> {
     tokio::time::timeout(Duration::from_secs(2), ping).await.ok().flatten()
 }
 
+/// A line for whoever started the service in a terminal (or `docker logs`); the log file has the
+/// details. Started by the desktop app, nobody reads it, and a failed write is ignored.
+pub fn say(line: &str) {
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    let _ = writeln!(out, "{line}");
+    let _ = out.flush();
+}
+
 pub fn service_info_path() -> PathBuf {
     data_dir().join("service.json")
 }
@@ -300,12 +309,19 @@ async fn run(args: Vec<String>) {
         started: Instant::now(),
         remote: remote::RemoteState::new(&dir, forced_remote),
     });
+    say(&format!("Kokon {APP_VERSION} is running."));
+    say(&format!("  On this computer:  http://localhost:{port}"));
     remote::sync_listener(&state);
+    let cfg_now = engine.config();
     if forced_remote && !state.remote.password_set() {
         let msg = "--remote: no password is set yet, so other devices cannot connect. Run `kokon-service --set-password` (Docker: `docker exec -it kokon kokon-service --set-password`); it applies without a restart.";
         tracing::warn!("{msg}");
-        eprintln!("{msg}");
+        say("  Other devices:     not yet, set a password first: kokon-service --set-password");
+    } else if !forced_remote && !cfg_now.remote_access {
+        say("  Other devices:     off (start with --remote, or turn it on in the desktop app)");
     }
+    say(&format!("  Logs:              {}", log_file.display()));
+    say("Press Ctrl+C to stop.");
 
     tokio::spawn(engine.clone().run_worker());
     tokio::spawn(lifecycle(state.clone()));
@@ -338,6 +354,7 @@ async fn run(args: Vec<String>) {
         let _ = std::fs::remove_file(service_info_path());
     }
     tracing::info!("kokon-service exited");
+    say("Kokon stopped.");
 }
 
 /// Ctrl+C in a terminal, `systemctl stop` or `docker stop` (SIGTERM): shut down like a client
@@ -357,6 +374,7 @@ async fn stop_on_signal(state: Arc<AppState>) {
         return;
     }
     tracing::info!("stop signal received — shutting down");
+    say("Stopping Kokon…");
     state.shutdown.notify_waiters();
 }
 

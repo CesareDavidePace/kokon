@@ -408,7 +408,7 @@ svg { display: block; flex: none; }
 .controls .pill { height: 30px; padding: 0 11px; border-radius: 999px; border: 1px solid var(--border-2); font-size: 12.5px; }
 .pill:hover { background: var(--surface); color: var(--text); }
 .pill.on { color: var(--text); background: var(--surface); }
-.send { width: 36px; height: 36px; border-radius: 50%; background: var(--invert-bg); color: var(--invert-text); display: grid; place-items: center; box-shadow: 0 6px 16px -6px rgba(13, 13, 13, 0.5); transition: transform 0.2s var(--ease), opacity 0.2s; }
+.send { width: 36px; height: 36px; flex: none; padding: 0; aspect-ratio: 1; border-radius: 50%; background: var(--invert-bg); color: var(--invert-text); display: grid; place-items: center; box-shadow: 0 6px 16px -6px rgba(13, 13, 13, 0.5); transition: transform 0.2s var(--ease), opacity 0.2s; }
 .send:hover:not(:disabled) { transform: translateY(-1px); }
 .send:disabled { opacity: 0.25; box-shadow: none; }
 
@@ -992,6 +992,8 @@ kbd { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; display
 .side-foot { flex: none; padding: 8px 8px 12px; border-top: 1px solid var(--border); }
 .side-item.settings { width: 100%; height: 42px; font-size: 14.5px; gap: 11px; }
 
+.modal-save { display: none; }
+
 /* ---------- phone-sized screens (Kokon in a browser on another device) ---------- */
 @media (max-width: 720px) {
   .sidebar { position: fixed; inset: 0 auto 0 0; width: min(300px, 86vw); z-index: 45; background: var(--ground); box-shadow: var(--shadow); padding-top: env(safe-area-inset-top); }
@@ -1013,12 +1015,18 @@ kbd { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; display
   .composer-wrap { padding: 0 8px calc(8px + env(safe-area-inset-bottom)); }
   .composer { border-radius: 22px; }
   /* iOS zooms the page into any field under 16 px */
-  textarea, input[type="text"], input[type="password"], input[type="number"], .input, .select { font-size: 16px; }
+  textarea, input[type="text"], input[type="password"], input[type="number"], .input, .select, .prompt { font-size: 16px; }
   .modal { width: 100vw; height: 100dvh; border-radius: 0; flex-direction: column; }
   .modal-nav { width: auto; flex: none; flex-direction: row; align-items: center; overflow-x: auto; gap: 4px; padding: calc(8px + env(safe-area-inset-top)) 8px 8px; scrollbar-width: none; }
   .modal-nav > button { flex: none; white-space: nowrap; }
   .modal-nav > span { flex: none !important; }
-  .modal-nav > .btn.primary { position: sticky; right: 0; box-shadow: -12px 0 12px var(--ground); }
+  .modal-nav .nav-save { display: none; }
+  .modal-save { display: flex; position: sticky; bottom: calc(-16px - env(safe-area-inset-bottom)); margin: auto -16px calc(-16px - env(safe-area-inset-bottom)); padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); background: var(--bg); border-top: 1px solid var(--border); }
+  .modal-save .btn { flex: 1; justify-content: center; height: 42px; }
+  /* menus: a sheet along the bottom of the screen (ui.tsx Popover) */
+  .sheet-scrim { position: fixed; inset: 0; z-index: 59; background: rgba(13, 13, 12, 0.3); animation: fade 0.2s ease-out both; }
+  .popover.sheet { position: fixed; left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); z-index: 60; min-width: 0; max-height: min(72dvh, 600px); overflow-y: auto; padding: 8px; border-radius: 20px; }
+  .popover.sheet .opt { padding: 11px 12px; font-size: 15px; }
   .modal-body { padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); }
   .path-row { flex-wrap: wrap; }
   .gallery-bar { padding: 0 10px 10px; flex-wrap: wrap; }

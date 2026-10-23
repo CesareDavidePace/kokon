@@ -1,5 +1,7 @@
 import { Check } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { isNarrow } from "../lib/platform";
 
 /** Largest w×h box with the given aspect that fits the container. */
 export function useFit(aspect: number) {
@@ -29,10 +31,15 @@ export function Popover(props: {
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  // A phone: the menu opens as a sheet along the bottom of the screen, the full width, instead of
+  // next to its button (it would leave the screen on either side).
+  const sheet = isNarrow();
+  const sheetRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (ref.current && !ref.current.contains(t) && !sheetRef.current?.contains(t)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
     document.addEventListener("mousedown", onDown);
@@ -47,7 +54,7 @@ export function Popover(props: {
   // at most that room and scrolls inside.
   const [maxHeight, setMaxHeight] = useState<number>();
   useLayoutEffect(() => {
-    if (!open || !ref.current) return;
+    if (!open || !ref.current || sheet) return;
     const fit = () => {
       const r = ref.current?.getBoundingClientRect();
       if (!r) return;
@@ -57,7 +64,7 @@ export function Popover(props: {
     fit();
     window.addEventListener("resize", fit);
     return () => window.removeEventListener("resize", fit);
-  }, [open, placement]);
+  }, [open, placement, sheet]);
   const pos: Record<string, React.CSSProperties> = {
     "top-start": { bottom: "calc(100% + 8px)", left: 0 },
     "top-end": { bottom: "calc(100% + 8px)", right: 0 },
@@ -67,11 +74,22 @@ export function Popover(props: {
   return (
     <div ref={ref} style={{ position: "relative" }}>
       {props.trigger(open, () => setOpen((o) => !o))}
-      {open && (
-        <div className={`popover ${props.className ?? ""}`} style={{ ...pos[placement], maxHeight, overflowY: "auto" }}>
-          {props.children(() => setOpen(false))}
-        </div>
-      )}
+      {open &&
+        (sheet ? (
+          createPortal(
+            <>
+              <div className="sheet-scrim" />
+              <div ref={sheetRef} className={`popover sheet ${props.className ?? ""}`}>
+                {props.children(() => setOpen(false))}
+              </div>
+            </>,
+            document.body,
+          )
+        ) : (
+          <div className={`popover ${props.className ?? ""}`} style={{ ...pos[placement], maxHeight, overflowY: "auto" }}>
+            {props.children(() => setOpen(false))}
+          </div>
+        ))}
     </div>
   );
 }

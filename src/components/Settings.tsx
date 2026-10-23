@@ -317,7 +317,7 @@ export function Settings() {
           ))}
           <span style={{ flex: 1 }} />
           {tab !== "diagnostics" && tab !== "lora" && tab !== "devices" && (
-            <button className="btn primary" style={{ justifyContent: "center" }} disabled={!dirty} onClick={save}>
+            <button className="btn primary nav-save" style={{ justifyContent: "center" }} disabled={!dirty} onClick={save}>
               Save
             </button>
           )}
@@ -705,6 +705,8 @@ export function Settings() {
                   </span>
                 </>
               )}
+              {!inBrowser && (
+              <>
               <label className="field-row">
                 <span>Inference server port</span>
                 <input className="input" type="number" min={1024} max={65535} style={{ width: 100 }} value={cfg.serverPort} onChange={(e) => set({ serverPort: Number(e.target.value) || cfg.serverPort })} />
@@ -713,12 +715,22 @@ export function Settings() {
                 <span>Extra server arguments</span>
                 <input className="input" type="text" spellCheck={false} placeholder="e.g. --vae-conv-direct" value={cfg.extraServerArgs.join(" ")} onChange={(e) => set({ extraServerArgs: e.target.value.split(/\s+/).filter(Boolean) })} />
               </label>
-              <span className="muted">The server always listens on 127.0.0.1 only.</span>
+              </>
+              )}
+              {!inBrowser && <span className="muted">The server always listens on 127.0.0.1 only.</span>}
             </>
           )}
 
           {tab === "lora" && <LoraSettings />}
           {tab === "diagnostics" && <Diagnostics />}
+          {/* On a phone Save sits at the foot of the page (the tabs scroll sideways). */}
+          {tab !== "diagnostics" && tab !== "lora" && tab !== "devices" && (
+            <div className="modal-save">
+              <button className="btn primary" disabled={!dirty} onClick={save}>
+                Save
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

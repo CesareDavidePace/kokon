@@ -682,6 +682,9 @@ pre.diag { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font
 
 /* ---------- aspect ratio and size menus ---------- */
 .popover.wide { min-width: 0; }
+/* the width is a class, not inline, so phones can widen it (sheet) */
+.info-panel { width: 340px; }
+.upscale-menu { width: 300px; }
 /* Prompt+ menu: one line per choice */
 .popover.prompt-plus { width: 260px; }
 .popover.prompt-plus .opt > span:not(.check) { white-space: nowrap; }

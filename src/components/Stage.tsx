@@ -252,7 +252,7 @@ function InfoPanel({ g }: { g: GenerationRecord }) {
     ["Created", new Date(g.created_at).toLocaleString()],
   ];
   return (
-    <div style={{ width: 340, padding: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+    <div className="info-panel" style={{ padding: 8, display: "flex", flexDirection: "column", gap: 6 }}>
       <div style={{ fontSize: 13, userSelect: "text", maxHeight: 160, overflow: "auto" }}>{g.prompt}</div>
       {g.original_prompt && (
         <div className="muted" style={{ userSelect: "text", maxHeight: 80, overflow: "auto" }}>
@@ -290,7 +290,7 @@ function UpscaleMenu(props: { source: string; size: Size; original?: Size | null
     props.close();
   };
   return (
-    <div style={{ width: 300, padding: 8, display: "flex", flexDirection: "column", gap: 10 }}>
+    <div className="upscale-menu" style={{ padding: 8, display: "flex", flexDirection: "column", gap: 10 }}>
       <span className="muted">{via}: a few seconds, adds no new content.</span>
       {targets.map((t) => (
         <button key={t.key} className="btn" onClick={() => go(t)}>

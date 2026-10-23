@@ -16,6 +16,7 @@ import { AppShot, PH_SLIDES } from "./scenes/ProductHunt";
 import { Probe011 } from "./scenes/Probe011";
 import { Update011, UPDATE011_FRAMES } from "./scenes/Update011";
 import { VREELS, VReelScene, vreelFrames } from "./scenes/VReels";
+import { UseCases, USECASES_FRAMES, USECASES_IMAGES, UseCasesThumb } from "./scenes/UseCases";
 
 const withPreload = (C: ComponentType) => () => (
   <>
@@ -31,6 +32,9 @@ export function Root() {
       <Composition id="KokonLaunch" component={withPreload(Main)} durationInFrames={MAIN_FRAMES} {...S} />
       <Composition id="Update011" component={withPreload(Update011)} durationInFrames={UPDATE011_FRAMES} {...S} />
       <Composition id="Probe011" component={withPreload(Probe011)} durationInFrames={1} {...S} />
+      <Composition id="UseCases" component={() => (<><Preload extra={USECASES_IMAGES} /><UseCases /></>)} durationInFrames={USECASES_FRAMES} {...S} />
+      <Composition id="UseCasesHouse4" component={() => (<><Preload extra={USECASES_IMAGES} /><UseCases music="music-usecases-house4.m4a" /></>)} durationInFrames={USECASES_FRAMES} {...S} />
+      <Composition id="UseCasesThumb" component={() => (<><Preload extra={USECASES_IMAGES} /><UseCasesThumb /></>)} durationInFrames={1} fps={30} width={1280} height={720} />
       <Composition id="Update010" component={withPreload(Update010)} durationInFrames={UPDATE_FRAMES} {...S} />
       <Composition id="Montage" component={withPreload(Montage)} durationInFrames={MONTAGE_FRAMES} {...S} />
       <Composition id="Agent" component={withPreload(Agent)} durationInFrames={AGENT_FRAMES} {...S} />

@@ -50,7 +50,7 @@ D:/AI/tts/.venv/Scripts/python audio/gen_voice.py build --from audio/voice/updat
 npx remotion render Update010 out/kokon-0.10-update.mp4            # in video/, 1920×1080
 ```
 
-**"Kokon 0.11" video** (`Update011`, ~76 s): Kokon on other devices. The site's "Other devices"
+**"Kokon 0.11" video** (`Update011`, ~77 s): Kokon on other devices. The site's "Other devices"
 scene (`src/app/Devices011.tsx`: the computer with the GPU, a MacBook and an iPhone, frames from
 Devices.css, MIT, in `src/app/devices.css`), the three setup steps, the phone in use, safe by
 default, the server and Docker, the end card. The app on screen is the app itself: Settings →
@@ -58,16 +58,44 @@ Other devices in the desktop window, and the browser UI in the phone layout (`lo
 turns the 720 px media query into a container query; `src/mocks/platform.ts` switches desktop and
 browser per window). The QR codes in the camera shot and on the end card open the setup guide.
 Clock `src/app/timeline011.ts` (bars of the music, shots, voice cues), script `audio/voiceover-0.11.md`,
-music one ACE-Step take played whole at one level (`gen_music.py v011-steady`, steady deep house at
-118 BPM), new effects `make_sfx.py 011` (three variants each in `public/sfx/011`, the one played is
-picked in `sound.tsx`).
+music the launch film's house-4 played whole at one level (faded out over the end card), new
+effects `make_sfx.py 011` (three variants each in `public/sfx/011`, the one played is picked in
+`sound.tsx`).
 
 ```powershell
 D:/AI/tts/.venv/Scripts/python audio/gen_voice.py audition-011 --seeds 3   # voice/update-0.11/audition-<stamp>/
 D:/AI/tts/.venv/Scripts/python audio/gen_voice.py build-011 --from voice/update-0.11/audition-<stamp> --pick 1.0:17,...
-python audio/gen_music.py v011-steady                              # takes/v011-steady-<stamp>-N.wav (ACE-Step API running)
 npx remotion render Update011 out/kokon-0.11.mp4                    # in video/, 1920×1080
 ```
+
+
+**"Use cases" video** (`UseCases`, ~87 s, English, narrated, for the site and YouTube): it opens
+on why Kokon (private, unlimited), then thirteen everyday edits (photobombers removed, a blink
+fixed, an old photo restored and coloured, a missing person added, a haircut and a jacket tried on,
+a room tidied, a home redone, a headshot, an invitation with text), each shown as the before photo,
+the prompt typed into the prompt box (the app's `.composer` markup and styles), a wipe to the after
+landing on the spoken word, and a caption. Every image was made with Kokon (`public/img/usecases/`,
+web copies of `%USERPROFILE%\Pictures\Kokon\use-cases-2k`); the video says so on screen. No camera
+moves: hard cuts on the beat, wipes and type. Its clock is `src/app/timelineUseCases.ts` (beat
+lengths, moods, where each voice line starts, the word each wipe lands on), its scene
+`src/scenes/UseCases.tsx`, its script `audio/voiceover-usecases.md`: one narrator with a tone per
+section, the launch voice on Chatterbox, and Chatterbox Turbo cloned from it for the playful lines
+(with its `[chuckle]` and `[happy]` tags). The music is one ACE-Step track with a calm piano part,
+cut on bar lines so that part covers the serious beats and the groove returns on the flamingo. The
+YouTube thumbnail is `UseCasesThumb`.
+
+```powershell
+D:/AI/tts/.venv/Scripts/python audio/gen_voice.py audition-usecases --seeds 4   # voice/usecases/audition-<stamp>
+D:/AI/tts/.venv/Scripts/python audio/gen_voice.py build-usecases --from audio/voice/usecases/audition-<stamp> --pick 1.0:14,...
+python audio/gen_music.py usecases                                               # takes/usecases-<stamp>-N.wav (ACE-Step API running)
+D:/AI/tts/.venv/Scripts/python audio/make_update_music.py usecases              # video/public/music-usecases.m4a
+python audio/make_sfx.py pop swipe deep                                          # only this video's effects
+npx remotion render UseCases out/usecases-1.mp4                                  # in video/, 1920×1080
+npx remotion still UseCasesThumb out/usecases-thumb.png                          # 1280×720
+```
+
+The word each wipe lands on comes from `src/app/voice-usecases-words.json` (Whisper word times of
+the built lines, whisper-small.en): regenerate it after a new build.
 
 `src/app/timeline.ts` is the film's clock: scene lengths, the frame where each voice-over sentence
 plays, the frames of the actions the voice names (Remove, Add, the montage cuts) and the music's

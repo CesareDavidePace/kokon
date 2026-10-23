@@ -700,6 +700,7 @@ or macOS version and the log from `KokonData/logs` (see the table above).
 - [x] Qwen's official 8-step Turbo model for every preset
 - [x] Prompt+: the prompt enhancer on the model Kokon already has (0.10.0)
 - [x] Your own LoRA files, per project (0.10.0, beta)
+- [x] New images from reference photos (a person, a product, a style), with Prompt+ (0.10.2)
 - [x] AMD GPUs through Vulkan (beta; RX 7900 XTX and RX 9060 XT reported working, RX 6000 cards still slow)
 - [ ] **0.11:** the interface in the browser, served by Kokon itself, on your local network with a password;
   then a Docker image for NVIDIA ([#15](https://github.com/GabrieleLozupone/kokon/issues/15))

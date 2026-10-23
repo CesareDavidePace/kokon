@@ -1002,9 +1002,9 @@ kbd { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; display
   .sidebar-scrim { position: fixed; inset: 0; z-index: 44; background: rgba(13, 13, 12, 0.3); animation: fade 0.2s ease-out both; }
   .side-select, .proj-rm { opacity: 1; }
   .topbar { padding: env(safe-area-inset-top) 6px 0 8px; gap: 4px; }
-  .toolbar { flex: 0 1 auto; min-width: 0; }
-  .toolbar .status { margin-right: 2px; min-width: 0; max-width: 52vw; }
-  .status > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* the status capsule: only its dot or spinner (the words don't fit next to the project title) */
+  .toolbar .status { margin-right: 2px; padding: 0; width: 30px; justify-content: center; }
+  .status > span:not(.dot) { display: none; }
   .brand .project-title { padding: 0 4px; }
   /* the mark without the name, and no keyboard-shortcuts button: room for the project title */
   .topbar .wordmark { flex: none; font-size: 0; gap: 0; }
@@ -1013,9 +1013,20 @@ kbd { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; display
   .empty h1 { font-size: 24px; }
   .empty .hint { display: none; }
   .stage-bar { margin-top: 10px; }
+  /* name, mode and upscaled/original wrap onto two centred lines instead of leaving the screen */
+  .stage-meta { flex-wrap: wrap; row-gap: 6px; padding: 0 4px; }
   .stage-bar .actions { flex-wrap: wrap; justify-content: center; }
   .composer-wrap { padding: 0 8px calc(8px + env(safe-area-inset-bottom)); }
   .composer { border-radius: 22px; }
+  /* the composer's buttons scroll sideways; the send button stays at the right edge */
+  .controls { overflow-x: auto; scrollbar-width: none; margin-right: -2px; padding-right: 2px; }
+  .controls::-webkit-scrollbar { display: none; }
+  .controls > * { flex: none; }
+  .controls .spacer { flex: 1 0 4px; }
+  .controls .send { position: sticky; right: 0; z-index: 1; box-shadow: 0 0 0 4px var(--bg), 0 6px 16px -6px rgba(13, 13, 13, 0.5); }
+  /* opaque even when off, so buttons scrolling under it don't show through */
+  .controls .send:disabled { opacity: 1; background: var(--surface-3); color: var(--text-3); box-shadow: 0 0 0 4px var(--bg); }
+  .controls .icon-btn[title="Prompt tips"] { display: none; }
   /* iOS zooms the page into any field under 16 px */
   textarea, input[type="text"], input[type="password"], input[type="number"], .input, .select, .prompt { font-size: 16px; }
   .modal { width: 100vw; height: 100dvh; border-radius: 0; flex-direction: column; }

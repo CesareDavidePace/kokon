@@ -10,8 +10,12 @@ It is off until you turn it on, and it always asks for a password.
 
 1. On the computer running Kokon, open **Settings → Other devices**.
 2. Choose a password (at least 8 characters) and click **Set and turn on**.
-3. Settings shows an address such as `http://192.168.1.20:39152`. Open it in a browser on the other
-   device, on the same network, and enter the password. That browser stays signed in for 90 days.
+3. Settings shows a QR code and an address such as `http://192.168.1.20:39152`. Scan the code with
+   the phone's camera (or type the address in a browser on the same network) and enter the password.
+   That browser stays signed in for 90 days.
+4. To keep Kokon on the phone's home screen like an app: on iPhone, Share → **Add to Home Screen**;
+   on Android, the browser's menu → **Add to Home screen**. The icon opens Kokon full screen (on iPhone
+   it asks for the password once more the first time).
 
 The first time, your system may ask whether to let Kokon on the network (Windows Defender Firewall,
 macOS). Allow it on **private** networks only.

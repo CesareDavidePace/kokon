@@ -7,7 +7,7 @@ import {
   compareBase, composerFromRecord, formatDuration, jobLabel, type JobClock, lutInfo, lutLabel, MAX_UPSCALE_AREA, MAX_UPSCALE_SIDE, MODE_LABEL, pipelineSummary, remainingSeconds, sizeForWidth, upscaleRequest, arcLayout,
   upscalerLabel, upscaleTargets, variationRequest, imageName, type LinkKind, type TimelineLink,
 } from "../lib/logic";
-import { native } from "../lib/native";
+import { canCopyImage, native } from "../lib/native";
 import {
   addAsReference, addResult, cancelJob, focusPrompt, getState, itemSource, removeSessionItem, reusePrompt, selectedItem, selectItem, sessionLabels, sessionLinks, setState, submitRequest, toastError, toastInfo, useStore, type SessionItem,
 } from "../lib/store";
@@ -18,7 +18,7 @@ import { PROMPT_FADE_MS, usePromptLeave, useTypewriter, useJobPercent, wordStyle
 import { LutBar, LutButton, LutOverlay } from "./Lut";
 import { IconButton, Popover, useFit } from "./ui";
 import { Fullscreen, FullscreenButton, isTyping, ZoomImage, type ViewerNav } from "./Viewer";
-import { fileManager, shortcut } from "../lib/platform";
+import { fileManager, inBrowser, shortcut } from "../lib/platform";
 
 export const MODE_ICON: Record<Mode | "lut", React.ReactNode> = {
   auto: <Wand2 size={11} />,
@@ -369,7 +369,7 @@ function MoreMenu({ item, path }: { item: SessionItem; path: string | null }) {
               <span>Reuse prompt and settings</span>
             </button>
           )}
-          {path && (
+          {path && !inBrowser && (
             <button className="opt" onClick={() => (close(), native.reveal(path).catch(toastError))}>
               <span className="check">
                 <FolderOpen size={15} />
@@ -433,9 +433,14 @@ function GenActions({ item, g, showOriginal, onLut }: { item: SessionItem; g: Ge
         <Heart size={17} fill={fav ? "currentColor" : "none"} />
       </IconButton>
       <IconButton
-        title={showOriginal ? "Save the original (before upscaling) as…" : "Save as…"}
+        title={inBrowser ? (showOriginal ? "Download the original (before upscaling)" : "Download") : showOriginal ? "Save the original (before upscaling) as…" : "Save as…"}
         onClick={async () => {
           const name = g.file_path.split(/[\\/]/).pop() ?? "image.png";
+          if (inBrowser) {
+            // Onto this device, as the file Kokon saved.
+            native.download(showOriginal ? urls.genOriginal(g.id) : urls.gen(g.id), showOriginal ? name.replace(/(\.\w+)?$/, "-original.png") : name);
+            return;
+          }
           const path = await native.saveAs(showOriginal ? name.replace(/(\.\w+)?$/, "-original.png") : name);
           if (!path) return;
           try {
@@ -448,19 +453,22 @@ function GenActions({ item, g, showOriginal, onLut }: { item: SessionItem; g: Ge
       >
         <Download size={17} />
       </IconButton>
-      <IconButton
-        title={showOriginal ? "Copy the original (before upscaling)" : "Copy image"}
-        onClick={async () => {
-          try {
-            await native.copyImage(shownPath);
-            toastInfo("Image copied");
-          } catch (e) {
-            toastError(e);
-          }
-        }}
-      >
-        <Copy size={17} />
-      </IconButton>
+      {canCopyImage && (
+        <IconButton
+          title={showOriginal ? "Copy the original (before upscaling)" : "Copy image"}
+          onClick={async () => {
+            try {
+              if (inBrowser) await native.copyImageUrl(showOriginal ? urls.genOriginal(g.id) : urls.gen(g.id));
+              else await native.copyImage(shownPath);
+              toastInfo("Image copied");
+            } catch (e) {
+              toastError(e);
+            }
+          }}
+        >
+          <Copy size={17} />
+        </IconButton>
+      )}
       <Popover
         placement="top-end"
         trigger={(open, toggle) => (

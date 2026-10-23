@@ -27,12 +27,17 @@ export class ServiceError extends Error {
   }
 }
 
+/** The service's `dirs::data_local_dir()`: %LOCALAPPDATA%, ~/Library/Application Support, or
+ * $XDG_DATA_HOME (default ~/.local/share) on Linux. */
+export function localDataBase(platform: NodeJS.Platform, env: NodeJS.ProcessEnv, home: string): string {
+  if (platform === "win32") return env.LOCALAPPDATA ?? path.join(env.USERPROFILE ?? "C:\\", "AppData", "Local");
+  if (platform === "darwin") return path.join(home, "Library", "Application Support");
+  return env.XDG_DATA_HOME && path.isAbsolute(env.XDG_DATA_HOME) ? env.XDG_DATA_HOME : path.join(home, ".local", "share");
+}
+
 export function dataDir(): string {
   if (process.env.QLS_DATA_DIR) return process.env.QLS_DATA_DIR;
-  // Same folder as the service's dirs::data_local_dir().
-  const base = WIN
-    ? (process.env.LOCALAPPDATA ?? path.join(process.env.USERPROFILE ?? "C:\\", "AppData", "Local"))
-    : path.join(os.homedir(), "Library", "Application Support");
+  const base = localDataBase(process.platform, process.env, os.homedir());
   // The service moves the folder of the app's old name (QwenLocalStudio) to KokonData on its
   // first start; until then the old one is read.
   const [next, old] = [path.join(base, "KokonData"), path.join(base, "QwenLocalStudio")];

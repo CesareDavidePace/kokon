@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { formatBytes, installItemShort, installProgress, installStep, installTimeLeft } from "../lib/logic";
 import { native } from "../lib/native";
+import { inBrowser } from "../lib/platform";
 import { refreshStatus, setState, toastError, toastInfo, useStore } from "../lib/store";
 import type { GpuBackend, HardwareReport, InstallItem, InstallStatus, ModelScan, ModelSlot, ModelsStatus, SetupReport } from "../lib/types";
 import { OwnModels } from "./OwnModels";
@@ -53,9 +54,11 @@ function Failure({ it, issuesUrl }: { it: InstallItem; issuesUrl: string }) {
         <button className="btn" onClick={() => native.openLink(it.page).catch(toastError)}>
           <ExternalLink size={14} /> Download page
         </button>
-        <button className="btn" onClick={() => native.openFolder(folder).catch(toastError)}>
-          <FolderOpen size={14} /> Open folder
-        </button>
+        {!inBrowser && (
+          <button className="btn" onClick={() => native.openFolder(folder).catch(toastError)}>
+            <FolderOpen size={14} /> Open folder
+          </button>
+        )}
         <button className="btn" onClick={() => native.openLink(issuesUrl).catch(toastError)}>
           <Bug size={14} /> Report the problem
         </button>
@@ -325,7 +328,8 @@ export function Setup() {
 
   const chosen = hw?.presets.find((p) => p.id === preset) ?? null;
   const running = inst?.running ?? false;
-  const own = mode === "own";
+  // A browser cannot pick files on the server: the official download only.
+  const own = mode === "own" && !inBrowser;
   // Own files: what their profile needs, once saved and active (until then nothing to install).
   const ownActive = own && hw?.active_source === "user" && !!hw.user_files;
   // While (or after) installing this preset, show the live list; otherwise what is on disk.
@@ -348,8 +352,10 @@ export function Setup() {
   const repairOptions: RepairOption[] = [];
   if (models) {
     const userActive = models.active.source === "user";
-    repairOptions.push({ icon: <FolderOpen size={16} />, title: "Find them in another folder", detail: "If you moved your models: Kokon looks for the same files there.", run: searchElsewhere });
-    repairOptions.push({ icon: <FileSearch size={16} />, title: "Choose other files", detail: "Pick the files yourself, below.", run: showOwn });
+    if (!inBrowser) {
+      repairOptions.push({ icon: <FolderOpen size={16} />, title: "Find them in another folder", detail: "If you moved your models: Kokon looks for the same files there.", run: searchElsewhere });
+      repairOptions.push({ icon: <FileSearch size={16} />, title: "Choose other files", detail: "Pick the files yourself, below.", run: showOwn });
+    }
     if (userActive && models.downloadable.length > 0) {
       repairOptions.push({ icon: <Download size={16} />, title: "Download the missing files", detail: `The official ${models.downloadable.join(", ")}, saved where the missing file was.`, run: () => download("user") });
     }
@@ -443,8 +449,8 @@ export function Setup() {
               </div>
             ) : (
               <>
-                {/* Where the model comes from: the first choice, so it is seen first. */}
-                <div className="field">
+                {/* Where the model comes from: the first choice, so it is seen first. A browser has only the download. */}
+                {!inBrowser && <div className="field">
                   <span>Image model</span>
                   <div className="choice-cards" role="radiogroup">
                     <button className={`choice-card ${!own ? "on" : ""}`} role="radio" aria-checked={!own} onClick={() => setMode("official")}>
@@ -454,15 +460,17 @@ export function Setup() {
                         <span>Qwen-Image 2.1 Turbo, tested with Kokon{modelBytes ? ` · ${formatBytes(modelBytes)}` : ""}</span>
                       </div>
                     </button>
-                    <button className={`choice-card ${own ? "on" : ""}`} role="radio" aria-checked={own} onClick={() => setMode("own")}>
-                      <FolderOpen size={20} />
-                      <div>
-                        <strong>Use models I already have</strong>
-                        <span>From ComfyUI or another folder; only the engine is downloaded</span>
-                      </div>
-                    </button>
+                    {!inBrowser && (
+                      <button className={`choice-card ${own ? "on" : ""}`} role="radio" aria-checked={own} onClick={() => setMode("own")}>
+                        <FolderOpen size={20} />
+                        <div>
+                          <strong>Use models I already have</strong>
+                          <span>From ComfyUI or another folder; only the engine is downloaded</span>
+                        </div>
+                      </button>
+                    )}
                   </div>
-                </div>
+                </div>}
                 {own && models && (
                   <div id="own-models">
                     <OwnModels
@@ -537,9 +545,11 @@ export function Setup() {
                   <span>Install folder</span>
                   <div className="path-row">
                     <input className="input" type="text" value={hw.sdcpp_dir} readOnly spellCheck={false} />
-                    <button className="btn" onClick={chooseFolder}>
-                      Change
-                    </button>
+                    {!inBrowser && (
+                      <button className="btn" onClick={chooseFolder}>
+                        Change
+                      </button>
+                    )}
                   </div>
                   <span className="muted">
                     {hw.free_bytes != null ? `${formatBytes(hw.free_bytes)} free` : ""}

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { formatBytes, MAX_LORAS } from "../lib/logic";
 import { native } from "../lib/native";
+import { inBrowser } from "../lib/platform";
 import { refreshLoras, toastError, toastInfo, useStore } from "../lib/store";
 import type { LoraItem } from "../lib/types";
 import { Switch } from "./ui";
@@ -126,9 +127,11 @@ export function LoraSettings() {
             LoRA button next to the prompt, up to {MAX_LORAS} at a time.
           </span>
         </div>
-        <button className="btn primary" disabled={busy} onClick={add}>
-          <Plus size={15} /> {busy ? "Checking…" : "Load a LoRA…"}
-        </button>
+        {!inBrowser && (
+          <button className="btn primary" disabled={busy} onClick={add}>
+            <Plus size={15} /> {busy ? "Checking…" : "Load a LoRA…"}
+          </button>
+        )}
       </div>
       <span className="muted">
         Beta: tested on Windows with an NVIDIA card. It should work the same on Mac and Linux, but it hasn't been tested there yet: please tell us how it goes on GitHub.

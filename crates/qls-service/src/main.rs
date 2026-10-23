@@ -2,13 +2,17 @@
 //!
 //! Owns the generation engine and the sd-server process, and exposes the stable local API
 //! (`http://127.0.0.1:<port>/api/v1/...`) used by the desktop app, the MCP server and
-//! scripts. Exactly one instance runs (the port bind is the lock). It exits by itself when
-//! no client holds a lease and no work is pending, stopping sd-server unless the user
-//! chose to keep it running.
+//! scripts, plus the browser UI at `/`. With access from other devices on (and a password
+//! set) the UI also listens on all interfaces (`remote.rs`). Exactly one instance runs (the
+//! port bind is the lock). It exits by itself when no client holds a lease and no work is
+//! pending, stopping sd-server unless the user chose to keep it running.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod api;
+mod remote;
+#[cfg(test)]
+mod security_tests;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -49,6 +53,7 @@ pub struct AppState {
     pub quick_exit: std::sync::atomic::AtomicBool,
     pub shutdown: tokio::sync::Notify,
     pub started: Instant,
+    pub remote: remote::RemoteState,
 }
 
 pub const LEASE_TTL: Duration = Duration::from_secs(45);
@@ -112,13 +117,18 @@ fn init_logging(dir: &std::path::Path) -> tracing_appender::non_blocking::Worker
 const HELP: &str = "\
 kokon-service — headless engine for Kokon (generation, job queue, gallery)
 
-Usage: kokon-service [--port <n>] [--persistent]
+Usage: kokon-service [--port <n>] [--persistent] [--remote]
+       kokon-service --set-password
 
 Options:
-  --port <n>    Port of the local API (default: the configured service_port, 39151)
-  --persistent  Keep sd-server running after the last client disconnects
-  -h, --help    Print this help and exit
-  --version     Print the version and exit
+  --port <n>      Port of the local API (default: the configured service_port, 39151)
+  --persistent    Keep sd-server running after the last client disconnects
+  --remote        Open the browser UI to other devices (the configured remote_port, 39152,
+                  on all interfaces) for this run. Needs a password first
+  --set-password  Set the password other devices sign in with (asked on the terminal, or
+                  one line on stdin), then exit. A running service picks it up
+  -h, --help      Print this help and exit
+  --version       Print the version and exit
 
 Environment:
   QLS_DATA_DIR    Data folder: gallery, logs, models (default: the OS local app data folder)
@@ -158,12 +168,56 @@ fn main() {
         print_meta(&text);
         return;
     }
+    if args.iter().any(|a| a == "--set-password") {
+        std::process::exit(set_password_cli());
+    }
     run(args)
+}
+
+/// `--set-password`: asked twice without echo on a terminal, else one line from stdin
+/// (`docker exec -i ... --set-password < file`).
+fn set_password_cli() -> i32 {
+    use std::io::IsTerminal;
+    let password = if std::io::stdin().is_terminal() {
+        let first = rpassword::prompt_password("Password for other devices: ");
+        let again = rpassword::prompt_password("Again: ");
+        match (first, again) {
+            (Ok(a), Ok(b)) if a == b => a,
+            (Ok(_), Ok(_)) => {
+                eprintln!("The two passwords differ; nothing changed.");
+                return 1;
+            }
+            (Err(e), _) | (_, Err(e)) => {
+                eprintln!("Could not read the password: {e}");
+                return 1;
+            }
+        }
+    } else {
+        let mut line = String::new();
+        if let Err(e) = std::io::stdin().read_line(&mut line) {
+            eprintln!("Could not read the password: {e}");
+            return 1;
+        }
+        line.trim_end_matches(['\r', '\n']).to_string()
+    };
+    let dir = data_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    match qls_core::remote::set_password(&qls_core::remote::password_file(&dir), &password) {
+        Ok(_) => {
+            println!("Password saved. Browsers sign in again; a running kokon-service uses it within a few seconds.");
+            0
+        }
+        Err(e) => {
+            eprintln!("{}", e.message);
+            1
+        }
+    }
 }
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn run(args: Vec<String>) {
     let persistent = args.iter().any(|a| a == "--persistent");
+    let forced_remote = args.iter().any(|a| a == "--remote");
     let dir = data_dir();
     let _ = std::fs::create_dir_all(&dir);
     // Rotate the service log at startup (keep one previous).
@@ -232,14 +286,21 @@ async fn run(args: Vec<String>) {
         quick_exit: std::sync::atomic::AtomicBool::new(false),
         shutdown: tokio::sync::Notify::new(),
         started: Instant::now(),
+        remote: remote::RemoteState::new(&dir, forced_remote),
     });
+    remote::sync_listener(&state);
+    if forced_remote && !state.remote.password_set() {
+        let msg = "--remote: no password is set yet, so other devices cannot connect. Run `kokon-service --set-password` (Docker: `docker exec -it kokon kokon-service --set-password`); it applies without a restart.";
+        tracing::warn!("{msg}");
+        eprintln!("{msg}");
+    }
 
     tokio::spawn(engine.clone().run_worker());
     tokio::spawn(lifecycle(state.clone()));
     tokio::spawn(server_watch(state.clone()));
     tokio::spawn(qls_core::engine_manifest::run(APP_VERSION));
 
-    let app = api::router(state.clone());
+    let app = api::router(state.clone(), false).into_make_service_with_connect_info::<SocketAddr>();
     let st = state.clone();
     let serve = axum::serve(listener, app).with_graceful_shutdown(async move { st.shutdown.notified().await });
     if let Err(e) = serve.await {
@@ -277,10 +338,15 @@ async fn lifecycle(state: Arc<AppState>) {
         let gap = last_tick.elapsed();
         last_tick = Instant::now();
         let resumed = gap > Duration::from_secs(20);
+        // A password set from a terminal (`--set-password`) while running.
+        if state.remote.reload_if_changed() {
+            tracing::info!("password for other devices changed on disk");
+            remote::sync_listener(&state);
+        }
         if resumed {
             tracing::info!("resumed after {} s (computer asleep?): waiting for clients to check in", gap.as_secs());
         }
-        let (n_leases, has_ui, lost) = {
+        let (n_leases, has_ui, has_window, lost) = {
             let mut leases = state.leases.lock().unwrap();
             if resumed {
                 leases.values_mut().for_each(|l| l.last_seen = Instant::now());
@@ -293,7 +359,8 @@ async fn lifecycle(state: Arc<AppState>) {
                 }
                 alive
             });
-            (leases.len(), leases.values().any(|l| l.kind == "ui"), lost)
+            // A browser tab keeps the model loaded like the desktop window does.
+            (leases.len(), leases.values().any(|l| l.kind == "ui"), leases.values().any(|l| l.kind == "ui" || l.kind == "web"), lost)
         };
         for (id, kind) in &lost {
             tracing::info!("client {id} ({kind}) is gone");
@@ -325,7 +392,7 @@ async fn lifecycle(state: Arc<AppState>) {
         // Idle unload (MCP-only or scripted use): free VRAM after N idle minutes.
         let cfg = state.engine.config();
         let st = state.engine.server.status();
-        if !has_ui
+        if !has_window
             && !busy
             && cfg.idle_unload_minutes > 0
             && st.state == ServerState::Ready
@@ -384,7 +451,7 @@ mod tests {
         assert_eq!(cli_meta(&args("--version")).unwrap(), format!("kokon-service {APP_VERSION}"));
         for flag in ["--help", "-h"] {
             let help = cli_meta(&args(flag)).unwrap();
-            for needle in ["--port", "--persistent", "QLS_DATA_DIR", "QLS_CONFIG_DIR", "QLS_LOG"] {
+            for needle in ["--port", "--persistent", "--remote", "--set-password", "QLS_DATA_DIR", "QLS_CONFIG_DIR", "QLS_LOG"] {
                 assert!(help.contains(needle), "{flag} does not mention {needle}");
             }
         }

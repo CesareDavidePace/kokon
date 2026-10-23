@@ -1,12 +1,14 @@
-import { Activity, Copy, Cpu, Download, FolderOpen, HardDrive, Heart, Layers, RefreshCw, RotateCcw, Settings2, Trash2, X } from "lucide-react";
+import { Activity, Copy, Cpu, Download, FolderOpen, HardDrive, Heart, Layers, MonitorSmartphone, RefreshCw, RotateCcw, Settings2, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { api } from "../lib/api";
 import { native } from "../lib/native";
+import { inBrowser } from "../lib/platform";
 import { getState, openModelSetup, refreshStatus, setState, startTour, toastError, toastInfo, useStore } from "../lib/store";
 import { formatBytes } from "../lib/logic";
 import { setThemeChoice, themeChoice, type ThemeChoice } from "../lib/theme";
 import { LoraSettings } from "./LoraSettings";
+import { RemoteAccess } from "./RemoteAccess";
 import { UpscalerControls } from "./Upscalers";
 import { WHATS_NEW_VERSION } from "./WhatsNew";
 import type { AppConfig, Check, ModelProfile, ModelsStatus, SetupReport, TextEncoderPlacement } from "../lib/types";
@@ -60,10 +62,19 @@ function GitHubMark() {
   );
 }
 
-type Tab = "general" | "models" | "lora" | "performance" | "diagnostics";
-const TABS: Tab[] = ["general", "models", "lora", "performance", "diagnostics"];
+type Tab = "general" | "models" | "lora" | "performance" | "devices" | "diagnostics";
+const TABS: Tab[] = ["general", "models", "lora", "performance", "devices", "diagnostics"];
 
+/** Browser: what the computer running Kokon has set (only its desktop app changes folders and files). */
 function PathField(props: { label: string; value: string; onChange: (v: string) => void; folder?: boolean; extensions?: string[]; open?: boolean }) {
+  if (inBrowser) {
+    return (
+      <div className="field">
+        <span>{props.label}</span>
+        <span className="muted">{props.value || "—"} (on the computer running Kokon)</span>
+      </div>
+    );
+  }
   return (
     <label className="field">
       <span>{props.label}</span>
@@ -133,9 +144,11 @@ function Diagnostics() {
   return (
     <>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button className="btn" disabled={!text} onClick={async () => (await writeText(text ?? ""), toastInfo("Diagnostics copied"))}>
-          <Copy size={14} /> Copy
-        </button>
+        {(!inBrowser || window.isSecureContext) && (
+          <button className="btn" disabled={!text} onClick={async () => (await (inBrowser ? navigator.clipboard.writeText(text ?? "") : writeText(text ?? "")), toastInfo("Diagnostics copied"))}>
+            <Copy size={14} /> Copy
+          </button>
+        )}
         <button className="btn" onClick={load}>
           <RefreshCw size={14} /> Refresh
         </button>
@@ -158,9 +171,11 @@ function Diagnostics() {
         >
           <RotateCcw size={14} /> {busy ? "Restarting…" : "Restart server"}
         </button>
-        <button className="btn" onClick={async () => native.openFolder(await native.dataFolder().then((d) => `${d}${d.includes("\\") ? "\\" : "/"}logs`)).catch(toastError)}>
-          <FolderOpen size={14} /> Logs
-        </button>
+        {!inBrowser && (
+          <button className="btn" onClick={async () => native.openFolder(await native.dataFolder().then((d) => `${d}${d.includes("\\") ? "\\" : "/"}logs`)).catch(toastError)}>
+            <FolderOpen size={14} /> Logs
+          </button>
+        )}
       </div>
       <pre className="diag">{text ?? "Collecting…"}</pre>
     </>
@@ -286,6 +301,8 @@ export function Settings() {
     ["models", "Models", <HardDrive size={16} key="m" />],
     ["lora", "LoRA (beta)", <Layers size={16} key="l" />],
     ["performance", "Performance", <Cpu size={16} key="p" />],
+    // Only the computer running Kokon decides who else can use it.
+    ...(inBrowser ? [] : ([["devices", "Other devices", <MonitorSmartphone size={16} key="o" />]] as [Tab, string, React.ReactNode][])),
     ["diagnostics", "Diagnostics", <Activity size={16} key="d" />],
   ];
 
@@ -299,7 +316,7 @@ export function Settings() {
             </button>
           ))}
           <span style={{ flex: 1 }} />
-          {tab !== "diagnostics" && tab !== "lora" && (
+          {tab !== "diagnostics" && tab !== "lora" && tab !== "devices" && (
             <button className="btn primary" style={{ justifyContent: "center" }} disabled={!dirty} onClick={save}>
               Save
             </button>
@@ -341,19 +358,30 @@ export function Settings() {
                 <input className="input" type="number" min={0} max={1440} style={{ width: 90 }} value={cfg.idleUnloadMinutes} onChange={(e) => set({ idleUnloadMinutes: Math.max(0, Number(e.target.value) || 0) })} />
               </label>
               <span className="muted" style={{ marginTop: -10 }}>Applies to MCP and API use without the desktop window. 0 keeps it loaded.</span>
-              <div className="field-row">
-                <span>Check for updates once a day</span>
-                <Switch on={autoCheckEnabled(cfg.ui)} onChange={(v) => set({ ui: { ...cfg.ui, updateCheck: v } })} />
-              </div>
-              <span className="muted" style={{ marginTop: -10 }}>
-                Only asks GitHub for the latest version number; nothing about you or your images is sent. Updates install when you click them.
-              </span>
-              <div className="field-row">
-                <span>You have Kokon {appVersion}</span>
-                <button className="btn" onClick={() => checkForUpdate(true)}>
-                  Check now
-                </button>
-              </div>
+              {inBrowser ? (
+                <div className="field-row">
+                  <span>Kokon {appVersion} on the computer running it. It updates there.</span>
+                  <button className="btn" onClick={() => api.logout().then(() => location.reload(), toastError)}>
+                    Sign out
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="field-row">
+                    <span>Check for updates once a day</span>
+                    <Switch on={autoCheckEnabled(cfg.ui)} onChange={(v) => set({ ui: { ...cfg.ui, updateCheck: v } })} />
+                  </div>
+                  <span className="muted" style={{ marginTop: -10 }}>
+                    Only asks GitHub for the latest version number; nothing about you or your images is sent. Updates install when you click them.
+                  </span>
+                  <div className="field-row">
+                    <span>You have Kokon {appVersion}</span>
+                    <button className="btn" onClick={() => checkForUpdate(true)}>
+                      Check now
+                    </button>
+                  </div>
+                </>
+              )}
               <div className="field-row">
                 <span>What's new in Kokon {WHATS_NEW_VERSION}</span>
                 <button className="btn" onClick={() => setState({ overlay: "whats-new" })}>
@@ -411,6 +439,8 @@ export function Settings() {
               />
             </>
           )}
+
+          {tab === "devices" && <RemoteAccess />}
 
           {tab === "models" && (
             <>
@@ -475,15 +505,17 @@ export function Settings() {
                         <Download size={15} /> Download…
                       </button>
                     )}
-                    <button
-                      className="btn"
-                      onClick={() => {
-                        if (dirty && !window.confirm("Discard the unsaved changes and choose your own model files?")) return;
-                        openModelSetup("own");
-                      }}
-                    >
-                      <FolderOpen size={15} /> Use my own files…
-                    </button>
+                    {!inBrowser && (
+                      <button
+                        className="btn"
+                        onClick={() => {
+                          if (dirty && !window.confirm("Discard the unsaved changes and choose your own model files?")) return;
+                          openModelSetup("own");
+                        }}
+                      >
+                        <FolderOpen size={15} /> Use my own files…
+                      </button>
+                    )}
                   </div>
                 </div>
               ) : (

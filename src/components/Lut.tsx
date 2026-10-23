@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { lutLabel } from "../lib/logic";
 import { native } from "../lib/native";
+import { inBrowser } from "../lib/platform";
 import { toastError } from "../lib/store";
 import type { LutEntry } from "../lib/types";
 import { Popover } from "./ui";
@@ -60,19 +61,21 @@ function LutList({ current, onPick, close }: { current?: string; onPick: (lut: L
           {row(e)}
         </div>
       ))}
-      <button
-        className="opt"
-        onClick={async () => {
-          close();
-          const e = await openCubeFile();
-          if (e) onPick(e);
-        }}
-      >
-        <span className="check">
-          <FolderOpen size={15} />
-        </span>
-        <span>Open a .cube file…</span>
-      </button>
+      {!inBrowser && (
+        <button
+          className="opt"
+          onClick={async () => {
+            close();
+            const e = await openCubeFile();
+            if (e) onPick(e);
+          }}
+        >
+          <span className="check">
+            <FolderOpen size={15} />
+          </span>
+          <span>Open a .cube file…</span>
+        </button>
+      )}
     </div>
   );
 }

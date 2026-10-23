@@ -1,6 +1,9 @@
 // Thin client for the local kokon-service API. Images are referenced by URL (with the
 // token as a query parameter) so the webview streams them directly — no base64 copies.
+// In a browser (another device) there is no token: the session cookie signs requests in, and
+// every change carries the CSRF header the service asks for.
 
+import { inBrowser } from "./platform";
 import type {
   GpuBackend,
   AppConfig, AppErrorBody, GenerationRecord, GenerationRequest, HardwareReport, InputRecord, InstallStatus, JobView, LoraItem, LutEntry, ModelFileInfo, ModelScan, ModelSlot, ModelsStatus, Plan,
@@ -31,22 +34,48 @@ export function configure(baseUrl: string, tok: string) {
 
 export const isConfigured = () => base !== "";
 
+/** Browser: the session ended (new password, signed out elsewhere); the app asks to sign in again. */
+let onSignedOut = () => {};
+export function setSignedOutHandler(f: () => void) {
+  onSignedOut = f;
+}
+
+function authHeaders(method: string | undefined): Record<string, string> {
+  if (!inBrowser) return { Authorization: `Bearer ${token}` };
+  return method && method !== "GET" ? { "x-kokon-csrf": "1" } : {};
+}
+
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   let res: Response;
   try {
     res = await fetch(base + path, {
       ...init,
-      headers: { Authorization: `Bearer ${token}`, ...(init.body && typeof init.body === "string" ? { "Content-Type": "application/json" } : {}), ...(init.headers || {}) },
+      headers: { ...authHeaders(init.method), ...(init.body && typeof init.body === "string" ? { "Content-Type": "application/json" } : {}), ...(init.headers || {}) },
     });
   } catch (e) {
-    throw new ApiError({ code: "server_unavailable", message: "The local service is not reachable.", detail: String(e) }, 0);
+    throw new ApiError({ code: "server_unavailable", message: inBrowser ? "Kokon is not reachable." : "The local service is not reachable.", detail: String(e) }, 0);
   }
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) {
+    if (inBrowser && data?.error?.code === "login_required" && !path.startsWith("/auth/")) onSignedOut();
     throw new ApiError(data?.error ?? { code: "internal", message: `HTTP ${res.status}` }, res.status);
   }
   return data as T;
+}
+
+/** `?token=…` for URLs the browser loads by itself (images, events); nothing in a browser, where the cookie signs in. */
+const tq = (sep: "?" | "&") => (token ? `${sep}token=${token}` : "");
+
+export interface RemoteStatus {
+  enabled: boolean;
+  forced: boolean;
+  port: number;
+  password_set: boolean;
+  listening: boolean;
+  url: string | null;
+  error: string | null;
+  min_password_chars: number;
 }
 
 const json = (body: unknown) => JSON.stringify(body);
@@ -135,19 +164,30 @@ export const api = {
   applyLut: (name: string, source: string, intensity: number, isPrivate: boolean) =>
     call<GenerationRecord>(`/luts/${encodeURIComponent(name)}/apply`, { method: "POST", body: json({ source, intensity, private: isPrivate }) }),
   exportGeneration: (id: string, path: string, original = false) => call<{ path: string }>(`/gallery/${id}/export`, { method: "POST", body: json({ path, overwrite: true, original }) }),
+  /** Browser sign-in (see crates/qls-service/src/remote.rs). */
+  session: () => call<{ signed_in: boolean; password_set: boolean }>("/auth/session"),
+  login: (password: string) => call<{ signed_in: boolean }>("/auth/login", { method: "POST", body: json({ password }) }),
+  logout: () => call<{ signed_in: boolean }>("/auth/logout", { method: "POST" }),
+  /** Access from other devices (desktop app only). */
+  remote: () => call<RemoteStatus>("/remote"),
+  setRemote: (enabled: boolean, port?: number) => call<RemoteStatus>("/remote", { method: "POST", body: json({ enabled, port }) }),
+  setRemotePassword: (password: string) => call<RemoteStatus>("/remote/password", { method: "POST", body: json({ password }) }),
+  removeRemotePassword: () => call<RemoteStatus>("/remote/password", { method: "DELETE" }),
+  /** Browser: keeps the service from exiting while this tab is open (the desktop app does it from Rust). */
+  heartbeat: (clientId: string) => call<{ ok: boolean }>("/session/heartbeat", { method: "POST", body: json({ client_id: clientId, kind: "web" }) }),
 };
 
 export const urls = {
-  input: (id: string) => `${base}/inputs/${id}/image?token=${token}`,
-  inputThumb: (id: string) => `${base}/inputs/${id}/thumb?token=${token}`,
-  gen: (id: string) => `${base}/gallery/${id}/image?token=${token}`,
-  genThumb: (id: string) => `${base}/gallery/${id}/thumb?token=${token}`,
+  input: (id: string) => `${base}/inputs/${id}/image${tq("?")}`,
+  inputThumb: (id: string) => `${base}/inputs/${id}/thumb${tq("?")}`,
+  gen: (id: string) => `${base}/gallery/${id}/image${tq("?")}`,
+  genThumb: (id: string) => `${base}/gallery/${id}/thumb${tq("?")}`,
   /** The result before the upscaler enlarged it (`pipeline.original_path`). */
-  genOriginal: (id: string) => `${base}/gallery/${id}/original?token=${token}`,
+  genOriginal: (id: string) => `${base}/gallery/${id}/original${tq("?")}`,
   /** Full image for a "gen:<id>" / "input:<id>" source. */
   source: (s: string) => (s.startsWith("gen:") ? urls.gen(s.slice(4)) : urls.input(s.slice(6))),
   /** A LUT on a "gen:"/"input:" source at full strength, at most `max` px on its long side. */
-  lutPreview: (name: string, source: string, max: number) => `${base}/luts/${encodeURIComponent(name)}/preview?source=${encodeURIComponent(source)}&max=${max}&token=${token}`,
+  lutPreview: (name: string, source: string, max: number) => `${base}/luts/${encodeURIComponent(name)}/preview?source=${encodeURIComponent(source)}&max=${max}${tq("&")}`,
   sourceThumb: (s: string) => (s.startsWith("gen:") ? urls.genThumb(s.slice(4)) : urls.inputThumb(s.slice(6))),
 };
 
@@ -157,7 +197,7 @@ export function subscribe(onEvent: (e: ServiceEvent) => void, onState?: (connect
   let closed = false;
   let retry: number | undefined;
   const open = () => {
-    es = new EventSource(`${base}/events?token=${token}`);
+    es = new EventSource(`${base}/events${tq("?")}`);
     es.onopen = () => onState?.(true);
     es.onmessage = (m) => {
       try {

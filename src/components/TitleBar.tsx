@@ -6,11 +6,11 @@
 import { Copy, Minus, Square, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { native } from "../lib/native";
-import { isLinux, isMac } from "../lib/platform";
+import { inBrowser, isLinux, isMac } from "../lib/platform";
 
 // macOS: room for the traffic lights on the left of the top bar (styles.css). In full screen
 // macOS hides them, so the room goes too.
-if (isMac && typeof document !== "undefined") {
+if (isMac && !inBrowser && typeof document !== "undefined") {
   const root = document.documentElement;
   root.dataset.platform = "mac";
   const sync = () =>
@@ -25,7 +25,7 @@ if (isMac && typeof document !== "undefined") {
 export function WindowControls() {
   const [maximized, setMaximized] = useState(false);
   useEffect(() => {
-    if (isMac) return;
+    if (isMac || inBrowser) return;
     let un: (() => void) | undefined;
     let gone = false;
     const sync = () => native.isMaximized().then((m) => !gone && setMaximized(m), () => {});
@@ -36,7 +36,7 @@ export function WindowControls() {
       un?.();
     };
   }, []);
-  if (isMac) return null;
+  if (isMac || inBrowser) return null;
   return (
     <div className={`window-controls ${isLinux ? "linux" : ""}`}>
       <button className="win-btn" title="Minimize" aria-label="Minimize" onClick={() => native.minimize().catch(() => {})}>

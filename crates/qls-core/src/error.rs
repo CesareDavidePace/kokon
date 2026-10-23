@@ -24,6 +24,12 @@ pub enum ErrorCode {
     Cancelled,
     GenerationFailed,
     Unauthorized,
+    /// A browser without a valid session: show the password screen.
+    LoginRequired,
+    /// Not allowed from a browser (paths on the server, settings of the computer it runs on).
+    Forbidden,
+    /// Too many wrong passwords from this address: wait `retry_after_s` seconds.
+    TooManyAttempts,
     Internal,
 }
 
@@ -67,9 +73,10 @@ impl AppError {
     pub fn http_status(&self) -> u16 {
         match self.code {
             ErrorCode::InvalidInput | ErrorCode::InvalidPath | ErrorCode::MalformedRequest | ErrorCode::ImageDecode => 400,
-            ErrorCode::Unauthorized => 401,
+            ErrorCode::Unauthorized | ErrorCode::LoginRequired => 401,
+            ErrorCode::Forbidden => 403,
             ErrorCode::NotFound => 404,
-            ErrorCode::QueueFull => 429,
+            ErrorCode::QueueFull | ErrorCode::TooManyAttempts => 429,
             ErrorCode::Unsupported => 422,
             ErrorCode::ServerUnavailable | ErrorCode::ServerStartFailed | ErrorCode::ServerCrashed => 503,
             _ => 500,

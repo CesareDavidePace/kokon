@@ -8,3 +8,6 @@ export const shortcut = (key: string) => (isMac ? `⌘${key}` : `Ctrl+${key}`);
 export const isLinux = typeof navigator !== "undefined" && !isMac && /Linux/i.test(navigator.platform || navigator.userAgent);
 
 export const fileManager = isMac ? "Finder" : isLinux ? "the file manager" : "Explorer";
+
+/** The UI runs in a browser, served by kokon-service to another device, not in the desktop app. */
+export const inBrowser = typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window);

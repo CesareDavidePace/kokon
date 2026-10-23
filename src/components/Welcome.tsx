@@ -11,7 +11,7 @@ import restyle from "../assets/showcase/restyle.jpg";
 import text from "../assets/showcase/text.jpg";
 import { api } from "../lib/api";
 import { WHATS_NEW_VERSION } from "./WhatsNew";
-import { isMac } from "../lib/platform";
+import { inBrowser, isMac } from "../lib/platform";
 import { autoCheckEnabled } from "../lib/updates";
 import { setState, toastError, useStore } from "../lib/store";
 
@@ -79,10 +79,12 @@ export function Welcome() {
             </div>
           ))}
         </div>
-        <label className="welcome-check">
-          <input type="checkbox" checked={updateCheck} onChange={(e) => setUpdateCheck(e.target.checked)} />
-          Check for Kokon updates once a day
-        </label>
+        {!inBrowser && (
+          <label className="welcome-check">
+            <input type="checkbox" checked={updateCheck} onChange={(e) => setUpdateCheck(e.target.checked)} />
+            Check for Kokon updates once a day
+          </label>
+        )}
         <button className="btn primary big" onClick={close}>
           {needsSetup ? "Set up Kokon" : "Start creating"}
         </button>

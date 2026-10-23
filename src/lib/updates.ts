@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { type Update, check } from "@tauri-apps/plugin-updater";
 import { api } from "./api";
+import { inBrowser } from "./platform";
 import { getState, setState, toastError, toastInfo } from "./store";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -41,6 +42,8 @@ function writeLastCheck(t: number) {
 
 /** Looks for an update. `manual`: from Settings, so report the outcome (and errors). */
 export async function checkForUpdate(manual = false): Promise<void> {
+  // A browser shows the server's Kokon, which updates on that computer (or with a new image).
+  if (inBrowser) return;
   try {
     const u = await check();
     writeLastCheck(Date.now());

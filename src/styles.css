@@ -286,6 +286,13 @@ svg { display: block; flex: none; }
 .popover .opt:disabled { opacity: 0.5; cursor: default; }
 .failed { display: flex; flex-direction: column; align-items: center; gap: 10px; max-width: 460px; text-align: center; color: var(--text-2); }
 .failed strong { color: var(--text); font-weight: 600; }
+/* Sign-in in a browser on another device (Login.tsx). */
+.login { display: flex; flex-direction: column; align-items: center; gap: 12px; width: min(340px, calc(100vw - 32px)); text-align: center; color: var(--text-2); }
+.login strong { color: var(--text); font-size: 17px; font-weight: 600; }
+.login .input { width: 100%; box-sizing: border-box; }
+.login .btn { width: 100%; justify-content: center; }
+.login-error { color: var(--text); font-weight: 500; }
+.remote-url { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 15px; color: var(--text); user-select: all; }
 
 /* version timeline: a line per image and the versions made from it; arcs join versions made
    from earlier ones or from several */

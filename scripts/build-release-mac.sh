@@ -18,7 +18,9 @@ npm ci --no-audit --no-fund
 (cd mcp && npm ci --no-audit --no-fund)
 
 echo "2/5 Tests (Rust core + frontend)"
-cargo test -p qls-core --release --quiet
+cargo test -p qls-core -p qls-service --release --quiet
+# kokon-service embeds the built UI (dist/) for browsers on other devices: build it first.
+npm run build
 # The MCP protocol test runs the newest target/*/kokon-service, which Tauri overwrites with the
 # bundled sidecar of the previous release: build this version's service first.
 cargo build -p qls-service --release

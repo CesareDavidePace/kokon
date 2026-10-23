@@ -1,5 +1,6 @@
-//! Stable local API, versioned under /api/v1. Loopback-only, token-protected, and
-//! independent of sd-server's own schema (the engine adapts between the two).
+//! Stable local API, versioned under /api/v1, independent of sd-server's own schema (the
+//! engine adapts between the two). On loopback it takes the token (desktop app, MCP, scripts)
+//! or a signed-in browser; on the network listener only a signed-in browser (see `remote`).
 
 use std::convert::Infallible;
 use std::path::{Path, PathBuf};
@@ -9,7 +10,7 @@ use std::time::{Duration, Instant};
 use axum::{
     Json, Router,
     body::{Body, Bytes},
-    extract::{DefaultBodyLimit, Path as AxPath, Query, Request, State},
+    extract::{DefaultBodyLimit, Extension, Path as AxPath, Query, Request, State},
     http::{HeaderMap, HeaderValue, Method, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response, Sse, sse::Event as SseEvent},
@@ -33,6 +34,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio_stream::StreamExt;
 
+use crate::remote::{self as web, Caller};
 use crate::{AppState, Lease};
 
 type St = State<Arc<AppState>>;
@@ -56,7 +58,9 @@ type ApiResult<T> = Result<T, ApiError>;
 
 const ALLOWED_ORIGINS: &[&str] = &["http://tauri.localhost", "https://tauri.localhost", "tauri://localhost", "http://localhost:1420"];
 
-pub fn router(state: Arc<AppState>) -> Router {
+/// The API and the UI. `lan`: the network listener, where the token is refused.
+pub fn router(state: Arc<AppState>, lan: bool) -> Router {
+    let ctx = AuthCtx { app: state.clone(), lan };
     let api = Router::new()
         .route("/status", get(status))
         .route("/setup", get(setup))
@@ -114,14 +118,26 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/session/heartbeat", post(heartbeat))
         .route("/session/release", post(release))
         .route("/shutdown", post(shutdown))
-        .layer(middleware::from_fn_with_state(state.clone(), auth))
+        .route("/remote", get(remote_status).post(remote_set))
+        .route("/remote/password", post(remote_password).delete(remote_password_clear))
+        .layer(middleware::from_fn_with_state(ctx.clone(), auth))
         .layer(DefaultBodyLimit::max(4 * 1024 * 1024));
     let uploads = Router::new().route("/inputs", post(upload_input)).layer(DefaultBodyLimit::max(210 * 1024 * 1024));
     Router::new()
         .route("/api/v1/ping", get(ping))
-        .nest("/api/v1", api.merge(uploads.layer(middleware::from_fn_with_state(state.clone(), auth))))
+        .route("/api/v1/auth/session", get(web::session))
+        .route("/api/v1/auth/login", post(web::login))
+        .route("/api/v1/auth/logout", post(web::logout))
+        .nest("/api/v1", api.merge(uploads.layer(middleware::from_fn_with_state(ctx, auth))))
+        .fallback(web::ui)
         .layer(middleware::from_fn(cors))
         .with_state(state)
+}
+
+#[derive(Clone)]
+struct AuthCtx {
+    app: Arc<AppState>,
+    lan: bool,
 }
 
 /// CORS for the desktop webview origins only; everything else gets no CORS headers.
@@ -157,28 +173,48 @@ fn set_cors(h: &mut HeaderMap, origin: &str) {
     h.insert(header::VARY, HeaderValue::from_static("Origin"));
 }
 
-/// Bearer token (or `?token=` for <img>/EventSource), and a foreign-Origin block so web
-/// pages open in a browser cannot drive the local API.
-async fn auth(State(s): St, req: Request, next: Next) -> Response {
-    if let Some(o) = req.headers().get(header::ORIGIN).and_then(|o| o.to_str().ok())
-        && !ALLOWED_ORIGINS.contains(&o)
-    {
-        return ApiError(AppError::new(ErrorCode::Unauthorized, "Requests from web pages are not allowed.")).into_response();
-    }
+/// Bearer token (or `?token=` for <img>/EventSource) on loopback, with a foreign-Origin block
+/// so web pages open in a browser cannot drive the local API; or a signed-in browser, limited
+/// to what the UI needs (`qls_core::remote::browser_allowed`) and sending the CSRF header with
+/// every change. The network listener never takes the token.
+async fn auth(State(c): State<AuthCtx>, mut req: Request, next: Next) -> Response {
+    let s = &c.app;
     let header_tok = req
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(str::to_owned);
-    let query_tok = req.uri().query().and_then(|q| q.split('&').find_map(|kv| kv.strip_prefix("token=")).map(str::to_owned));
-    let ok = header_tok.or(query_tok).map(|t| constant_eq(t.as_bytes(), s.token.as_bytes())).unwrap_or(false);
-    if !ok {
-        return ApiError(AppError::new(ErrorCode::Unauthorized, "Missing or invalid API token (see service.json).")).into_response();
+    let query_tok = req.uri().query().and_then(|q| q.split('&').find_map(|kv| kv.strip_prefix("token=")).map(str::to_owned)).filter(|t| !t.is_empty());
+    if let Some(t) = header_tok.or(query_tok)
+        && !c.lan
+    {
+        if let Some(o) = req.headers().get(header::ORIGIN).and_then(|o| o.to_str().ok())
+            && !ALLOWED_ORIGINS.contains(&o)
+        {
+            return ApiError(AppError::new(ErrorCode::Unauthorized, "Requests from web pages are not allowed.")).into_response();
+        }
+        if !constant_eq(t.as_bytes(), s.token.as_bytes()) {
+            return ApiError(AppError::new(ErrorCode::Unauthorized, "Missing or invalid API token (see service.json).")).into_response();
+        }
+        req.extensions_mut().insert(Caller::Local);
+        // No `touch()` here: heartbeats and status polls are not work, and counting them kept
+        // the model loaded for as long as an MCP client stayed connected.
+        return next.run(req).await;
     }
-    // No `touch()` here: heartbeats and status polls are not work, and counting them kept
-    // the model loaded for as long as an MCP client stayed connected.
-    next.run(req).await
+    if web::browser_session(s, req.headers()) {
+        let path = req.uri().path();
+        let path = path.strip_prefix("/api/v1").unwrap_or(path);
+        if !qls_core::remote::browser_allowed(req.method().as_str(), path) {
+            return ApiError(AppError::new(ErrorCode::Forbidden, "This is not available from a browser.")).into_response();
+        }
+        if !matches!(*req.method(), Method::GET | Method::HEAD) && !web::has_csrf_header(req.headers()) {
+            return ApiError(AppError::new(ErrorCode::Forbidden, "Requests from other sites are not allowed.")).into_response();
+        }
+        req.extensions_mut().insert(Caller::Browser);
+        return next.run(req).await;
+    }
+    ApiError(AppError::new(ErrorCode::LoginRequired, "Sign in with the password (scripts on this computer: the API token in service.json).")).into_response()
 }
 
 fn constant_eq(a: &[u8], b: &[u8]) -> bool {
@@ -479,7 +515,10 @@ async fn enhancer_defaults() -> Json<Value> {
     Json(json!({ "t2i": enhancer::T2I_SYSTEM_PROMPT, "edit": enhancer::EDIT_SYSTEM_PROMPT, "compose": enhancer::COMPOSE_SYSTEM_PROMPT, "max_chars": enhancer::MAX_SYSTEM_PROMPT_CHARS }))
 }
 
-async fn put_config(State(s): St, Json(cfg): Json<AppConfig>) -> ApiResult<Json<Value>> {
+async fn put_config(State(s): St, Extension(caller): Extension<Caller>, Json(mut cfg): Json<AppConfig>) -> ApiResult<Json<Value>> {
+    if caller == Caller::Browser {
+        cfg.keep_computer_settings(&s.engine.config());
+    }
     let restart = s.engine.set_config(cfg)?;
     let st = s.engine.server.status();
     if restart && st.owned && st.state == qls_core::process::ServerState::Ready && !s.engine.has_pending_work() {
@@ -630,7 +669,12 @@ fn workspace_path(w: Option<&str>) -> Result<Option<PathBuf>, AppError> {
     }
 }
 
-async fn create_job(State(s): St, Json(b): Json<JobBody>) -> ApiResult<(StatusCode, Json<JobView>)> {
+async fn create_job(State(s): St, Extension(caller): Extension<Caller>, Json(mut b): Json<JobBody>) -> ApiResult<(StatusCode, Json<JobView>)> {
+    if caller == Caller::Browser {
+        qls_core::remote::stored_sources_only(&b.request, b.workspace.as_deref())?;
+        // Browser jobs outlive the desktop window (`client_left` cancels "ui" jobs).
+        b.request.client = Some("web".into());
+    }
     let ws = workspace_path(b.workspace.as_deref())?;
     let j = s.engine.submit(b.request, ws)?;
     Ok((StatusCode::ACCEPTED, Json(j)))
@@ -768,7 +812,10 @@ struct PlanBody {
 }
 
 /// Dry run: resolved mode, working/output size and notes for the current inputs.
-async fn plan(State(s): St, Json(b): Json<PlanBody>) -> ApiResult<Json<Value>> {
+async fn plan(State(s): St, Extension(caller): Extension<Caller>, Json(b): Json<PlanBody>) -> ApiResult<Json<Value>> {
+    if caller == Caller::Browser {
+        qls_core::remote::stored_sources_only(&b.request, b.workspace.as_deref())?;
+    }
     let engine = s.engine.clone();
     let ws = workspace_path(b.workspace.as_deref())?;
     let v = tokio::task::spawn_blocking(move || -> Result<Value, AppError> {
@@ -810,10 +857,28 @@ fn source_size(engine: &qls_core::engine::Engine, src: &str, ws: Option<&Path>) 
 // Events (SSE)
 // ---------------------------------------------------------------------------------------
 
-async fn events(State(s): St) -> Sse<impl Stream<Item = Result<SseEvent, Infallible>>> {
+async fn events(State(s): St, Extension(caller): Extension<Caller>) -> Sse<impl Stream<Item = Result<SseEvent, Infallible>>> {
     let rx = s.engine.events.subscribe();
     let stream = tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(|r| r.ok()).map(|ev| Ok(SseEvent::default().json_data(ev).unwrap_or_default()));
-    Sse::new(stream).keep_alive(axum::response::sse::KeepAlive::new().interval(Duration::from_secs(15)))
+    // Streams end when the service shuts down (an open browser tab would otherwise hold the
+    // graceful shutdown, and with it an app update), and a browser's with its session (new
+    // password, access turned off).
+    let mut epoch = s.remote.epoch.subscribe();
+    let st = s.clone();
+    let ended = async move {
+        let session_ended = async {
+            if caller == Caller::Browser {
+                let _ = epoch.changed().await;
+            } else {
+                std::future::pending::<()>().await;
+            }
+        };
+        tokio::select! {
+            _ = st.shutdown.notified() => {}
+            _ = session_ended => {}
+        }
+    };
+    Sse::new(futures_util::StreamExt::take_until(stream, ended)).keep_alive(axum::response::sse::KeepAlive::new().interval(Duration::from_secs(15)))
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1130,9 +1195,13 @@ struct HeartbeatBody {
     pid: Option<u32>,
 }
 
-async fn heartbeat(State(s): St, Json(b): Json<HeartbeatBody>) -> Json<Value> {
-    let kind = b.kind.unwrap_or_else(|| "client".into());
-    s.leases.lock().unwrap().insert(b.client_id.chars().take(80).collect(), Lease { kind, last_seen: Instant::now(), pid: b.pid });
+async fn heartbeat(State(s): St, Extension(caller): Extension<Caller>, Json(b): Json<HeartbeatBody>) -> Json<Value> {
+    // A browser holds its lease by heartbeat only, and never as the desktop window.
+    let (kind, pid) = match caller {
+        Caller::Local => (b.kind.unwrap_or_else(|| "client".into()), b.pid),
+        Caller::Browser => ("web".to_string(), None),
+    };
+    s.leases.lock().unwrap().insert(b.client_id.chars().take(80).collect(), Lease { kind, last_seen: Instant::now(), pid });
     *s.exit_deadline.lock().unwrap() = None;
     s.quick_exit.store(false, std::sync::atomic::Ordering::Relaxed);
     Json(json!({ "ok": true, "ttl_s": crate::LEASE_TTL.as_secs() }))
@@ -1151,6 +1220,53 @@ async fn release(State(s): St, Json(b): Json<HeartbeatBody>) -> Json<Value> {
         crate::client_left(&s, &lease.kind, ui_remaining, remaining);
     }
     Json(json!({ "ok": true, "remaining_clients": remaining }))
+}
+
+// ---------------------------------------------------------------------------------------
+// Access from other devices (desktop app Settings; never from a browser)
+// ---------------------------------------------------------------------------------------
+
+async fn remote_status(State(s): St) -> Json<Value> {
+    Json(web::status_json(&s))
+}
+
+#[derive(Deserialize)]
+struct RemoteBody {
+    enabled: bool,
+    port: Option<u16>,
+}
+
+async fn remote_set(State(s): St, Json(b): Json<RemoteBody>) -> ApiResult<Json<Value>> {
+    if b.enabled && !s.remote.password_set() {
+        return Err(AppError::invalid("Set a password first.").into());
+    }
+    let port = b.port.unwrap_or(s.engine.config().remote_port);
+    s.engine.set_remote(b.enabled, port)?;
+    web::sync_listener(&s);
+    Ok(Json(web::status_json(&s)))
+}
+
+#[derive(Deserialize)]
+struct PasswordBody {
+    password: String,
+}
+
+/// Sets or changes the password; every browser signs in again.
+async fn remote_password(State(s): St, Json(b): Json<PasswordBody>) -> ApiResult<Json<Value>> {
+    let r = s.clone();
+    tokio::task::spawn_blocking(move || r.remote.set_password(&b.password)).await.map_err(AppError::internal)??;
+    tracing::info!("password for other devices changed");
+    web::sync_listener(&s);
+    Ok(Json(web::status_json(&s)))
+}
+
+/// Removes the password and closes access from other devices.
+async fn remote_password_clear(State(s): St) -> ApiResult<Json<Value>> {
+    s.remote.clear_password()?;
+    let port = s.engine.config().remote_port;
+    s.engine.set_remote(false, port)?;
+    web::sync_listener(&s);
+    Ok(Json(web::status_json(&s)))
 }
 
 async fn shutdown(State(s): St) -> Json<Value> {

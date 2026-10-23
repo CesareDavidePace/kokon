@@ -13,6 +13,8 @@ path = "src/main.rs"
 axum = "0.8.9"
 futures-util = "0.3.34"
 qls-core = { version = "0.10.0", path = "../qls-core" }
+rpassword = "7.5.4"
+rust-embed = { version = "8.13.0", features = ["mime-guess"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sysinfo = "0.39.6"
@@ -23,3 +25,7 @@ tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 uuid = { version = "1.27.0", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+tower = { version = "0.5.3", features = ["util"] }

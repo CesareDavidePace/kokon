@@ -17,6 +17,8 @@ const LEGACY_DATA_DIR: &str = "QwenLocalStudio";
 pub const DATA_DIR_NAME: &str = "KokonData";
 pub const DEFAULT_SERVER_PORT: u16 = 39150;
 pub const DEFAULT_SERVICE_PORT: u16 = 39151;
+/// Port for access from other devices (`remote_access`); the token API stays on loopback.
+pub const DEFAULT_REMOTE_PORT: u16 = 39152;
 /// Schema 8 (2026-10-12): the upscalers folder setting is gone (always `<sdcpp>/models/upscalers`)
 /// and ESRGAN tile sizes reset to automatic.
 /// Schema 9 (2026-10-16, #14): profiles record their model and source; model paths edited by
@@ -280,6 +282,11 @@ pub struct AppConfig {
     pub gpu_backend: GpuBackend,
     pub server_port: u16,
     pub service_port: u16,
+    /// Open the browser UI to other devices on the network (`remote_port`, all interfaces).
+    /// Needs a password first (`remote::PasswordFile`). Changed only through `/remote`: a
+    /// whole-config save keeps the current values (`Engine::set_config`).
+    pub remote_access: bool,
+    pub remote_port: u16,
     pub active_profile: String,
     pub profiles: Vec<ModelProfile>,
     /// ggml device name for diffusion + VAE, e.g. "cuda0" (see `sd-server --list-devices`).
@@ -359,6 +366,8 @@ impl Default for AppConfig {
             gpu_backend: GpuBackend::default(),
             server_port: DEFAULT_SERVER_PORT,
             service_port: DEFAULT_SERVICE_PORT,
+            remote_access: false,
+            remote_port: DEFAULT_REMOTE_PORT,
             device: "cuda0".into(),
             text_encoder_placement: TextEncoderPlacement::Ram,
             vram_reserve_gib: 1.0,
@@ -424,7 +433,11 @@ impl LoraEntry {
     }
 }
 
+/// `QLS_OUTPUT_DIR` sets it for a new install (the Docker image's `/gallery` volume).
 pub fn default_output_dir() -> PathBuf {
+    if let Ok(p) = std::env::var("QLS_OUTPUT_DIR") {
+        return PathBuf::from(p);
+    }
     dirs::picture_dir()
         .or_else(|| dirs::home_dir().map(|h| h.join("Pictures")))
         .unwrap_or_else(|| PathBuf::from("."))
@@ -824,11 +837,30 @@ impl AppConfig {
         self.upscaler().map(|(_, p)| p)
     }
 
+    /// A save from a browser (another device) changes the app's settings, not the computer's:
+    /// folders, model files, ports, engine arguments and network access keep their values in
+    /// `current`. Those take a path on the server or decide what runs there, and only the
+    /// desktop app (or the config file) sets them.
+    pub fn keep_computer_settings(&mut self, current: &AppConfig) {
+        self.sdcpp_dir = current.sdcpp_dir.clone();
+        self.output_dir = current.output_dir.clone();
+        self.profiles = current.profiles.clone();
+        self.active_profile = current.active_profile.clone();
+        self.extra_server_args = current.extra_server_args.clone();
+        self.server_port = current.server_port;
+        self.service_port = current.service_port;
+        self.remote_access = current.remote_access;
+        self.remote_port = current.remote_port;
+    }
+
     pub fn validate(&self) -> Result<(), AppError> {
         if self.server_port == self.service_port {
             return Err(AppError::new(ErrorCode::InvalidConfig, "The inference server and the app service cannot use the same port."));
         }
-        if self.server_port < 1024 || self.service_port < 1024 {
+        if self.remote_port == self.server_port || self.remote_port == self.service_port {
+            return Err(AppError::new(ErrorCode::InvalidConfig, "The port for other devices must differ from the app's own ports."));
+        }
+        if self.server_port < 1024 || self.service_port < 1024 || self.remote_port < 1024 {
             return Err(AppError::new(ErrorCode::InvalidConfig, "Ports must be 1024 or higher."));
         }
         if !(0.0..=64.0).contains(&self.vram_reserve_gib) {
@@ -1236,7 +1268,45 @@ mod tests {
         c.service_port = c.server_port;
         assert!(c.validate().is_err());
         let mut c = AppConfig::default();
+        c.remote_port = c.service_port;
+        assert!(c.validate().is_err());
+        let mut c = AppConfig::default();
         c.device = "cuda0; rm".into();
         assert!(c.validate().is_err());
+    }
+
+    /// A 0.10.2 config file (no network fields) loads with access from other devices off.
+    #[test]
+    fn config_from_0_10_2_keeps_network_access_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let old = r#"{"schemaVersion": 10, "serverPort": 39150, "servicePort": 39151, "setupComplete": true,
+            "hardwarePreset": "16gb", "outputDir": "/home/me/Pictures/Kokon", "ui": {"quality": "balanced"}}"#;
+        std::fs::write(&path, old).unwrap();
+        let c = AppConfig::load_from(&path);
+        assert!(!c.remote_access);
+        assert_eq!(c.remote_port, DEFAULT_REMOTE_PORT);
+        assert!(c.setup_complete);
+        assert_eq!(c.output_dir, PathBuf::from("/home/me/Pictures/Kokon"));
+        assert_eq!(c.ui["quality"], "balanced");
+        assert!(c.validate().is_ok());
+    }
+
+    #[test]
+    fn browser_saves_keep_the_computers_settings() {
+        let current = AppConfig { remote_access: true, extra_server_args: vec!["--x".into()], ..AppConfig::default() };
+        let mut sent = current.clone();
+        sent.sdcpp_dir = PathBuf::from("/tmp/evil");
+        sent.output_dir = PathBuf::from("/etc");
+        sent.extra_server_args = vec!["--rpc".into()];
+        sent.profiles[0].diffusion_model = PathBuf::from("/etc/passwd");
+        sent.service_port = 40000;
+        sent.remote_access = false;
+        sent.remote_port = 40001;
+        sent.flash_attention = !current.flash_attention;
+        sent.keep_computer_settings(&current);
+        let mut expected = current.clone();
+        expected.flash_attention = sent.flash_attention;
+        assert_eq!(sent, expected, "only the app setting changed");
     }
 }

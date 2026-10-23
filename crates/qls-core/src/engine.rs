@@ -283,8 +283,14 @@ impl Engine {
 
     /// Replaces the configuration. Returns true when the backend must restart.
     pub fn set_config(&self, mut new: AppConfig) -> AppResult<bool> {
-        // LoRAs change only through `set_loras` (a Settings save may carry an older list).
-        new.loras = self.cfg.read().unwrap().loras.clone();
+        // LoRAs change only through `set_loras`, network access only through `set_remote` (a
+        // Settings save may carry older values).
+        {
+            let cur = self.cfg.read().unwrap();
+            new.loras = cur.loras.clone();
+            new.remote_access = cur.remote_access;
+            new.remote_port = cur.remote_port;
+        }
         // The official profile follows the folder and preset; see `AppConfig::normalize`.
         new.normalize();
         new.validate()?;
@@ -303,6 +309,19 @@ impl Engine {
         drop(g);
         self.place_bundled_upscaler();
         Ok(restart)
+    }
+
+    /// Turns access from other devices on or off (Settings → Access from other devices).
+    pub fn set_remote(&self, enabled: bool, port: u16) -> AppResult<()> {
+        let mut new = self.config();
+        new.remote_access = enabled;
+        new.remote_port = port;
+        new.validate()?;
+        new.save()?;
+        let mut g = self.cfg.write().unwrap();
+        g.remote_access = enabled;
+        g.remote_port = port;
+        Ok(())
     }
 
     /// Replaces the LoRA list (callers hold `lora::LIBRARY`).

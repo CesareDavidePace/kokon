@@ -2,6 +2,7 @@ import { ArrowLeft, Check, FolderOpen, Heart, Loader2, Maximize2, Search, Trash2
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, urls } from "../lib/api";
 import { native } from "../lib/native";
+import { inBrowser } from "../lib/platform";
 import { forgetGeneration, openGeneration, setState, toastError, useStore } from "../lib/store";
 import { MODE_LABEL, neighbourAfterRemoval, previewIndex } from "../lib/logic";
 import type { GenerationRecord } from "../lib/types";
@@ -195,9 +196,11 @@ export function Gallery() {
             onChange={setSort}
           />
         </div>
-        <IconButton title="Open the images folder" onClick={() => api.config().then((c) => native.openFolder(c.outputDir)).catch(toastError)}>
-          <FolderOpen size={17} />
-        </IconButton>
+        {!inBrowser && (
+          <IconButton title="Open the images folder" onClick={() => api.config().then((c) => native.openFolder(c.outputDir)).catch(toastError)}>
+            <FolderOpen size={17} />
+          </IconButton>
+        )}
         <span className="spacer" />
         {items.length > 0 && (
           <button className={`btn ${selecting ? "primary" : ""}`} onClick={() => setPicked(selecting ? null : new Set())} title={selecting ? "Stop selecting (Esc)" : "Select several images to delete them at once (or Ctrl/⌘-click)"}>

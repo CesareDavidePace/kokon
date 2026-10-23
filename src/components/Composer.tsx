@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, urls } from "../lib/api";
 import { activeLoras, activeOverrides, aspectLabel, buildRequest, composing, editing, enhancerApplies, expansionPixels, formatDuration, hasOutpaint, imageName, MAX_LORAS, moveRef, needsPrompt, parseRatio, toggleLora, wantsPromptReview, type Ref } from "../lib/logic";
 import { native } from "../lib/native";
+import { inBrowser } from "../lib/platform";
 import {
   addAsReference, addInputs, cancelPromptReview, editShownImage, enhancerAvailable, getState, itemSource, openSettings, selectedItem, sessionLabels, setProjectLoras, setState, startNewImage, submitComposer, toastError, undoEnhancedPrompt, updateComposer, useStore, type SessionItem,
 } from "../lib/store";
@@ -26,6 +27,19 @@ const INPAINT_ACTIONS: { value: InpaintAction; label: string; placeholder: strin
 ];
 
 const INPAINT_VERB: Record<InpaintAction, string> = { edit: "Changing", remove: "Clearing", replace: "Replacing", add: "Adding to" };
+
+/** Images from this device (browser picker, drop, paste): uploaded to the service. */
+export async function uploadFiles(files: File[]) {
+  const recs = [];
+  for (const f of files) {
+    try {
+      recs.push(await api.upload(f, f.name || "pasted.png"));
+    } catch (e) {
+      toastError(e);
+    }
+  }
+  addInputs(recs);
+}
 
 export async function importPaths(paths: string[]) {
   const recs = [];
@@ -237,7 +251,7 @@ function AddImage() {
     const s = itemSource(i);
     return s && !used.has(s);
   });
-  const browse = async () => importPaths(await native.pickImages());
+  const browse = async () => (inBrowser ? uploadFiles(await native.pickImageFiles()) : importPaths(await native.pickImages()));
   // In a project, images added while not editing are references for a new image.
   const asReference = refs.length > 0 || create || session.length > 0;
   const title = asReference ? "Add a reference image" : "Add an image to edit";

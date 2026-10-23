@@ -1,12 +1,14 @@
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Star, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { api, configure } from "./lib/api";
+import { api, configure, setSignedOutHandler } from "./lib/api";
 import { native } from "./lib/native";
+import { inBrowser } from "./lib/platform";
 import {
-  addExampleProjects, addInputs, closeStarPrompt, dismissToast, getState, initStarPrompt, redoVersion, refreshLoras, refreshStatus, selectItem, setState, startEvents, startTour, submitComposer, toastError, toastInfo, undoVersion, useStore,
+  addExampleProjects, closeStarPrompt, dismissToast, getState, initStarPrompt, redoVersion, refreshLoras, refreshStatus, selectItem, setState, startEvents, startTour, submitComposer, toastError, toastInfo, undoVersion, useStore,
 } from "./lib/store";
-import { Composer, importPaths } from "./components/Composer";
+import { Composer, importPaths, uploadFiles } from "./components/Composer";
+import { Login } from "./components/Login";
 import { ExpandEditor } from "./components/ExpandEditor";
 import { Gallery } from "./components/Gallery";
 import { InpaintEditor } from "./components/InpaintEditor";
@@ -99,16 +101,13 @@ function StarPrompt() {
   );
 }
 
-async function uploadBlobs(files: File[]) {
-  const recs = [];
-  for (const f of files) {
-    try {
-      recs.push(await api.upload(f, f.name || "pasted.png"));
-    } catch (e) {
-      toastError(e);
-    }
-  }
-  addInputs(recs);
+/** Browser: a lease while the tab is open, so the service does not exit under it (the desktop
+ * app holds its lease from Rust). The service drops it 45 s after the last beat. */
+function startBrowserHeartbeat() {
+  const id = `web-${crypto.randomUUID?.() ?? Math.random().toString(36).slice(2)}`;
+  const beat = () => api.heartbeat(id).catch(() => {});
+  beat();
+  window.setInterval(beat, 15_000);
 }
 
 export default function App() {
@@ -117,7 +116,9 @@ export default function App() {
   const compareUpscalers = useStore((s) => s.compareUpscalers);
   const sidebar = useStore((s) => s.sidebar);
   const editing = useStore((s) => s.composer.refs.length > 0 && s.session.length > 0);
-  const [boot, setBoot] = useState<"connecting" | "ok" | string>("connecting");
+  const [boot, setBoot] = useState<"connecting" | "login" | "ok" | string>("connecting");
+  // Bumped after signing in, to run the start-up again.
+  const [attempt, setAttempt] = useState(0);
   const [dragging, setDragging] = useState(false);
   // First launch: the tour starts once the main window is free (after welcome and setup).
   const tourPending = useRef(false);
@@ -136,6 +137,15 @@ export default function App() {
         const conn = await native.connect();
         if (cancelled) return;
         configure(conn.baseUrl, conn.token);
+        if (inBrowser) {
+          // Another device: sign in first. A session that ends later (new password) reloads the page.
+          if (!(await api.session()).signed_in) {
+            if (!cancelled) setBoot("login");
+            return;
+          }
+          setSignedOutHandler(() => location.reload());
+          startBrowserHeartbeat();
+        }
         startEvents();
         const cfg = await api.config();
         const st = await refreshStatus();
@@ -155,7 +165,7 @@ export default function App() {
         const engineUpdate = whatsNew && !!st?.engine?.update_needed;
         setState({ needsSetup: !cfg.setupComplete, ...(!welcomeSeen ? { overlay: "welcome" } : whatsNew ? { overlay: "whats-new" } : {}) });
         setBoot("ok");
-        autoCheckForUpdate();
+        if (!inBrowser) autoCheckForUpdate();
         // Preload the model so the first generation starts immediately (not an engine about to be replaced).
         if (cfg.setupComplete && !engineUpdate && st && st.server.state === "stopped") api.startBackend().then(refreshStatus, () => refreshStatus());
       } catch (e) {
@@ -165,10 +175,42 @@ export default function App() {
     return () => {
       cancelled = true;
     };
+  }, [attempt]);
+
+  // Browser: files dropped from this device are uploaded.
+  useEffect(() => {
+    if (!inBrowser) return;
+    const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
+    const over = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      setDragging(true);
+    };
+    const leave = (e: DragEvent) => {
+      if (!e.relatedTarget) setDragging(false);
+    };
+    const drop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      setDragging(false);
+      const all = Array.from(e.dataTransfer?.files ?? []);
+      const files = all.filter((f) => f.type.startsWith("image/") || IMAGE_EXT.test(f.name));
+      if (files.length) uploadFiles(files);
+      else if (all.length) toastInfo("Only image files can be added.");
+    };
+    window.addEventListener("dragover", over);
+    window.addEventListener("dragleave", leave);
+    window.addEventListener("drop", drop);
+    return () => {
+      window.removeEventListener("dragover", over);
+      window.removeEventListener("dragleave", leave);
+      window.removeEventListener("drop", drop);
+    };
   }, []);
 
   // Native file drops (paths) — efficient: the service reads the files itself.
   useEffect(() => {
+    if (inBrowser) return;
     let un: (() => void) | undefined;
     getCurrentWebview()
       .onDragDropEvent((ev) => {
@@ -194,13 +236,13 @@ export default function App() {
       const files = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith("image/"));
       if (files.length) {
         e.preventDefault();
-        uploadBlobs(files);
+        uploadFiles(files);
         return;
       }
       if (e.clipboardData?.getData("text")) return;
       try {
         const png = await native.readClipboardImage();
-        if (png) uploadBlobs([new File([png as BlobPart], "pasted.png", { type: "image/png" })]);
+        if (png) uploadFiles([new File([png as BlobPart], "pasted.png", { type: "image/png" })]);
       } catch {
         /* nothing to paste */
       }
@@ -249,6 +291,19 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  if (boot === "login") {
+    return (
+      <div className="app" style={{ display: "grid", placeItems: "center" }}>
+        <Login
+          onSignedIn={() => {
+            setBoot("connecting");
+            setAttempt((n) => n + 1);
+          }}
+        />
+      </div>
+    );
+  }
+
   if (boot !== "ok") {
     return (
       <div className="app" style={{ display: "grid", placeItems: "center" }}>
@@ -257,7 +312,7 @@ export default function App() {
           <BootSplash />
         ) : (
           <div className="failed">
-            <strong>Could not start the local service</strong>
+            <strong>{inBrowser ? "Could not reach Kokon" : "Could not start the local service"}</strong>
             <span>{boot}</span>
             <button className="btn" onClick={() => location.reload()}>
               Try again

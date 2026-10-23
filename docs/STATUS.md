@@ -35,11 +35,6 @@ Tracked in [#15](https://github.com/GabrieleLozupone/kokon/issues/15); design in
 - The Windows installer is not code-signed: SmartScreen or Smart App Control may block it (README FAQ: Unblock).
 - HEIC photos can't be opened on Linux yet.
 
-## Under review
-
-- [#29](https://github.com/GabrieleLozupone/kokon/pull/29) EasyCache step cache (giveen): to be A/B-tested on the
-  test set (text-to-image, edit, multi-image, LoRA) before it becomes a default.
-
 ## Help wanted
 
 - Good first issues: [#2](https://github.com/GabrieleLozupone/kokon/issues/2) gallery keyboard,

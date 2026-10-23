@@ -16,10 +16,10 @@ Tracked in [#15](https://github.com/GabrieleLozupone/kokon/issues/15); design in
 - A Docker image for NVIDIA (CUDA) first; an AMD/Intel (Vulkan) image once it can be tested.
 - Later: the desktop app as a client of a Kokon server elsewhere.
 
-## Being tested: 0.10.2 (branch `release-0.10.2`)
+## Being tested: 0.10.2 (on master)
 
 Notes: [release-notes-0.10.2.md](../marketing/release-notes-0.10.2.md). Tested on Windows (CUDA); macOS and
-Linux next.
+Linux next. The new engine already reaches 0.10.x apps through `engine.json`.
 - **New image from reference images**: with New image, the images you add are references (a person, a
   product, a style) for a new picture sized by your quality and aspect ratio, not by image 1; Prompt+ has its
   own instructions for it. Also in MCP (`generate_image` with `reference_images`) and the HTTP API.

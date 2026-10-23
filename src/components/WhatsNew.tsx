@@ -1,4 +1,4 @@
-import { CircleAlert, Layers, ListChecks, Paintbrush, WandSparkles, Wrench, Zap } from "lucide-react";
+import { CircleAlert, Cpu, Images, Sparkles, WandSparkles, Wrench, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { formatBytes, installProgress, installStep, installTimeLeft } from "../lib/logic";
@@ -7,38 +7,38 @@ import type { GpuBackend, InstallItem, InstallStatus, ModelsStatus } from "../li
 import { KokonMark } from "./Welcome";
 
 /** The release these notes describe. Shown once to people updating from an earlier version. */
-export const WHATS_NEW_VERSION = "0.10.0";
+export const WHATS_NEW_VERSION = "0.10.2";
 
 const NEWS = [
   {
+    icon: Images,
+    title: "New image from your references",
+    text: "With New image, add photos of a person, a product or a style: Kokon makes a new picture with them, sized by your quality and aspect ratio, and Prompt+ writes the scene for you.",
+  },
+  {
     icon: WandSparkles,
-    title: "Prompt+",
-    text: "Turn on Prompt+ next to Quality: from a short idea in any language, the model writes a detailed prompt first (for edits it looks at your photo). You watch it being written. No second model to download.",
+    title: "Read the prompt first",
+    text: "The Prompt+ menu can write the prompt into the box, so you can read and change it before the image is made. Long prompts for crowded scenes are no longer cut short.",
   },
   {
-    icon: Layers,
-    title: "Your own LoRAs (beta)",
-    text: "Load Qwen-Image 2.1 LoRAs in Settings → LoRA, then turn them on for each project with the LoRA button, up to 3 at once. Tested on Windows so far: tell us how it goes on Mac and Linux.",
-  },
-  {
-    icon: Paintbrush,
-    title: "A new look",
-    text: "A calmer, deeper design in light and dark, with Kokon's own window bar. Settings is now at the bottom of the sidebar.",
-  },
-  {
-    icon: ListChecks,
-    title: "Clean up in one go",
-    text: "Press Select above your projects or in All images to remove several at once (or Ctrl/⌘-click, Shift-click for a range).",
+    icon: Sparkles,
+    title: "Cleaner edits",
+    text: "An edit made with the same seed as the image it starts from came out over-sharpened and often ignored the request. Kokon now picks another seed and tells you.",
   },
   {
     icon: Zap,
-    title: "Faster on big cards",
-    text: "With 24 GB of graphics memory or more, Fast images (and Balanced from 32 GB) finish a little sooner. Thanks to giveen.",
+    title: "Faster on AMD and Intel",
+    text: "With Vulkan, the last step of each image takes a few seconds again instead of up to a minute on AMD cards. Thanks to hakanavgin and Solembumm3 for the reports.",
+  },
+  {
+    icon: Cpu,
+    title: "A newer engine",
+    text: "Kokon's engine follows the latest stable-diffusion.cpp, with a fix for AMD and Intel cards without Resizable BAR.",
   },
   {
     icon: Wrench,
-    title: "Fixes",
-    text: "On Linux and Mac a crashed engine no longer leaves an image waiting forever (thanks to giveen). Kokon starts even if Windows reserves its ports. One percentage now covers the whole job.",
+    title: "For developers",
+    text: "kokon-mcp --help, and every route of the local HTTP API in the docs. Thanks to shrinivas-sn.",
   },
 ];
 

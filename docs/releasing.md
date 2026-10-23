@@ -61,7 +61,12 @@ all three from the same code.
    1. Copy its files and its `updater-<platform>.json` into the same `dist-release/`.
    2. Run the manifest step again.
    3. Upload with `gh release upload v0.9.1 <files> dist-release/latest.json --clobber`.
-7. **MCP server** (after the GitHub release is out): `cd mcp && npm login && npm whoami && npm publish`
+7. **Docker image**: publishing the release starts `.github/workflows/docker.yml`, which builds
+   `docker/Dockerfile` and pushes `ghcr.io/gabrielelozupone/kokon` with the tags `<x.y.z>`, `<x.y>`
+   and (not for a pre-release) `latest`. Check the run in the Actions tab. To build a tag again:
+   `gh workflow run docker.yml -f tag=v<x.y.z>`. The first push creates the package as private:
+   once, on GitHub → Packages → kokon → Package settings, set its visibility to **Public**.
+8. **MCP server** (after the GitHub release is out): `cd mcp && npm login && npm whoami && npm publish`
    (`npm login` first: an expired login makes `npm publish` fail with a misleading **E404 Not Found**; it runs the build and
    tests first), then `mcp-publisher login github` and `mcp-publisher publish` from `mcp/` so the
    MCP Registry lists the new version. Glama (https://glama.ai/mcp/servers/GabrieleLozupone/kokon):

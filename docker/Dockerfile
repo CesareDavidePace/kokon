@@ -2,9 +2,10 @@
 # The same Linux build as the .deb/.rpm (Ubuntu 22.04, glibc 2.35). The engine (stable-diffusion.cpp)
 # and the model are downloaded by Kokon's setup into /data, like in the desktop app, so the image
 # stays small; the NVIDIA Container Toolkit provides the driver. Guide: docs/docker.md.
+# Each release publishes it as ghcr.io/gabrielelozupone/kokon (.github/workflows/docker.yml).
+# To build it yourself, from the repository root:
 #
-#   docker build -f docker/Dockerfile -t kokon .
-#   docker compose -f docker/compose.yaml up -d
+#   docker build -f docker/Dockerfile -t ghcr.io/gabrielelozupone/kokon:latest .
 
 FROM ubuntu:22.04 AS build
 ARG DEBIAN_FRONTEND=noninteractive
@@ -37,7 +38,8 @@ ENV QLS_DATA_DIR=/data \
     QLS_CONFIG_DIR=/config \
     QLS_OUTPUT_DIR=/gallery \
     NVIDIA_VISIBLE_DEVICES=all \
-    NVIDIA_DRIVER_CAPABILITIES=compute,utility     KOKON_CONTAINER=1
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    KOKON_CONTAINER=1
 USER kokon
 VOLUME ["/data", "/config", "/gallery"]
 # The browser UI (password required). The token API on 39151 stays inside the container.

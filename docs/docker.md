@@ -14,10 +14,13 @@ be tested.
 
 ## Start it
 
-From a clone of this repository:
+Each release publishes the image as `ghcr.io/gabrielelozupone/kokon`, so you need only the
+compose file, no clone and no build:
 
 ```bash
-docker compose -f docker/compose.yaml up -d --build
+mkdir kokon && cd kokon
+curl -fsSLO https://raw.githubusercontent.com/GabrieleLozupone/kokon/master/docker/compose.yaml
+docker compose up -d
 docker exec -it kokon kokon-service --set-password   # once; at least 8 characters
 ```
 
@@ -33,7 +36,7 @@ downloads the engine and the model (about 12 GB) into the container's data volum
 | `kokon-gallery` | `/gallery` | the images saved to the gallery |
 
 To keep the saved images in a folder of your own, replace the `kokon-gallery` line in
-`docker/compose.yaml` with a folder Kokon can write to (it runs as user id 1000):
+`compose.yaml` with a folder Kokon can write to (it runs as user id 1000):
 
 ```bash
 mkdir -p ~/kokon-gallery && sudo chown 1000:1000 ~/kokon-gallery
@@ -45,8 +48,21 @@ mkdir -p ~/kokon-gallery && sudo chown 1000:1000 ~/kokon-gallery
 ```bash
 docker logs -f kokon                                  # what the service is doing
 docker exec -it kokon kokon-service --set-password    # a new password (every browser signs in again)
-docker compose -f docker/compose.yaml down            # stop (the volumes stay)
-git pull && docker compose -f docker/compose.yaml up -d --build   # update to a new version
+docker compose down                                   # stop (the volumes stay)
+docker compose pull && docker compose up -d           # update to a new version
+```
+
+The `latest` tag follows every release. To get only the fixes of one version, write for example
+`ghcr.io/gabrielelozupone/kokon:0.11` in `compose.yaml` (it stays on 0.11.x); each release also
+has its exact tag, such as `:0.11.0`.
+
+## Build the image yourself
+
+From a clone of this repository (takes a while: it compiles the UI and `kokon-service`):
+
+```bash
+docker build -f docker/Dockerfile -t ghcr.io/gabrielelozupone/kokon:latest .
+docker compose -f docker/compose.yaml up -d
 ```
 
 ## Security

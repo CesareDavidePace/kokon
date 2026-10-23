@@ -1,17 +1,17 @@
 # Kokon on an NVIDIA GPU, used from a browser: http://<this computer's address>:39152
-# Needs the NVIDIA Container Toolkit. First start, then set the password once:
+# Needs the NVIDIA Container Toolkit. In the folder with this file, start it, then set the
+# password once:
 #
-#   docker compose -f docker/compose.yaml up -d
+#   docker compose up -d
 #   docker exec -it kokon kokon-service --set-password
 #
+# Update to a new version: docker compose pull && docker compose up -d
 # Guide: docs/docker.md. For access from outside your home use Tailscale or another VPN
 # (docs/remote-access.md), never port forwarding on your router.
 services:
   kokon:
-    image: kokon
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
+    # Published by each release; ":0.11" stays on 0.11.x instead of following new versions.
+    image: ghcr.io/gabrielelozupone/kokon:latest
     container_name: kokon
     restart: unless-stopped
     ports:

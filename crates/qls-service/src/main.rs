@@ -311,6 +311,7 @@ async fn run(args: Vec<String>) {
     tokio::spawn(lifecycle(state.clone()));
     tokio::spawn(server_watch(state.clone()));
     tokio::spawn(qls_core::engine_manifest::run(APP_VERSION));
+    tokio::spawn(stop_on_signal(state.clone()));
 
     let app = api::router(state.clone(), false).into_make_service_with_connect_info::<SocketAddr>();
     let st = state.clone();
@@ -337,6 +338,26 @@ async fn run(args: Vec<String>) {
         let _ = std::fs::remove_file(service_info_path());
     }
     tracing::info!("kokon-service exited");
+}
+
+/// Ctrl+C in a terminal, `systemctl stop` or `docker stop` (SIGTERM): shut down like a client
+/// asking for it, so sd-server is stopped too instead of being left holding the GPU.
+async fn stop_on_signal(state: Arc<AppState>) {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let Ok(mut term) = signal(SignalKind::terminate()) else { return };
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = term.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    if tokio::signal::ctrl_c().await.is_err() {
+        return;
+    }
+    tracing::info!("stop signal received — shutting down");
+    state.shutdown.notify_waiters();
 }
 
 /// Exits when no client holds a lease, no job is pending, and the grace period passed.

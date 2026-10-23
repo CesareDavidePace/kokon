@@ -1,0 +1,14 @@
+# Only the sources kokon-service and the UI are built from (docker/Dockerfile).
+.git
+/target
+/src-tauri/target
+**/node_modules
+/dist
+/dist-release
+/mcp/build
+/private
+/marketing
+/site
+/docs/media
+
+*.log

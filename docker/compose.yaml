@@ -1,0 +1,39 @@
+# Kokon on an NVIDIA GPU, used from a browser: http://<this computer's address>:39152
+# Needs the NVIDIA Container Toolkit. First start, then set the password once:
+#
+#   docker compose -f docker/compose.yaml up -d
+#   docker exec -it kokon kokon-service --set-password
+#
+# Guide: docs/docker.md. For access from outside your home use Tailscale or another VPN
+# (docs/remote-access.md), never port forwarding on your router.
+services:
+  kokon:
+    image: kokon
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: kokon
+    restart: unless-stopped
+    ports:
+      # Every network interface of this computer. Docker's published ports skip host firewalls
+      # such as ufw; to reach Kokon only from this computer use "127.0.0.1:39152:39152".
+      - "39152:39152"
+    volumes:
+      - kokon-data:/data        # engine, models (~13 GB), gallery database
+      - kokon-config:/config    # settings
+      - kokon-gallery:/gallery  # the images you save
+      # A folder of your own instead (Kokon runs as uid 1000, so it must own it):
+      #   mkdir -p ~/kokon-gallery && sudo chown 1000:1000 ~/kokon-gallery
+      #   - ~/kokon-gallery:/gallery
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  kokon-data:
+  kokon-config:
+  kokon-gallery:

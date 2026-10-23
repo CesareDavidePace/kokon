@@ -186,7 +186,113 @@ def riser(sec: float = 1.6) -> np.ndarray:
     return x * np.linspace(0.2, 1, x.size) ** 1.5
 
 
+def pop() -> np.ndarray:
+    """A soft, round pop: a caption landing. A short pitch drop on a sine, a breath of air."""
+    x = t(0.18)
+    f = 330 + 520 * np.exp(-x / 0.018)
+    body = np.sin(2 * np.pi * np.cumsum(f) / SR) * env(x.size, 0.001, 0.04)
+    air = band(noise(0.18), 1500, 5000) * env(x.size, 0.0005, 0.008) * 0.25
+    return fade(body + air, 0.0005, 0.04)
+
+
+def swipe() -> np.ndarray:
+    """A short, light whoosh panned left to right: a before/after wipe."""
+    x = swish(0.42, 700, 2500, 2500, 8000)
+    pan = np.linspace(0.1, 0.9, x.size)
+    st = room(x, 0.15)[: x.size]
+    return np.stack([st[:, 0] * np.cos(pan * np.pi / 2) * 1.3, st[:, 1] * np.sin(pan * np.pi / 2) * 1.3], axis=1)
+
+
+def deep() -> np.ndarray:
+    """A low, soft hit with a long dark tail, under the privacy line."""
+    x = t(3.2)
+    f = 41 + 30 * np.exp(-x / 0.08)
+    sub = np.sin(2 * np.pi * np.cumsum(f) / SR) * env(x.size, 0.008, 1.1)
+    body = low(noise(3.2), 600) * env(x.size, 0.004, 0.25) * 0.3
+    return fade(sub + body, 0.002, 0.6)
+
+
+# The "use cases" video's effects; write only these with:  python make_sfx.py pop swipe deep
+EXTRA = {"pop": (pop, -8), "swipe": (swipe, -8), "deep": (deep, -4)}
+
+
+# The "Kokon 0.11" video's effects, three variants each to pick by ear (video/public/sfx/011/
+# NAME-K.wav, `python make_sfx.py 011`); sound.tsx plays the picked one.
+def lock(k: int) -> np.ndarray:
+    """A padlock shutting: a short metal click on a low knock (variant 2: two parts, ka-chunk)."""
+    def clack(pitch: float, gain: float) -> np.ndarray:
+        n = int(0.16 * SR)
+        metal = band(rng.standard_normal(n), 2200 * pitch, 7000 * pitch) * env(n, 0.0003, 0.012)
+        ring = tone(2900 * pitch, 0.16, 0.0005, 0.03, ((1, 1.0), (1.47, 0.6)))[:n] * 0.25
+        knock = np.sin(2 * np.pi * 130 * pitch * t(0.16)) * env(n, 0.001, 0.025) * 0.8
+        return (metal + ring + knock) * gain
+    if k == 2:
+        a, b = clack(1.1, 0.6), clack(0.85, 1.0)
+        x = np.zeros(int(0.32 * SR))
+        x[: a.size] += a
+        i = int(0.085 * SR)
+        x[i:i + b.size] += b
+        return fade(x, 0.0005, 0.05)
+    return fade(clack([1.0, 0.8][k], 1.0), 0.0005, 0.05)
+
+
+def spinup(k: int, sec: float = 1.8) -> np.ndarray:
+    """The computer's fans speeding up: air rising in pitch and level, a hum under it."""
+    x = t(sec)
+    r = (x / sec) ** [1.2, 0.8, 1.0][k]
+    lo, hi = [(300, 1400), (180, 900), (400, 2200)][k]
+    air = noise(sec)
+    # The band moves up with the speed: two passes, crossfaded.
+    a = band(air, lo, lo * 3) * (1 - r) + band(air, hi / 3, hi) * r
+    hum = np.sin(2 * np.pi * np.cumsum(55 + 110 * r) / SR) * 0.25
+    flutter = 1 + (0.35 * np.sin(2 * np.pi * np.cumsum(6 + 40 * r) / SR) if k == 2 else 0)
+    return fade((a * flutter + hum) * (0.15 + 0.85 * r), 0.05, 0.25)
+
+
+def power(k: int) -> np.ndarray:
+    """The computer switched on: a soft button, then a warm swell."""
+    x = t(1.4)
+    btn = np.zeros(x.size)
+    c = click()
+    btn[: c.size] += c * 0.8
+    f0 = [65.4, 82.4, 98.0][k]
+    swell = tone(f0, 1.4, 0.35, 0.5, ((1, 1.0), (2, 0.5), (3, 0.25), (4, 0.12))) * 0.7
+    sweep = band(noise(1.4), 400, 2400) * env(x.size, 0.3, 0.25) * [0.0, 0.25, 0.12][k]
+    return fade(btn + swell + sweep, 0.0005, 0.3)
+
+
+def swipe011(k: int) -> np.ndarray:
+    """A request going from the phone to the computer: a short whoosh panned left to right."""
+    sec, lo0, hi0, lo1, hi1 = [(0.42, 700, 2500, 2500, 8000), (0.6, 400, 1600, 1600, 6000), (0.36, 900, 3000, 3000, 9000)][k]
+    x = swish(sec, lo0, hi0, lo1, hi1)
+    if k == 2:
+        x = x + tone(2093, sec, 0.15, 0.12) * 0.15
+    pan = np.linspace(0.1, 0.9, x.size)
+    st = room(x, 0.15)[: x.size]
+    return np.stack([st[:, 0] * np.cos(pan * np.pi / 2) * 1.3, st[:, 1] * np.sin(pan * np.pi / 2) * 1.3], axis=1)
+
+
+V011 = {"lock": (lock, -6), "spinup": (spinup, -10), "power": (power, -6), "travel": (swipe011, -8)}
+
+
+def save011() -> None:
+    global OUT
+    out, OUT = OUT, OUT / "011"
+    for name, (make, peak) in V011.items():
+        for k in range(3):
+            save(f"{name}-{k + 1}", make(k), peak)
+    OUT = out
+
 if __name__ == "__main__":
+    import sys
+
+    if sys.argv[1:] == ["011"]:
+        raise SystemExit(save011())
+    if sys.argv[1:]:
+        for name in sys.argv[1:]:
+            make, peak = EXTRA[name]
+            save(name, make(), peak)
+        raise SystemExit
     save("click", click(), -6)
     save("typing", typing(), -6)
     save("send", send(), -6)

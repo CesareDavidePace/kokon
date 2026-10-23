@@ -17,7 +17,18 @@ const LEVEL = {
   brush: 0.16,
   hit: 0.55,
   riser: 0.22,
+  // the "use cases" video
+  pop: 0.2,
+  swipe: 0.2,
+  deep: 0.3,
+  // the "Kokon 0.11" video (variants in public/sfx/011, the picked one in PICK)
+  lock: 0.32,
+  spinup: 0.2,
+  power: 0.3,
+  travel: 0.24,
 } as const;
+/** Effects made in several variants (make_sfx.py 011), and the one each video plays. */
+const PICK: Partial<Record<string, string>> = { lock: "011/lock-1", spinup: "011/spinup-1", power: "011/power-1", travel: "011/travel-1" };
 /** Music level under the voice (about -8 dB), and how fast it dips and comes back. */
 const DUCK = { level: 0.4, attack: 8, release: 16 };
 
@@ -32,7 +43,7 @@ const REVEALS = ["reveal-a", "reveal-b", "reveal-c"] as const;
 export function Sfx({ name, at, dur, gain = 1, variant }: { name: SfxName; at: number; dur?: number; gain?: number; variant?: number }) {
   if (dur !== undefined && dur <= 0) return null;
   const level = LEVEL[name] * gain;
-  const file = name === "reveal" ? REVEALS[(variant ?? 0) % REVEALS.length] : name;
+  const file = name === "reveal" ? REVEALS[(variant ?? 0) % REVEALS.length] : (PICK[name] ?? name);
   return (
     <Sequence from={Math.round(at)} durationInFrames={dur} layout="none" name={`sfx:${file}`}>
       <Html5Audio src={staticFile(`sfx/${file}.wav`)} volume={(f) => (dur === undefined ? level : level * Math.min(1, (dur - f) / 6))} />
@@ -84,7 +95,8 @@ function duck(f: number, cues: Cue[]): number {
 }
 
 /** Music for the whole film, under the voice (`cues`), fading out over the last `fadeOut` frames.
- * `src` and `from` (seconds into the file) pick the track and where it starts. */
-export function Music({ frames, fadeOut = 45, cues = CUES, src = "music.m4a", from = 0 }: { frames: number; fadeOut?: number; cues?: Cue[]; src?: string; from?: number }) {
-  return <Html5Audio src={staticFile(src)} trimBefore={Math.round(from * FPS)} volume={(f) => LEVEL.music * duck(f, cues) * Math.min(1, Math.max(0, (frames - f) / fadeOut))} />;
+ * `src` and `from` (seconds into the file) pick the track and where it starts; `gain` shapes its level
+ * over the video. */
+export function Music({ frames, fadeOut = 45, cues = CUES, src = "music.m4a", from = 0, gain }: { frames: number; fadeOut?: number; cues?: Cue[]; src?: string; from?: number; gain?: (f: number) => number }) {
+  return <Html5Audio src={staticFile(src)} trimBefore={Math.round(from * FPS)} volume={(f) => LEVEL.music * (gain ? gain(f) : 1) * duck(f, cues) * Math.min(1, Math.max(0, (frames - f) / fadeOut))} />;
 }

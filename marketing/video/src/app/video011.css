@@ -1,0 +1,4 @@
+/* The "Kokon 0.11" video: the app inside a phone's screen fills it edge to edge. */
+.kokon-window.in-phone { border-radius: 0; box-shadow: none; }
+/* The sign-in page, as kokon-service serves it before the app (Login.tsx): centred on the page. */
+.kokon-window.login-page { align-items: center; justify-content: center; padding-bottom: 120px; }

@@ -17,6 +17,11 @@ launch take is never touched:
                                                     -> voice/update-0.10/final-<stamp>/NN.wav, copied to
                                                        video/public/voice-0.10 with video/src/app/voice-0.10.json
 
+The "use cases" video (voiceover-usecases.md) works the same way, with a tone per line:
+
+    D:/AI/tts/.venv/Scripts/python gen_voice.py audition-usecases [--seeds 4]
+    D:/AI/tts/.venv/Scripts/python gen_voice.py build-usecases --from voice/usecases/audition-<stamp> --pick 1.0:11,...
+
 redo/splice change single sentences of the approved take: `--keep NEW:OLD` reuses old sentence
 OLD (cut from voice/final/raw by raw/spans.json) as new sentence NEW; the other sentences of the
 line in voiceover.md get takes to audition, and `--pick NEW:SEED` chooses one each (the auditioned file itself). splice backs
@@ -53,7 +58,16 @@ TAKES = {
     "expressive": ("base", 0.7, 0.3, 0.8),
     "turbo": ("turbo", 0.0, 0.0, 0.8),
     "calmer": ("base", 0.55, 0.2, 0.8),
+    # The "use cases" video's tones (voiceover-usecases.md, column Tone). "playful" is Chatterbox
+    # Turbo, which reads paralinguistic tags ([chuckle], [happy], [laugh]...); it has no voice of its
+    # own here, so it clones the launch voice from TURBO_REF.
+    "punchy": ("base", 0.75, 0.35, 0.8),
+    "playful": ("turbo", 0.0, 0.0, 0.8),
+    "tender": ("base", 0.3, 0.45, 0.65),
+    "intimate": ("base", 0.25, 0.5, 0.55),
 }
+# A clean line of the launch take (12.8 s), the voice Turbo copies.
+TURBO_REF = HERE.parent / "video" / "public" / "voice" / "03.wav"
 
 # The approved take (`gen_voice.py final`), picked by ear line by line. Each line is read one
 # sentence at a time (seed + i for sentence i) with a pause in between, which slows the
@@ -76,9 +90,13 @@ MASTER = "aresample=48000,highpass=f=80,deesser=i=0.4,acompressor=threshold=-20d
 LUFS = -16.0
 
 
-def script_lines(script: str = "voiceover.md") -> list[str]:
+def script_rows(script: str) -> list[list[str]]:
     rows = [l for l in (HERE / script).read_text(encoding="utf-8").splitlines() if re.match(r"^\| \d+ \|", l)]
-    return [r.split("|")[4].strip() for r in rows]
+    return [[c.strip() for c in r.split("|")] for r in rows]
+
+
+def script_lines(script: str = "voiceover.md") -> list[str]:
+    return [r[4] for r in script_rows(script)]
 
 
 _models: dict = {}
@@ -98,6 +116,8 @@ def say(take: str, text: str, ref: Path | None, seed: int) -> np.ndarray:
     kind, exag, cfg, temp = TAKES[take]
     m = model(kind)
     torch.manual_seed(seed)
+    if kind == "turbo" and ref is None:
+        ref = TURBO_REF
     kw = dict(audio_prompt_path=str(ref) if ref else None, temperature=temp)
     if kind == "base":
         kw.update(exaggeration=exag, cfg_weight=cfg)
@@ -262,32 +282,66 @@ UPDATE_PAUSES = {3: 0.7}
 UPDATE_SPLITS = {"3.0": [(0.93, 0.35)]}
 
 
-def audition(seeds: int, base: int) -> None:
-    """`seeds` takes of every sentence of the update script, read one at a time, for picking by ear."""
-    folder = UPDATE["dir"] / f"audition-{time.strftime('%Y%m%d-%H%M%S')}"
-    folder.mkdir(parents=True)
-    for n, line in enumerate(script_lines(UPDATE["script"]), 1):
-        take = UPDATE_TAKES.get(n, "expressive")
+# The "use cases" video (voiceover-usecases.md): each line's tone is in the script's Tone column.
+USECASES = {"script": "voiceover-usecases.md", "dir": OUT / "usecases", "public": "voice-usecases", "json": "voice-usecases.json"}
+USECASES_TONES = {n: r[3] for n, r in enumerate(script_rows(USECASES["script"]), 1)}
+# The "Kokon 0.11" video (voiceover-0.11.md): the 0.10 voice, each sentence in both of its tones
+# (seeds k of the second tone are offset by 5, so every take keeps its own file name).
+V011 = {"script": "voiceover-0.11.md", "dir": OUT / "update-0.11", "public": "voice-0.11", "json": "voice-0.11.json"}
+V011_TONES = {n: ["calmer", "expressive"] for n in range(1, len(script_rows(V011["script"])) + 1)}
+PROJECTS = {"update": (UPDATE, UPDATE_TAKES), "usecases": (USECASES, USECASES_TONES), "011": (V011, V011_TONES)}
+# build-011: sentences cut into parts that the video places one by one ("LINE.SENTENCE": about
+# where, in seconds into the take; each cut moves to the quietest 10 ms within 0.15 s). "Scan the
+# code, / sign in once, / and add Kokon to your home screen." goes with three shots; "Pick a photo, /
+# describe the change." gets a pause at the comma (the takes read it in one breath).
+V011_CUTS = {"3.1": [0.95, 1.78], "4.0": [1.0]}
+
+
+def quiet_cuts(c: np.ndarray, near: list[float]) -> list[int]:
+    """Sample positions of the quietest 10 ms windows around each time in `near`."""
+    w, out = int(0.01 * SR), []
+    for t0 in near:
+        lo, hi = int((t0 - 0.15) * SR), int((t0 + 0.15) * SR)
+        best = min(range(lo, hi - w, w // 2), key=lambda i: float(np.abs(c[i:i + w]).mean()))
+        out.append(best + w // 2)
+    return out
+
+
+def audition(seeds: int, base: int, project: str = "update", lines: set[int] | None = None, into: Path | None = None) -> None:
+    """`seeds` takes of every sentence of a script, read one at a time, for picking by ear. `lines`:
+    only these lines; `into`: add the takes to an earlier audition folder (a changed line, or more
+    seeds of one: pass another --seed so the names don't collide)."""
+    proj, takes = PROJECTS[project]
+    folder = into or proj["dir"] / f"audition-{time.strftime('%Y%m%d-%H%M%S')}"
+    folder.mkdir(parents=True, exist_ok=into is not None)
+    for n, line in enumerate(script_lines(proj["script"]), 1):
+        if lines and n not in lines:
+            continue
+        tones = takes.get(n, "expressive")
+        tones = [tones] if isinstance(tones, str) else tones
         for i, text in enumerate(sentences(line)):
-            for k in range(seeds):
+            for k, take in ((k + 5 * j, t) for j, t in enumerate(tones) for k in range(seeds)):
                 seed = base + 10 * i + k
                 a = say(take, text, None, seed)
                 raw = folder / f"{n:02d}-s{i}-seed{seed}.raw.wav"
                 sf.write(raw, a, SR)
                 master(raw, folder / f"{n:02d}-s{i}-seed{seed}.wav")
-                print(f"{n:02d} s{i} seed {seed}  {a.size / SR:4.1f} s  {text}", flush=True)
+                print(f"{n:02d} s{i} seed {seed} {take}  {a.size / SR:4.1f} s  {text}", flush=True)
     print(f"takes in {folder}")
 
 
-def build(src: Path, pick: dict[str, int]) -> None:
+def build(src: Path, pick: dict[str, int], project: str = "update") -> None:
     """The update's lines from the picked sentence takes (`pick` "LINE.SENTENCE" -> seed), 0.4 s
     between sentences (UPDATE_PAUSES, UPDATE_SPLITS), mastered like the launch take (-16 LUFS over all lines). Each build goes to
     a new folder; the video gets the files and their sentence spans."""
-    lines = script_lines(UPDATE["script"])
+    proj = PROJECTS[project][0]
+    pauses = UPDATE_PAUSES if project == "update" else {}
+    splits = UPDATE_SPLITS if project == "update" else {}
+    lines = script_lines(proj["script"])
     missing = [f"{n}.{i}" for n, l in enumerate(lines, 1) for i in range(len(sentences(l))) if f"{n}.{i}" not in pick]
     if missing:
         raise SystemExit(f"no take picked for {', '.join(missing)}")
-    folder = UPDATE["dir"] / f"final-{time.strftime('%Y%m%d-%H%M%S')}"
+    folder = proj["dir"] / f"final-{time.strftime('%Y%m%d-%H%M%S')}"
     (folder / "raw").mkdir(parents=True)
     spans: dict[int, dict] = {}
     files = []
@@ -297,13 +351,18 @@ def build(src: Path, pick: dict[str, int]) -> None:
         for i in range(len(parts)):
             c, sr = sf.read(src / f"{n:02d}-s{i}-seed{pick[f'{n}.{i}']}.raw.wav", dtype="float32")
             assert sr == SR
-            for t, gap in sorted(UPDATE_SPLITS.get(f"{n}.{i}", []), reverse=True):
+            for t, gap in sorted(splits.get(f"{n}.{i}", []), reverse=True):
                 c = np.concatenate([c[:int(t * SR)], np.zeros(int(gap * SR), dtype=np.float32), c[int(t * SR):]])
-            chunks.append(c)
-            marks.append([round(pos / SR, 3), round((pos + c.size) / SR, 3)])
-            pos += c.size
+            cuts = quiet_cuts(c, V011_CUTS.get(f"{n}.{i}", [])) if project == "011" else []
+            for a, b in zip([0, *cuts], [*cuts, c.size]):
+                if a:
+                    chunks.append(np.zeros(int(SENTENCE_PAUSE * SR), dtype=np.float32))
+                    pos += chunks[-1].size
+                chunks.append(c[a:b])
+                marks.append([round(pos / SR, 3), round((pos + b - a) / SR, 3)])
+                pos += b - a
             if i < len(parts) - 1:
-                chunks.append(np.zeros(int(UPDATE_PAUSES.get(n, SENTENCE_PAUSE) * SR), dtype=np.float32))
+                chunks.append(np.zeros(int(pauses.get(n, SENTENCE_PAUSE) * SR), dtype=np.float32))
                 pos += chunks[-1].size
         spans[n] = {"dur": round(pos / SR, 3), "sentences": marks}
         raw = folder / "raw" / f"{n:02d}.wav"
@@ -320,12 +379,12 @@ def build(src: Path, pick: dict[str, int]) -> None:
         master(f, tmp, gain)
         tmp.replace(f)
     (folder / "picks.json").write_text(json.dumps({"from": str(src), "pick": pick}, indent=1) + "\n", encoding="utf-8")
-    dst = VIDEO / "public" / UPDATE["public"]
+    dst = VIDEO / "public" / proj["public"]
     dst.mkdir(parents=True, exist_ok=True)
     for f in files:
         shutil.copy(f, dst / f.name)
-    (VIDEO / "src" / "app" / UPDATE["json"]).write_text(json.dumps(spans, indent=1) + "\n", encoding="utf-8")
-    print(f"{folder}: all.wav {preview.size / 48000:.1f} s at {lufs(folder / 'all.wav'):.1f} LUFS; copied to video/public/{UPDATE['public']}, spans in video/src/app/{UPDATE['json']}")
+    (VIDEO / "src" / "app" / proj["json"]).write_text(json.dumps(spans, indent=1) + "\n", encoding="utf-8")
+    print(f"{folder}: all.wav {preview.size / 48000:.1f} s at {lufs(folder / 'all.wav'):.1f} LUFS; copied to video/public/{proj['public']}, spans in video/src/app/{proj['json']}")
 
 
 if __name__ == "__main__":
@@ -338,11 +397,15 @@ if __name__ == "__main__":
     ap.add_argument("--seeds", type=int, default=6, help="redo: takes per new sentence")
     ap.add_argument("--take", help="redo: model settings (default: the line's approved take in FINAL)")
     ap.add_argument("--from", dest="src", type=Path)
+    ap.add_argument("--lines", help="audition: only these lines, e.g. 4,6")
+    ap.add_argument("--into", type=Path, help="audition: add to this audition folder")
     a = ap.parse_args()
-    if a.takes[:1] == ["audition"]:
-        raise SystemExit(audition(a.seeds, a.seed))
-    if a.takes[:1] == ["build"]:
-        raise SystemExit(build(a.src, {k: int(v) for k, v in (p.split(":") for p in a.pick.split(","))}))
+    for proj in PROJECTS:
+        suffix = "" if proj == "update" else f"-{proj}"
+        if a.takes[:1] == [f"audition{suffix}"]:
+            raise SystemExit(audition(a.seeds, a.seed, proj, {int(x) for x in a.lines.split(",")} if a.lines else None, a.into))
+        if a.takes[:1] == [f"build{suffix}"]:
+            raise SystemExit(build(a.src, {k: int(v) for k, v in (p.split(":") for p in a.pick.split(","))}, proj))
     if a.takes[:1] == ["redo"]:
         n = int(a.takes[1])
         raise SystemExit(redo(n, pairs(a.keep), a.seeds, a.take or FINAL[n][0], a.seed))

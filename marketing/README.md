@@ -50,6 +50,25 @@ D:/AI/tts/.venv/Scripts/python audio/gen_voice.py build --from audio/voice/updat
 npx remotion render Update010 out/kokon-0.10-update.mp4            # in video/, 1920×1080
 ```
 
+**"Kokon 0.11" video** (`Update011`, ~76 s): Kokon on other devices. The site's "Other devices"
+scene (`src/app/Devices011.tsx`: the computer with the GPU, a MacBook and an iPhone, frames from
+Devices.css, MIT, in `src/app/devices.css`), the three setup steps, the phone in use, safe by
+default, the server and Docker, the end card. The app on screen is the app itself: Settings →
+Other devices in the desktop window, and the browser UI in the phone layout (`loaders/phone-container.cjs`
+turns the 720 px media query into a container query; `src/mocks/platform.ts` switches desktop and
+browser per window). The QR codes in the camera shot and on the end card open the setup guide.
+Clock `src/app/timeline011.ts` (bars of the music, shots, voice cues), script `audio/voiceover-0.11.md`,
+music one ACE-Step take played whole at one level (`gen_music.py v011-steady`, steady deep house at
+118 BPM), new effects `make_sfx.py 011` (three variants each in `public/sfx/011`, the one played is
+picked in `sound.tsx`).
+
+```powershell
+D:/AI/tts/.venv/Scripts/python audio/gen_voice.py audition-011 --seeds 3   # voice/update-0.11/audition-<stamp>/
+D:/AI/tts/.venv/Scripts/python audio/gen_voice.py build-011 --from voice/update-0.11/audition-<stamp> --pick 1.0:17,...
+python audio/gen_music.py v011-steady                              # takes/v011-steady-<stamp>-N.wav (ACE-Step API running)
+npx remotion render Update011 out/kokon-0.11.mp4                    # in video/, 1920×1080
+```
+
 `src/app/timeline.ts` is the film's clock: scene lengths, the frame where each voice-over sentence
 plays, the frames of the actions the voice names (Remove, Add, the montage cuts) and the music's
 beat grid. Retime there and pictures, voice and music move together.

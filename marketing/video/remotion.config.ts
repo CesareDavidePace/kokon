@@ -30,6 +30,7 @@ Config.overrideWebpackConfig((c) => {
         ...(c.module?.rules ?? []).map((r) => (r && typeof r === "object" && r.type === "asset/resource" ? { ...r, resourceQuery: { not: [/raw/] } } : r)),
         { resourceQuery: /raw/, type: "asset/source" },
         { test: /\.tsx?$/, include: app, enforce: "pre" as const, use: path.resolve(root, "loaders/vite-glob.cjs") },
+        { test: /styles\.css$/, include: app, enforce: "pre" as const, use: path.resolve(root, "loaders/phone-container.cjs") },
       ],
     },
     resolve: {
@@ -54,6 +55,7 @@ Config.overrideWebpackConfig((c) => {
       swap(/^(\.\.?\/)+(lib\/)?store$/, "store.ts"),
       swap(/^(\.\.?\/)+(lib\/)?api$/, "api.ts"),
       swap(/^(\.\.?\/)+(lib\/)?native$/, "native.ts"),
+      swap(/^(\.\.?\/)+(lib\/)?platform$/, "platform.ts"),
       swap(/^\.\/Compare$/, "Compare.tsx"),
       swap(/^\.\/Cocoon$/, "Cocoon.tsx"),
       swap(/^\.\/jobMotion$/, "jobMotion.ts"),

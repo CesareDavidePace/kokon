@@ -15,6 +15,8 @@ export const isConfigured = () => true;
 const never = () => new Promise<never>(() => {});
 const ANSWERS: Record<string, unknown> = { config: { outputDir: "C:/Users/you/Pictures/Kokon", upscalerModel: "superscale-sp", gpuBackend: "cuda", activeProfile: "official", profiles: [{ id: "official" }], ui: {} } };
 export const api: Record<string, (...a: unknown[]) => Promise<never>> = new Proxy({}, { get: (_t, name: string) => (name in ANSWERS ? () => Promise.resolve(ANSWERS[name]) : never) });
+/** What a request answers from now on (Settings → Other devices reads `remote` when it opens). */
+export const answer = (name: string, value: unknown) => void (ANSWERS[name] = value);
 export const urls = {
   input: (id: string) => staticFile(`img/${id}.jpg`),
   inputThumb: (id: string) => staticFile(`thumb/${id}.jpg`),

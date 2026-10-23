@@ -13,6 +13,8 @@ import { Update010, UPDATE_FRAMES } from "./scenes/Update010";
 import { LENGTH } from "./app/timeline";
 import { REELS, ReelScene, reelFrames } from "./scenes/Reels";
 import { AppShot, PH_SLIDES } from "./scenes/ProductHunt";
+import { Probe011 } from "./scenes/Probe011";
+import { Update011, UPDATE011_FRAMES } from "./scenes/Update011";
 import { VREELS, VReelScene, vreelFrames } from "./scenes/VReels";
 
 const withPreload = (C: ComponentType) => () => (
@@ -27,6 +29,8 @@ export function Root() {
   return (
     <>
       <Composition id="KokonLaunch" component={withPreload(Main)} durationInFrames={MAIN_FRAMES} {...S} />
+      <Composition id="Update011" component={withPreload(Update011)} durationInFrames={UPDATE011_FRAMES} {...S} />
+      <Composition id="Probe011" component={withPreload(Probe011)} durationInFrames={1} {...S} />
       <Composition id="Update010" component={withPreload(Update010)} durationInFrames={UPDATE_FRAMES} {...S} />
       <Composition id="Montage" component={withPreload(Montage)} durationInFrames={MONTAGE_FRAMES} {...S} />
       <Composition id="Agent" component={withPreload(Agent)} durationInFrames={AGENT_FRAMES} {...S} />

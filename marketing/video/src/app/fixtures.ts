@@ -21,6 +21,9 @@ export const SIZES: Record<string, [number, number]> = {
   sneaker: [1536, 1536],
   "sneaker-ad": [1536, 1536],
   hero: [2752, 1536],
+  // The 0.11 video: a beach photo and the edit that puts him on a flamingo (use-case set, 2K).
+  beach: [1760, 2368],
+  "beach-flamingo": [1760, 2368],
 };
 
 export const PROMPTS = {

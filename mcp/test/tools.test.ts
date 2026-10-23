@@ -21,6 +21,16 @@ describe("input validation", () => {
     expect(obj("generate_image").safeParse({ prompt: "x", reference_images: ["a.png", "b.png"] }).data?.reference_images).toEqual(["a.png", "b.png"]);
     expect(obj("generate_image").safeParse({ prompt: "x", reference_images: Array(11).fill("a.png") }).success).toBe(false);
   });
+  it("edit tools warn against reusing the source's seed", () => {
+    for (const k of ["edit_image", "edit_images", "inpaint_image", "outpaint_image"] as const) {
+      // As clients see it: the JSON Schema of the tool's input.
+      const seed = (z.toJSONSchema(obj(k)) as { properties: Record<string, { description?: string }> }).properties.seed;
+      expect(seed.description).toMatch(/Never reuse the seed the source image was generated with/);
+    }
+    const gen = (z.toJSONSchema(obj("generate_image")) as { properties: Record<string, { description?: string }> }).properties.seed;
+    expect(gen.description).toMatch(/^Seed for reproducible results/);
+    expect(gen.description).not.toMatch(/source image/);
+  });
   it("edit_images limits and order", () => {
     expect(obj("edit_images").safeParse({ prompt: "x", image_paths: [] }).success).toBe(false);
     expect(obj("edit_images").safeParse({ prompt: "x", image_paths: Array(11).fill("a.png") }).success).toBe(false);

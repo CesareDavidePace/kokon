@@ -9,6 +9,9 @@ const quality = z
   .enum(["fast", "balanced", "quality"])
   .describe("All run Qwen-Image 2.1 Turbo (8 steps): fast = ~1 MP (the default, fastest); balanced = ~1.5K; quality = native 2K (slowest; edits share 2K with their references)");
 const seed = z.number().int().min(-1).max(2_147_483_647).describe("Seed for reproducible results; omit or -1 for random");
+// The seed that made the source, at the same size, is the same starting noise: the edit comes
+// out over-sharpened and ignores the prompt (the service also swaps such a seed, with a note).
+const editSeed = seed.describe("Seed for reproducible results; omit or -1 for random. Never reuse the seed the source image was generated with: use a different one or omit it");
 const dim = z.number().int().min(64).max(4096);
 const aspect = z
   .string()
@@ -47,7 +50,7 @@ export const schemas = {
     output_path: outputPath.optional(),
     quality: quality.optional(),
     preserve_dimensions: z.boolean().optional().describe("Keep the input's exact width/height (default true)"),
-    seed: seed.optional(),
+    seed: editSeed.optional(),
     include_preview: preview.optional(),
   },
   edit_images: {
@@ -59,7 +62,7 @@ export const schemas = {
     height: dim.optional(),
     aspect_ratio: aspect.optional(),
     quality: quality.optional(),
-    seed: seed.optional(),
+    seed: editSeed.optional(),
     output_path: outputPath.optional(),
     include_preview: preview.optional(),
   },
@@ -71,7 +74,7 @@ export const schemas = {
     top: z.number().min(0).max(16384).default(0),
     bottom: z.number().min(0).max(16384).default(0),
     units: z.enum(["pixels", "percent"]).default("pixels").describe("Units for left/right/top/bottom; percent is relative to the image width (left/right) or height (top/bottom)"),
-    seed: seed.optional(),
+    seed: editSeed.optional(),
     quality: quality.optional(),
     output_path: outputPath.optional(),
     include_preview: preview.optional(),
@@ -84,7 +87,7 @@ export const schemas = {
       .default("edit")
       .describe("edit: change the area as the prompt says; remove: erase what is there and fill with background (prompt optional, e.g. 'the bin'); replace: put the prompt's subject in its place; add: add the prompt's subject inside the area"),
     prompt: z.string().trim().max(8000).default("").describe("The change, or the subject to add/replace with; optional for remove"),
-    seed: seed.optional(),
+    seed: editSeed.optional(),
     quality: quality.optional(),
     output_path: outputPath.optional(),
     include_preview: preview.optional(),

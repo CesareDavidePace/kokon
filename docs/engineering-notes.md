@@ -103,6 +103,11 @@ Details and the reasoning are in [platforms.md](platforms.md); the short version
   latents and inpaint masks are carried into that pass. `cache_mode`/`cache_option`
   (e.g. `easycache`, `threshold=0.2`) work per request. `POST /sdcpp/v1/upscale`
   (`{image, upscaler, tile_size}`) runs the upscaler model synchronously, up to 8192 px per side.
+- Editing an image with the seed it was generated with, at the same working size, starts from
+  the noise that made it: the result is over-sharpened and often ignores the prompt (RTX 5070 Ti,
+  engine kokon-992, Q4_K: 2368×1760 and 2048² sources; other seeds were clean, Fast's ~1 MP size
+  was not affected). The engine swaps a requested seed that made any reference (gallery record,
+  PNG metadata) for a fixed mix of it and adds a note (`avoid_reference_seeds`).
 - Qwen-Image 2.1 always decodes an alpha channel (≈1 % of pixels at alpha 247–254 on opaque
   images); outputs are made opaque unless transparency is requested.
 

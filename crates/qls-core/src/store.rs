@@ -290,6 +290,19 @@ impl Store {
         Ok(rec)
     }
 
+    /// The seed of the result saved at `file_path`, if the gallery has one there (exact path).
+    /// For JPEG and WebP results, which carry no Kokon metadata in the file.
+    pub fn seed_of_file(&self, file_path: &str) -> AppResult<Option<i64>> {
+        let json: Option<String> = self
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT record FROM generations WHERE file_path = ?1 LIMIT 1", [file_path], |r| r.get(0))
+            .optional()
+            .map_err(db_err)?;
+        Ok(json.and_then(|j| serde_json::from_str::<GenerationRecord>(&j).ok()).map(|r| r.seed))
+    }
+
     fn is_favorite(&self, id: &str) -> AppResult<bool> {
         let v: Option<i32> = self
             .conn

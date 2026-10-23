@@ -146,6 +146,49 @@ fn random_seed() -> i64 {
     (v & 0x7fff_ffff) as i64
 }
 
+/// Largest seed Kokon asks for (sd-server takes a 32-bit signed seed).
+const MAX_SEED: i64 = 0x7fff_ffff;
+
+/// A seed for a job with references that does not repeat the seed that made any of them.
+///
+/// The same seed at the same working size is the exact initial noise that produced the
+/// source, so the sampler starts from noise that already "contains" the reference: the edit
+/// comes out over-sharpened ("broken HDR") and often ignores the instruction. Measured on an
+/// RTX 5070 Ti (engine kokon-992, Q4_K): a 2368x1760 text-to-image with seed 4001 edited with
+/// seed 4001 broke, seeds 4002, 1482093317 and 711449798 were clean; a 2048x2048 one with
+/// seed 3001 broke the same way. At another working size (Fast preset) the noise differs and
+/// the edit is fine, but we remap on any match: another seed costs nothing, and the size the
+/// reference was made at is not always known.
+///
+/// Image `i` of a batch uses `seed + i`, so the whole range is checked. Returns the seed
+/// that matched and the replacement, or None to keep `seed`. Deterministic: the same request
+/// gives the same image.
+pub fn avoid_reference_seeds(seed: i64, batch: u32, references: &[i64]) -> Option<(i64, i64)> {
+    let span = batch.max(1) as i64;
+    let hit = |s: i64| (s..s + span).find(|v| references.contains(v));
+    let matched = hit(seed)?;
+    // splitmix64 steps from the requested seed: a fixed, well-spread mix.
+    let mut state = seed as u64;
+    loop {
+        state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^= z >> 31;
+        // Within 0..=MAX_SEED for the whole batch.
+        let candidate = (z % (MAX_SEED - span + 2) as u64) as i64;
+        if hit(candidate).is_none() {
+            return Some((matched, candidate));
+        }
+    }
+}
+
+/// The note for a seed changed by [`avoid_reference_seeds`].
+fn reused_seed_note(matched: i64, used: i64, references: usize) -> String {
+    let what = if references > 1 { "a reference image" } else { "the source image" };
+    format!("Seed {matched} made {what}; reusing it breaks edits, used {used} instead.")
+}
+
 /// Runs CPU-heavy image work off the async runtime.
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> AppResult<T> + Send + 'static) -> AppResult<T> {
     tokio::task::spawn_blocking(f).await.map_err(AppError::internal)?
@@ -691,6 +734,31 @@ impl Engine {
         Ok((img, rec))
     }
 
+    /// The seeds a loaded source is known to be made with: its gallery record ("gen:"), the
+    /// Kokon metadata in a PNG, and a gallery result at its original path (JPEG/WebP results
+    /// carry no metadata). Empty when none is known; lookups that fail are skipped.
+    fn reference_seeds(&self, src: &str, img: &LoadedImage, input: &InputRecord) -> Vec<i64> {
+        let mut seeds = Vec::new();
+        if let Some(id) = src.strip_prefix("gen:")
+            && let Ok(rec) = self.gen_store(id).get_generation(id)
+        {
+            seeds.push(rec.seed);
+        }
+        if let Some(rec) = GenerationRecord::from_png_text(&img.text) {
+            seeds.push(rec.seed);
+        }
+        if let Some(path) = &input.original_path {
+            for store in [&self.store, &self.private_store] {
+                if let Ok(Some(s)) = store.seed_of_file(path) {
+                    seeds.push(s);
+                }
+            }
+        }
+        seeds.sort_unstable();
+        seeds.dedup();
+        seeds
+    }
+
     /// The bytes of an image source, with its original path and file name.
     fn read_source(&self, src: &str, workspace: Option<&Path>) -> AppResult<(Vec<u8>, Option<String>, Option<String>)> {
         Ok(if let Some(id) = src.strip_prefix("input:") {
@@ -865,11 +933,13 @@ impl Engine {
         let this = self.clone();
         let req2 = request.clone();
         let ws = workspace.clone();
-        let (images, inputs_meta, mask) = tokio::task::spawn_blocking(move || -> AppResult<_> {
+        let (images, inputs_meta, mask, ref_seeds) = tokio::task::spawn_blocking(move || -> AppResult<_> {
             let mut images = Vec::new();
             let mut metas = Vec::new();
+            let mut seeds = Vec::new();
             for s in &req2.images {
                 let (img, rec) = this.resolve_source(s, ws.as_deref(), req2.private)?;
+                seeds.extend(this.reference_seeds(s, &img, &rec));
                 images.push(img);
                 metas.push(rec);
             }
@@ -880,7 +950,7 @@ impl Engine {
                 }
                 None => None,
             };
-            Ok((images, metas, mask))
+            Ok((images, metas, mask, seeds))
         })
         .await
         .map_err(AppError::internal)??;
@@ -895,7 +965,17 @@ impl Engine {
         plan_inputs.speed_factor = self.speed_factor(&cfg);
         plan_inputs.unified_memory = self.gpu().is_some_and(|g| g.unified);
         let plan = planner::plan(&request, &plan_inputs, &profile.recommended_settings)?;
-        let seed = request.seed.unwrap_or_else(random_seed);
+        let mut seed = request.seed.unwrap_or_else(random_seed);
+        let mut notes = plan.notes.clone();
+        // A seed the user chose that made one of the references (see `avoid_reference_seeds`).
+        // A quick upscale runs no diffusion, so its seed does not matter.
+        if request.seed.is_some()
+            && plan.upscale.is_none()
+            && let Some((matched, used)) = avoid_reference_seeds(seed, plan.batch_count, &ref_seeds)
+        {
+            notes.push(reused_seed_note(matched, used, request.images.len()));
+            seed = used;
+        }
         let mut request = request;
         if plan.mode == ResolvedMode::Upscale && request.prompt.trim().is_empty() {
             request.prompt = self.upscale_prompt(&request);
@@ -903,7 +983,7 @@ impl Engine {
         self.update(id, |j| {
             j.view.plan = Some(plan.clone());
             j.view.seed = Some(seed);
-            j.view.notes = plan.notes.clone();
+            j.view.notes = notes;
         });
 
         // 3. Backend.
@@ -2094,16 +2174,80 @@ mod tests {
         assert!(!i.server_vae_tiling && i.metal);
     }
 
+    fn test_record(id: &str, seed: i64, file_path: &str) -> GenerationRecord {
+        serde_json::from_value(serde_json::json!({
+            "id":id,"created_at":"t","mode":"generate","prompt":"p","negative_prompt":"","seed":seed,"width":8,"height":8,
+            "working_width":32,"working_height":32,"model":"m","sampler":"euler","scheduler":null,"steps":1,"cfg":6.0,"strength":null,
+            "quality":"fast","resolution":"auto","references":[],"mask_input_id":null,"outpaint":null,"file_path":file_path,"favorite":false,
+            "parent_id":null,"duration_ms":1,"notes":[],"app_version":"1","backend_version":null,"client":null
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn edit_seed_never_repeats_a_reference_seed() {
+        // The seed that made the source is replaced, the same way every time.
+        let (matched, used) = avoid_reference_seeds(4001, 1, &[4001]).unwrap();
+        assert_eq!(matched, 4001);
+        assert_ne!(used, 4001);
+        assert!((0..=MAX_SEED).contains(&used));
+        assert_eq!(avoid_reference_seeds(4001, 1, &[4001]), Some((4001, used)), "deterministic");
+        // Any other seed is kept.
+        assert_eq!(avoid_reference_seeds(4002, 1, &[4001]), None);
+        assert_eq!(avoid_reference_seeds(4001, 1, &[]), None, "no known reference seed");
+        // Several references: one matching is enough; the new seed hits none of them.
+        let refs = [7, 4001, 1482093317];
+        let (matched, used) = avoid_reference_seeds(1482093317, 1, &refs).unwrap();
+        assert_eq!(matched, 1482093317);
+        assert!(!refs.contains(&used));
+        // Image i of a batch uses seed + i: the whole batch is checked and kept in range.
+        let (matched, used) = avoid_reference_seeds(4000, 4, &[4003]).unwrap();
+        assert_eq!(matched, 4003);
+        assert!(!(used..used + 4).contains(&4003) && used + 3 <= MAX_SEED);
+        assert_eq!(avoid_reference_seeds(4004, 4, &[4003]), None);
+        assert!(avoid_reference_seeds(MAX_SEED, 1, &[MAX_SEED]).is_some_and(|(_, s)| s != MAX_SEED && (0..=MAX_SEED).contains(&s)));
+        assert_eq!(reused_seed_note(4001, 1234567, 1), "Seed 4001 made the source image; reusing it breaks edits, used 1234567 instead.");
+        assert!(reused_seed_note(4001, 5, 2).contains("made a reference image"));
+    }
+
+    #[test]
+    fn reference_seeds_come_from_metadata_and_gallery() {
+        let dir = tempfile::tempdir().unwrap();
+        // SAFETY: test-only env override, single-threaded setup.
+        unsafe { std::env::set_var("QLS_CONFIG_DIR", dir.path().join("cfg")) };
+        let mut cfg = AppConfig::default();
+        cfg.sdcpp_dir = dir.path().join("sdcpp");
+        cfg.normalize();
+        let e = Engine::new(cfg, dir.path()).unwrap();
+        let img = image::RgbaImage::from_pixel(8, 8, image::Rgba([1, 2, 3, 255]));
+        let seeds = |src: &str| {
+            let (loaded, input) = e.resolve_source(src, None, false).unwrap();
+            e.reference_seeds(src, &loaded, &input)
+        };
+        // A PNG with Kokon metadata, opened by path (MCP).
+        let png = dir.path().join("made.png");
+        std::fs::write(&png, encode_output(&img, OutputFormat::Png, &test_record("a", 4001, "elsewhere.png"), None).unwrap()).unwrap();
+        assert_eq!(seeds(png.to_str().unwrap()), vec![4001]);
+        // A JPEG result has no metadata: its gallery record has the seed, by id or by path.
+        let jpg = dir.path().join("made.jpg");
+        std::fs::write(&jpg, imaging::encode_jpeg(&img, 95).unwrap()).unwrap();
+        e.store.insert_generation(&test_record("g1", 3001, jpg.to_str().unwrap())).unwrap();
+        assert_eq!(seeds("gen:g1"), vec![3001]);
+        assert_eq!(seeds(jpg.to_str().unwrap()), vec![3001]);
+        // An image from elsewhere: nothing known, the seed is left alone.
+        let plain = dir.path().join("photo.png");
+        std::fs::write(&plain, imaging::encode_png(&img, &[], None, true).unwrap()).unwrap();
+        assert!(seeds(plain.to_str().unwrap()).is_empty());
+        // Broken metadata is ignored.
+        let broken = dir.path().join("broken.png");
+        std::fs::write(&broken, imaging::encode_png(&img, &[("qls:generation", "{not json")], None, true).unwrap()).unwrap();
+        assert!(seeds(broken.to_str().unwrap()).is_empty());
+    }
+
     #[test]
     fn output_encoding_formats() {
         let img = image::RgbaImage::from_pixel(8, 8, image::Rgba([1, 2, 3, 255]));
-        let rec: GenerationRecord = serde_json::from_value(serde_json::json!({
-            "id":"x","created_at":"t","mode":"generate","prompt":"p","negative_prompt":"","seed":1,"width":8,"height":8,
-            "working_width":32,"working_height":32,"model":"m","sampler":"euler","scheduler":null,"steps":1,"cfg":6.0,"strength":null,
-            "quality":"fast","resolution":"auto","references":[],"mask_input_id":null,"outpaint":null,"file_path":"f","favorite":false,
-            "parent_id":null,"duration_ms":1,"notes":[],"app_version":"1","backend_version":null,"client":null
-        }))
-        .unwrap();
+        let rec = test_record("x", 1, "f");
         let png = encode_output(&img, OutputFormat::Png, &rec, None).unwrap();
         assert!(imaging::read_png_text(&png).iter().any(|(k, _)| k == "qls:generation"));
         let jpg = encode_output(&img, OutputFormat::Jpeg, &rec, None).unwrap();

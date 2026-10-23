@@ -211,7 +211,10 @@ export default function App() {
   // Native file drops (paths) — efficient: the service reads the files itself.
   useEffect(() => {
     if (inBrowser) return;
+    // The listener arrives asynchronously: if the effect was already cleaned up (StrictMode's
+    // second mount in development), drop it at once instead of keeping two that add each image twice.
     let un: (() => void) | undefined;
+    let gone = false;
     getCurrentWebview()
       .onDragDropEvent((ev) => {
         const p = ev.payload;
@@ -224,9 +227,12 @@ export default function App() {
           else if (p.paths.length) toastInfo("Only image files can be added.");
         }
       })
-      .then((u) => (un = u))
+      .then((u) => (gone ? u() : (un = u)))
       .catch(() => {});
-    return () => un?.();
+    return () => {
+      gone = true;
+      un?.();
+    };
   }, []);
 
   // Clipboard paste: browser image data first, native clipboard as a fallback.

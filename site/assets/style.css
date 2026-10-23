@@ -260,6 +260,7 @@ footer a:hover { color: var(--text); }
 .crumbs span { margin: 0 6px; }
 .article h1 { font-size: clamp(36px, 5.4vw, 58px); letter-spacing: -0.04em; line-height: 1.06; margin: 0; max-width: none; }
 .article h2 { font-size: clamp(26px, 3.2vw, 34px); letter-spacing: -0.03em; line-height: 1.15; margin: 64px 0 0; max-width: none; }
+.article h2[id] { scroll-margin-top: 96px; } /* below the fixed nav when opened from a link */
 .article h3 { font-size: 18px; letter-spacing: -0.015em; margin: 28px 0 0; font-weight: 600; }
 .article p, .article li { color: var(--text-2); font-size: 17px; }
 .article p { margin: 16px 0 0; }

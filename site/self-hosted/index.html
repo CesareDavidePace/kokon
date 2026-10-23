@@ -112,11 +112,11 @@
       <figcaption>Kokon on an iPhone, opened from the home screen. The images are made by the computer at home.</figcaption>
     </figure>
 
-    <h2>How it works</h2>
+    <h2 id="how-it-works">How it works</h2>
     <p>Kokon runs a small service on the computer with the graphics card. In 0.11 that service can also serve Kokon's interface to other devices: open its address in a browser, sign in with a password, and you get the same app as on the desktop. Photos you pick on the phone are uploaded to the computer, the computer makes the image, and the result lands in <strong>its</strong> gallery. You can download any result to the device you are holding.</p>
     <p>There is no cloud and no Kokon account. The phone talks to your computer directly, over your own network.</p>
 
-    <h2>On your home network</h2>
+    <h2 id="on-your-home-network">On your home network</h2>
     <ol>
       <li>On the computer running Kokon, open <strong>Settings → Other devices</strong>.</li>
       <li>Choose a password (at least 8 characters) and click <strong>Set and turn on</strong>.</li>
@@ -127,13 +127,13 @@
     <p class="note">The router can give the computer a new address after a restart, and the saved icon then stops working. Reserve the address in the router (often called "DHCP reservation"), or scan the QR code again.</p>
     <p>This works while Kokon is open on the computer. To keep it running without the window, use a server, below.</p>
 
-    <h2>On a Linux server without a screen</h2>
+    <h2 id="linux-server">On a Linux server without a screen</h2>
     <p><code>kokon-service</code> comes with the <a href="https://github.com/GabrieleLozupone/kokon/releases/latest" rel="noopener">Linux packages</a> (<code>.deb</code> and <code>.rpm</code>). Set the password once, then start it with access on:</p>
     <pre><code>kokon-service --set-password         # asks twice, nothing is shown while you type
 kokon-service --persistent --remote  # keeps running; the interface is on port 39152</code></pre>
     <p>Open the address it prints in a browser and follow the setup: it downloads the engine and the model (about 12 GB) once. A password changed while the service runs applies within a few seconds.</p>
 
-    <h2>In Docker (NVIDIA)</h2>
+    <h2 id="docker">In Docker (NVIDIA)</h2>
     <p>Each release publishes the image <code>ghcr.io/gabrielelozupone/kokon</code>. It holds no models, so it stays small; the setup downloads them once into a volume. You need an NVIDIA card with the proprietary driver, Docker with Compose, and the <a href="https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html" rel="noopener">NVIDIA Container Toolkit</a>. On Windows it works through Docker Desktop with WSL 2.</p>
     <pre><code>mkdir kokon &amp;&amp; cd kokon
 curl -fsSLO https://raw.githubusercontent.com/GabrieleLozupone/kokon/master/docker/compose.yaml
@@ -144,7 +144,7 @@ docker exec -it kokon kokon-service --set-password</code></pre>
 docker logs -f kokon                          # what the service is doing</code></pre>
     <p>The <code>latest</code> tag follows every release; write <code>:0.11</code> in <code>compose.yaml</code> to stay on 0.11.x. An image for AMD and Intel cards (Vulkan) will follow once it can be tested; until then, use the Linux packages. The full reference is in <a href="https://github.com/GabrieleLozupone/kokon/blob/master/docs/docker.md" rel="noopener">docs/docker.md</a>.</p>
 
-    <h2>From outside your home: Tailscale</h2>
+    <h2 id="tailscale">From outside your home: Tailscale</h2>
     <p>Never open Kokon's port on your router: anyone on the internet could then try the password. Use a private network instead. <a href="https://tailscale.com" rel="noopener">Tailscale</a> is free for personal use and takes a few minutes:</p>
     <ol>
       <li>Install Tailscale on the computer running Kokon and on your phone or laptop, and sign in with the same account on both.</li>
@@ -153,7 +153,7 @@ docker logs -f kokon                          # what the service is doing</code>
     </ol>
     <p>Tailscale encrypts the traffic between your devices, wherever you are. With HTTPS turned on for your tailnet, <code>tailscale serve --bg 39152</code> on the Kokon computer gives you an <code>https://</code> address, and the browser then also lets Kokon copy images to the clipboard. WireGuard, ZeroTier or your router's own VPN work the same way.</p>
 
-    <h2>What is protected</h2>
+    <h2 id="what-is-protected">What is protected</h2>
     <ul class="fact-list">
       <li><strong>Off by default.</strong> Nothing listens on the network until a password exists and access is on.</li>
       <li><strong>The password</strong> is stored only as an Argon2id hash. After 5 wrong tries in a row that device waits 1 minute, then longer after each new mistake, up to 15 minutes.</li>
@@ -162,14 +162,14 @@ docker logs -f kokon                          # what the service is doing</code>
       <li><strong>Plain HTTP on the network.</strong> Fine on your home Wi-Fi; on a shared network (office, café) someone nearby could read the traffic. Use Tailscale there, which encrypts everything.</li>
     </ul>
 
-    <h2>What is different in a browser</h2>
+    <h2 id="in-a-browser">What is different in a browser</h2>
     <ul>
       <li><strong>Adding photos:</strong> the + button, dropping files on the page, or pasting.</li>
       <li><strong>Saving:</strong> the download button saves the image on the device you are using.</li>
       <li><strong>On the computer only:</strong> showing files in a folder, the logs, LoRA and colour LUT files from disk, choosing model files, and updates.</li>
     </ul>
 
-    <h2>It does not connect</h2>
+    <h2 id="it-does-not-connect">It does not connect</h2>
     <ul>
       <li>Both devices must be on the same network (or both on Tailscale), and Settings → Other devices must show the address.</li>
       <li>A firewall may block the port. Windows: set your home network as Private, then allow Kokon on private networks in Windows Security → Firewall. Linux with ufw: <code>sudo ufw allow from 192.168.0.0/16 to any port 39152</code>.</li>

@@ -33,6 +33,8 @@ all three from the same code.
    installed one. Also bump the MCP server: `cd mcp && npm version <x.y.z> --no-git-tag-version`,
    then both `"version"` fields in `mcp/server.json` (`npm test` in `mcp/` fails until all match;
    `kokon-mcp --version` reads `mcp/package.json`).
+   Update **What's new** too: `WHATS_NEW_VERSION` and the notes in `src/components/WhatsNew.tsx`
+   (shown once after the update; with the old version there it never appears).
 2. **Windows:** `powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1`
 3. **Mac:** `bash scripts/build-release-mac.sh`.
    **Linux:** in WSL Ubuntu 22.04 (clone in `~/kokon`, see [linux.md](linux.md)),

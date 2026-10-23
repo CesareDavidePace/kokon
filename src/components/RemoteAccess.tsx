@@ -121,7 +121,8 @@ export function RemoteAccess() {
                 <strong>Scan it with your phone's camera</strong>
                 <span className="muted">
                   Or open <span className="remote-url">{st.url}</span> on the other device. To keep Kokon on the home screen like an app: on iPhone, Share → Add to Home Screen; on
-                  Android, the browser's menu → Add to Home screen.
+                  Android, the browser's menu → Add to Home screen. The router can give this computer another address later: reserve it in the router's settings (DHCP
+                  reservation) so the icon keeps working.
                 </span>
                 <button className="btn" style={{ alignSelf: "flex-start", marginTop: 6 }} onClick={() => writeText(st.url!).then(() => toastInfo("Address copied"), toastError)}>
                   <Copy size={14} /> Copy address

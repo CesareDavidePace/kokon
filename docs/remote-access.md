@@ -17,6 +17,11 @@ It is off until you turn it on, and it always asks for a password.
    on Android, the browser's menu → **Add to Home screen**. The icon opens Kokon full screen (on iPhone
    it asks for the password once more the first time).
 
+The router may give the computer a different address later (after a restart, or when it switches
+between cable and Wi-Fi), and the saved icon stops working. To keep it the same, reserve the address
+in your router's settings (usually "DHCP reservation" or "static IP" for this computer); or scan the
+QR code again.
+
 The first time, your system may ask whether to let Kokon on the network (Windows Defender Firewall,
 macOS). Allow it on **private** networks only.
 

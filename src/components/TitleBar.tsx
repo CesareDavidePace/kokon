@@ -9,10 +9,12 @@ import { native } from "../lib/native";
 import { inBrowser, isLinux, isMac } from "../lib/platform";
 
 // macOS: room for the traffic lights on the left of the top bar (styles.css). In full screen
-// macOS hides them, so the room goes too.
+// macOS hides them, so the room goes too. `data-platform="mac"` alone (theme.js) is any Mac,
+// Safari included: its colors, not this room.
 if (isMac && !inBrowser && typeof document !== "undefined") {
   const root = document.documentElement;
   root.dataset.platform = "mac";
+  root.dataset.trafficLights = "";
   const sync = () =>
     native.isFullscreen().then(
       (on) => (on ? (root.dataset.fullscreen = "") : delete root.dataset.fullscreen),

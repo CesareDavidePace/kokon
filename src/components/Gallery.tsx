@@ -2,7 +2,7 @@ import { ArrowLeft, Check, FolderOpen, Heart, Loader2, Maximize2, Search, Trash2
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, urls } from "../lib/api";
 import { native } from "../lib/native";
-import { inBrowser } from "../lib/platform";
+import { inBrowser, isNarrow } from "../lib/platform";
 import { forgetGeneration, openGeneration, setState, toastError, useStore } from "../lib/store";
 import { MODE_LABEL, neighbourAfterRemoval, previewIndex } from "../lib/logic";
 import type { GenerationRecord } from "../lib/types";
@@ -181,7 +181,7 @@ export function Gallery() {
       <div className="gallery-bar">
         <label className="search">
           <Search size={15} />
-          <input type="text" placeholder="Search prompts" value={q} onChange={(e) => setQ(e.target.value)} autoFocus />
+          <input type="text" placeholder="Search prompts" value={q} onChange={(e) => setQ(e.target.value)} autoFocus={!isNarrow()} />
         </label>
         <IconButton title={favorites ? "Show all" : "Favorites only"} active={favorites} onClick={() => setFavorites((f) => !f)}>
           <Heart size={17} fill={favorites ? "currentColor" : "none"} />

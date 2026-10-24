@@ -733,7 +733,13 @@ pre.diag { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font
 .welcome-foot { font-size: 12px; }
 /* The update buttons stay in view while the notes scroll (the dialog's bottom padding is 26px). */
 .welcome-actions { position: sticky; bottom: -26px; width: calc(100% + 72px); margin: 0 -36px -26px; padding: 14px 36px 22px; background: var(--bg); border-top: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; gap: 10px; }
-@media (max-width: 560px) { .welcome-actions { width: calc(100% + 40px); margin: 0 -20px -20px; padding: 12px 20px 18px; bottom: -20px; } }
+.welcome-buttons { display: flex; gap: 10px; }
+/* A phone has no room for two 200 px buttons side by side: stacked, full width, Update first. */
+@media (max-width: 560px) {
+  .welcome-actions { width: calc(100% + 40px); margin: 0 -20px -20px; padding: 12px 20px 18px; bottom: -20px; }
+  .welcome-buttons { flex-direction: column; align-self: stretch; }
+  .welcome-buttons .btn.big { min-width: 0; width: 100%; }
+}
 .update-offers { display: flex; flex-direction: column; gap: 8px; width: 100%; text-align: left; }
 .update-offer { display: flex; gap: 10px; align-items: flex-start; }
 .update-offer > input { margin-top: 3px; flex: none; }
@@ -1000,17 +1006,42 @@ kbd { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; display
 .modal-save { display: none; }
 
 /* ---------- phone-sized screens (Kokon in a browser on another device) ---------- */
+@keyframes menu-in { from { opacity: 0; transform: translateX(-12px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .sidebar { animation: none !important; } }
 @media (max-width: 720px) {
-  .sidebar { position: fixed; inset: 0 auto 0 0; width: min(300px, 86vw); z-index: 45; background: var(--ground); box-shadow: var(--shadow); padding-top: env(safe-area-inset-top); }
-  .sidebar-scrim { position: fixed; inset: 0; z-index: 44; background: rgba(13, 13, 12, 0.3); animation: fade 0.2s ease-out both; }
-  .side-select, .proj-rm { opacity: 1; }
-  .topbar { padding: env(safe-area-inset-top) 6px 0 8px; gap: 4px; }
-  /* the status capsule: only its dot or spinner (the words don't fit next to the project title) */
-  .toolbar .status { margin-right: 2px; padding: 0; width: 30px; justify-content: center; }
-  .status > span:not(.dot) { display: none; }
-  .brand .project-title { padding: 0 4px; }
-  /* the mark without the name, and no keyboard-shortcuts button: room for the project title */
-  .topbar .wordmark { flex: none; font-size: 0; gap: 0; }
+  /* the menu covers the screen, with rows a thumb can hit */
+  .sidebar { position: fixed; inset: 0; width: auto; z-index: 45; padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); background: var(--ground); animation: menu-in 0.2s ease-out both; }
+  .side-head { height: 56px; padding: 0 6px 0 20px; }
+  .side-head .wordmark { font-size: 17px; }
+  .side-head .icon-btn { width: 44px; height: 44px; }
+  .side-nav { padding: 4px 12px 12px; gap: 4px; }
+  .side-item { height: 50px; padding: 0 14px; gap: 14px; font-size: 16px; border-radius: 14px; }
+  .side-item svg { width: 20px; height: 20px; }
+  .side-state { margin-left: auto; font-size: 14px; color: var(--text-3); }
+  .side-label { font-size: 13px; padding: 10px 14px 6px 26px; }
+  .side-select { opacity: 1; height: 34px; padding: 0 12px; font-size: 14px; }
+  .side-list { padding: 2px 12px 16px; gap: 4px; }
+  .proj { padding: 9px; gap: 14px; }
+  .proj .cover { width: 52px; height: 52px; border-radius: 12px; }
+  .proj-title { font-size: 15.5px; }
+  .proj-sub { font-size: 13px; margin-top: 2px; }
+  .proj-rm, .proj:hover .proj-rm { display: grid; width: 40px; height: 40px; border-radius: 12px; color: var(--text-3); }
+  .proj-rm svg { width: 17px; height: 17px; }
+  .side-foot { padding: 8px 12px 12px; }
+  .side-item.settings { height: 50px; font-size: 16px; }
+  /* the top bar: menu, title, then undo/redo and New image; 40 px targets */
+  .topbar.phone { height: 56px; box-sizing: content-box; padding: env(safe-area-inset-top) 6px 0 6px; gap: 2px; justify-content: flex-start; }
+  .topbar.phone .icon-btn { width: 42px; height: 42px; border-radius: 13px; }
+  .topbar.phone .brand { flex: 1; min-width: 0; justify-content: center; }
+  .topbar.phone .project-title { font-size: 15px; height: 40px; padding: 0 10px; max-width: 100%; }
+  .topbar.phone .title-pencil { display: none; }
+  .topbar.phone .name-field.title-field { width: 100%; height: 40px; }
+  .topbar.phone .toolbar { margin-left: 0; gap: 0; }
+  /* the status capsule only while it says something (loading, working, an error): its dot or spinner */
+  .topbar.phone .status { margin: 0 4px; padding: 0; width: 34px; height: 34px; justify-content: center; }
+  .topbar.phone .status > span:not(.dot) { display: none; }
+  /* during setup the usual bar stays (mark, status, Settings), without the shortcuts */
+  .topbar:not(.phone) { padding: env(safe-area-inset-top) 6px 0 12px; }
   .topbar .icon-btn[title="Shortcuts (?)"] { display: none; }
   .stage { padding: 4px 10px 8px; }
   .empty h1 { font-size: 24px; }
@@ -1019,7 +1050,7 @@ kbd { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; display
   /* name, mode and upscaled/original wrap onto two centred lines instead of leaving the screen */
   .stage-meta { flex-wrap: wrap; row-gap: 6px; padding: 0 4px; }
   .stage-bar .actions { flex-wrap: wrap; justify-content: center; }
-  .composer-wrap { padding: 0 8px calc(8px + env(safe-area-inset-bottom)); }
+  .composer-wrap { padding: 0 8px max(8px, calc(env(safe-area-inset-bottom) - 14px)); }
   .composer { border-radius: 22px; }
   /* the composer's buttons scroll sideways; the send button stays at the right edge */
   .controls { overflow-x: auto; scrollbar-width: none; margin-right: -2px; padding-right: 2px; }
@@ -1031,7 +1062,14 @@ kbd { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; display
   .controls .send:disabled { opacity: 1; background: var(--surface-3); color: var(--text-3); box-shadow: 0 0 0 4px var(--bg); }
   .controls .icon-btn[title="Prompt tips"] { display: none; }
   /* iOS zooms the page into any field under 16 px */
-  textarea, input[type="text"], input[type="password"], input[type="number"], .input, .select, .prompt { font-size: 16px; }
+  textarea, input:not([type]), input[type="text"], input[type="password"], input[type="number"], input[type="search"], .input, .select, .prompt, .name-field, .name-field.title-field { font-size: 16px; }
+  /* no double-tap zoom on buttons */
+  body { touch-action: manipulation; }
+  /* Added to the home screen, the bottom inset is the home bar (34 px on an iPhone): keep clear
+     of it without the full gap Safari's own toolbar doesn't need. */
+  .preview-bar { padding: 10px 12px max(14px, calc(env(safe-area-inset-bottom) - 6px)); }
+  .preview-img { left: 0; width: 100%; }
+  .toasts { left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); max-width: none; }
   .modal { width: 100vw; height: 100dvh; border-radius: 0; flex-direction: column; }
   .modal-nav { width: auto; flex: none; flex-direction: row; align-items: center; overflow-x: auto; gap: 4px; padding: calc(8px + env(safe-area-inset-top)) 8px 8px; scrollbar-width: none; }
   .modal-nav > button { flex: none; white-space: nowrap; }
@@ -1049,5 +1087,5 @@ kbd { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; display
   .modal-body { padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); }
   .path-row { flex-wrap: wrap; }
   .gallery-bar { padding: 0 10px 10px; flex-wrap: wrap; }
-  .grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; padding: 4px 10px 20px; }
+  .grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; padding: 4px 10px calc(20px + env(safe-area-inset-bottom)); }
 }

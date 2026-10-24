@@ -135,6 +135,8 @@ export function NameField(props: { value: string; onSave: (v: string) => void; o
       className={`name-field ${props.className ?? ""}`}
       value={v}
       autoFocus
+      // No contact AutoFill bar over the keyboard on a phone.
+      autoComplete="off"
       // Caret at the end, nothing selected: typing adds to the name instead of replacing it.
       onFocus={(e) => {
         const n = e.currentTarget.value.length;

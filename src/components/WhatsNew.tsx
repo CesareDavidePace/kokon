@@ -239,7 +239,7 @@ export function WhatsNew() {
           </button>
         ) : (
           <div className="welcome-actions">
-            <div style={{ display: "flex", gap: 10 }}>
+            <div className="welcome-buttons">
               <button className="btn primary big" disabled={running || !steps.length || (steps.includes("engine") && (!target || missing === null))} onClick={update}>
                 {failed.length ? "Try again" : running ? "Updating…" : `Update now${size ? ` · ${formatBytes(size)}` : ""}`}
               </button>

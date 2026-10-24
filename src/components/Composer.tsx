@@ -10,6 +10,7 @@ import {
 } from "../lib/store";
 import type { InpaintAction, Plan, Quality } from "../lib/types";
 import { AdvancedPanel } from "./Advanced";
+import { reviewPhotos } from "./PhotoReview";
 import { AspectGrid, pickAspect, RatioIcon, resolutionLabel, ResolutionMenu } from "./SizeMenus";
 import { Option, Popover, Seg } from "./ui";
 
@@ -36,7 +37,7 @@ export let promptClosedAt = 0;
 /** Images from this device (browser picker, drop, paste): uploaded to the service. */
 export async function uploadFiles(files: File[]) {
   const recs = [];
-  for (const f of files) {
+  for (const f of await reviewPhotos(files)) {
     try {
       recs.push(await api.upload(f, f.name || "pasted.png"));
     } catch (e) {

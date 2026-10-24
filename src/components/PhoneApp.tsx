@@ -2,6 +2,7 @@
 // with its image, versions and prompt. Laid out for an iPhone (safe areas, large round corners,
 // sheets from the bottom); App.tsx shows it on screens up to 720 px wide (platform.ts isNarrow).
 
+import { PhotoReview } from "./PhotoReview";
 import { Check, ChevronLeft, EyeOff, Plus, Settings, SquarePen, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -65,6 +66,7 @@ export function PhoneApp() {
       {library ? <Library /> : <ProjectScreen />}
       {overlay === "inpaint" && <InpaintEditor />}
       {overlay === "expand" && <ExpandEditor />}
+      <PhotoReview />
     </div>
   );
 }

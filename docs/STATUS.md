@@ -1,6 +1,6 @@
 # Status
 
-**Updated 2026-10-23.** What is in progress, what comes next, and where help is welcome. Kept current at the end
+**Updated 2026-10-24.** What is in progress, what comes next, and where help is welcome. Kept current at the end
 of every task (see [AGENTS.md](../AGENTS.md#keeping-docsstatusmd-current)); GitHub is the source of truth.
 
 ## Current version: [0.10.2](https://github.com/GabrieleLozupone/kokon/releases/tag/v0.10.2) (2026-10-23)
@@ -15,11 +15,27 @@ branch `server-0.11`, being tested before the release:
 - Access from the local network: off by default, behind a password (Argon2id hash) with a limit on attempts.
   For access from outside, a guide to Tailscale or another VPN: [remote-access.md](remote-access.md).
 - A Docker image for NVIDIA (CUDA): [docker.md](docker.md). An AMD/Intel (Vulkan) image once it can be tested.
+- Projects shared by every device: the list is kept by `kokon-service` (`projects.json`), not in each app;
+  versions made on a phone show up in the same project on the computer. Each app's list from before
+  0.11 is merged in once, at the first start.
+- A phone layout for the browser UI: a simpler top bar, a full-screen menu, no zoom into text fields.
+- Browsers stay signed in when `kokon-service` restarts (an app update, a reboot): `remote-sessions.json` in the
+  data folder keeps only a SHA-256 of each session. A new password ends them all, also one set while Kokon was off;
+  a signed-out page goes to the sign-in at once.
+- A browser page reloads itself once when the computer running Kokon has updated to another version.
+- Fixed on iPhone: the What's new buttons fit a phone screen (stacked).
 - Own model files: a warning (in setup and at startup) when the image model is a known base Qwen-Image 2.1
   file instead of Turbo (Kokon runs 8 steps, made for Turbo), and a hint in setup that FP8 files run much
   slower than the GGUF on AMD/Intel with Vulkan ([#38](https://github.com/GabrieleLozupone/kokon/issues/38)).
 - MCP: an output folder listed in `QLS_MCP_ALLOWED_DIRS` now works (the service refused it), and the error for a
   folder outside the allowed ones names the variable ([#39](https://github.com/GabrieleLozupone/kokon/issues/39)).
+- Opening a project with many versions is fast on a phone: the browser loads all its records in one request
+  (`/projects/{id}/records`), the stage shows a screen-sized preview (`/gallery/{id}/preview`, at most 1280 px,
+  JPEG) when it is as sharp there, and the original of an edit loads only when a comparison view shows it. Zoom,
+  full screen, download, copy, the comparison views and the editors keep the full image; the desktop app is
+  unchanged. Measured on a 30-version project of 2048 px PNGs (Playwright, phone size, cache off): from 63
+  requests and 15.1 MB to 32 requests and 0.84 MB; first image from 6.9 s to 0.37 s (20 Mbit/s) and from 15.0 s
+  to 0.42 s (9 Mbit/s, 150 ms). Stepping through 10 versions: 137 MB to 2.4 MB.
 - Later: the desktop app as a client of a Kokon server elsewhere.
 
 ## Next
@@ -31,9 +47,9 @@ branch `server-0.11`, being tested before the release:
 
 ## Known issues
 
-- **AMD RX 6000 (RDNA2) cards are slow on Vulkan** (an RX 6700 XT takes 21-41 s per step at 1 MP). Under
-  investigation: flash attention and memory placement are ruled out (the model stays in VRAM, the GPU is at 99 %).
-  RX 7900 XTX and RX 9060 XT work well.
+- **AMD RX 6000 (RDNA2) cards are slow on Vulkan** (an RX 6700 XT takes about 41 s per step at 1 MP).
+  Most of each step (over 80 % at 1 MP) goes into the attention kernel, which is slow on GPUs without matrix cores.
+  RX 7000 and RX 9000 cards have them and work well (RX 9070 XT: 1.75 s per step at 1 MP).
 - **LoRA is beta** and tested on Windows only; reports from macOS and Linux are welcome
   ([#33](https://github.com/GabrieleLozupone/kokon/issues/33) has a product-shot test).
 - **Macs are slow** compared with NVIDIA cards (about 4 minutes for 1 MP on an M2 Pro 16 GB). Engine speed-ups are

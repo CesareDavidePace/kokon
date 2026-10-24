@@ -29,6 +29,8 @@
   --pick-bg: #ffffff;
   --glow: rgba(255, 255, 255, 0.95);
   --checker: #ebebeb;
+  /* the light that runs across an image still loading */
+  --sheen: rgba(255, 255, 255, 0.55);
   --sidebar: transparent;
   --radius: 14px;
   --radius-img: 14px;
@@ -64,6 +66,7 @@
   --pick-bg: #333333;
   --glow: rgba(255, 255, 255, 0.045);
   --checker: #181818;
+  --sheen: rgba(255, 255, 255, 0.07);
   --sidebar: transparent;
   color-scheme: dark;
 }
@@ -587,7 +590,10 @@ pre.diag { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font
 .compare-overlay .seg button { height: 26px; padding: 0 10px; color: rgba(255, 255, 255, 0.8); }
 .compare-overlay .seg button:hover { color: #fff; }
 .compare-overlay .seg button.on { background: rgba(255, 255, 255, 0.92); color: #111; box-shadow: none; }
-.compare-box { position: relative; border-radius: var(--radius-img); overflow: hidden; touch-action: none; user-select: none; background-image: conic-gradient(var(--checker) 25%, transparent 0 50%, var(--checker) 0 75%, transparent 0); background-size: 16px 16px; }
+/* The checkerboard (transparent areas) is on the result image itself: while it loads, the box
+   shows its developing placeholder instead (Develop.tsx). */
+.compare-box { position: relative; border-radius: var(--radius-img); overflow: hidden; touch-action: none; user-select: none; }
+.compare-img { background-image: conic-gradient(var(--checker) 25%, transparent 0 50%, var(--checker) 0 75%, transparent 0); background-size: 16px 16px; }
 .compare-box.slider { cursor: ew-resize; }
 /* the area painted for the next edit, drawn like in the inpaint editor */
 .stage-mask { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: var(--radius-img); mix-blend-mode: difference; opacity: 0.75; pointer-events: none; }
@@ -606,6 +612,25 @@ pre.diag { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font
 .compare-tag { position: absolute; top: 8px; padding: 2px 8px; border-radius: 6px; font-size: 11px; color: #fff; background: rgba(0, 0, 0, 0.55); pointer-events: none; }
 .compare-tag.left { left: 8px; }
 .compare-tag.right { right: 8px; }
+
+/* An image developing into view (Develop.tsx): hidden until decoded, over a blurred thumbnail or a
+   slow sheen, then it sharpens in while the placeholder fades off. Replaces the checkerboard
+   that used to show while a picture loaded. */
+.develop-ph { position: absolute; inset: 0; z-index: 1; overflow: hidden; border-radius: var(--radius-img); background: var(--surface); pointer-events: none; transition: opacity 0.55s var(--ease); }
+.develop-ph.out { opacity: 0; }
+.develop-ph img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; filter: blur(16px) saturate(1.15); transform: scale(1.1); opacity: 0; transition: opacity 0.4s ease-out; }
+.develop-ph img.on { opacity: 1; }
+/* the sheen starts after a moment, so a quick load never flickers */
+.develop-ph::after { content: ""; position: absolute; inset: 0; background: linear-gradient(105deg, transparent 30%, var(--sheen) 50%, transparent 70%) no-repeat; background-size: 220% 100%; opacity: 0; animation: develop-sheen 1.9s 0.3s ease-in-out infinite; }
+@keyframes develop-sheen { 0% { opacity: 1; background-position: 130% 0; } 100% { opacity: 1; background-position: -30% 0; } }
+.develop-wait { opacity: 0; }
+.develop-in { animation: develop-in 0.75s var(--ease) both; }
+@keyframes develop-in { from { opacity: 0; filter: blur(14px) saturate(1.2); transform: scale(1.025); } 45% { opacity: 1; } to { opacity: 1; filter: none; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .develop-ph::after { animation: none; }
+  .develop-in { animation: develop-fade 0.3s both; }
+}
+@keyframes develop-fade { from { opacity: 0; } to { opacity: 1; } }
 
 /* image box + full-screen button */
 .image-box { position: relative; }
@@ -675,7 +700,10 @@ pre.diag { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font
 .preview-prompt { flex: 1; min-width: 0; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .preview-pos { font-size: 13px; font-variant-numeric: tabular-nums; }
 .preview-stage { position: relative; flex: 1; min-height: 0; }
-.preview-img { position: absolute; top: 0; bottom: 0; left: 76px; width: calc(100% - 152px); height: 100%; object-fit: contain; user-select: none; }
+.preview-img { position: absolute; top: 0; bottom: 0; left: 76px; width: calc(100% - 152px); height: 100%; user-select: none; }
+.preview-img > img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.preview-img .develop-ph { background: none; }
+.preview-img .develop-ph img { object-fit: contain; }
 .preview-bar { display: flex; align-items: center; gap: 6px; padding: 10px 16px 14px; flex: none; }
 .preview-bar .spacer { flex: 1; }
 .preview-bar .btn.primary { margin-left: 6px; }
@@ -1005,62 +1033,13 @@ kbd { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 6px; display
 
 .modal-save { display: none; }
 
-/* ---------- phone-sized screens (Kokon in a browser on another device) ---------- */
-@keyframes menu-in { from { opacity: 0; transform: translateX(-12px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .sidebar { animation: none !important; } }
+/* ---------- phone-sized screens (Kokon in a browser on another device) ----------
+   The phone's own layout is in phone.css; these cover what it shares with the desktop one
+   (setup, Settings, menus, the gallery). */
 @media (max-width: 720px) {
-  /* the menu covers the screen, with rows a thumb can hit */
-  .sidebar { position: fixed; inset: 0; width: auto; z-index: 45; padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); background: var(--ground); animation: menu-in 0.2s ease-out both; }
-  .side-head { height: 56px; padding: 0 6px 0 20px; }
-  .side-head .wordmark { font-size: 17px; }
-  .side-head .icon-btn { width: 44px; height: 44px; }
-  .side-nav { padding: 4px 12px 12px; gap: 4px; }
-  .side-item { height: 50px; padding: 0 14px; gap: 14px; font-size: 16px; border-radius: 14px; }
-  .side-item svg { width: 20px; height: 20px; }
-  .side-state { margin-left: auto; font-size: 14px; color: var(--text-3); }
-  .side-label { font-size: 13px; padding: 10px 14px 6px 26px; }
-  .side-select { opacity: 1; height: 34px; padding: 0 12px; font-size: 14px; }
-  .side-list { padding: 2px 12px 16px; gap: 4px; }
-  .proj { padding: 9px; gap: 14px; }
-  .proj .cover { width: 52px; height: 52px; border-radius: 12px; }
-  .proj-title { font-size: 15.5px; }
-  .proj-sub { font-size: 13px; margin-top: 2px; }
-  .proj-rm, .proj:hover .proj-rm { display: grid; width: 40px; height: 40px; border-radius: 12px; color: var(--text-3); }
-  .proj-rm svg { width: 17px; height: 17px; }
-  .side-foot { padding: 8px 12px 12px; }
-  .side-item.settings { height: 50px; font-size: 16px; }
-  /* the top bar: menu, title, then undo/redo and New image; 40 px targets */
-  .topbar.phone { height: 56px; box-sizing: content-box; padding: env(safe-area-inset-top) 6px 0 6px; gap: 2px; justify-content: flex-start; }
-  .topbar.phone .icon-btn { width: 42px; height: 42px; border-radius: 13px; }
-  .topbar.phone .brand { flex: 1; min-width: 0; justify-content: center; }
-  .topbar.phone .project-title { font-size: 15px; height: 40px; padding: 0 10px; max-width: 100%; }
-  .topbar.phone .title-pencil { display: none; }
-  .topbar.phone .name-field.title-field { width: 100%; height: 40px; }
-  .topbar.phone .toolbar { margin-left: 0; gap: 0; }
-  /* the status capsule only while it says something (loading, working, an error): its dot or spinner */
-  .topbar.phone .status { margin: 0 4px; padding: 0; width: 34px; height: 34px; justify-content: center; }
-  .topbar.phone .status > span:not(.dot) { display: none; }
   /* during setup the usual bar stays (mark, status, Settings), without the shortcuts */
-  .topbar:not(.phone) { padding: env(safe-area-inset-top) 6px 0 12px; }
+  .topbar { padding: env(safe-area-inset-top) 6px 0 12px; }
   .topbar .icon-btn[title="Shortcuts (?)"] { display: none; }
-  .stage { padding: 4px 10px 8px; }
-  .empty h1 { font-size: 24px; }
-  .empty .hint { display: none; }
-  .stage-bar { margin-top: 10px; }
-  /* name, mode and upscaled/original wrap onto two centred lines instead of leaving the screen */
-  .stage-meta { flex-wrap: wrap; row-gap: 6px; padding: 0 4px; }
-  .stage-bar .actions { flex-wrap: wrap; justify-content: center; }
-  .composer-wrap { padding: 0 8px max(8px, calc(env(safe-area-inset-bottom) - 14px)); }
-  .composer { border-radius: 22px; }
-  /* the composer's buttons scroll sideways; the send button stays at the right edge */
-  .controls { overflow-x: auto; scrollbar-width: none; margin-right: -2px; padding-right: 2px; }
-  .controls::-webkit-scrollbar { display: none; }
-  .controls > * { flex: none; }
-  .controls .spacer { flex: 1 0 4px; }
-  .controls .send { position: sticky; right: 0; z-index: 1; box-shadow: 0 0 0 4px var(--bg), 0 6px 16px -6px rgba(13, 13, 13, 0.5); }
-  /* opaque even when off, so buttons scrolling under it don't show through */
-  .controls .send:disabled { opacity: 1; background: var(--surface-3); color: var(--text-3); box-shadow: 0 0 0 4px var(--bg); }
-  .controls .icon-btn[title="Prompt tips"] { display: none; }
   /* iOS zooms the page into any field under 16 px */
   textarea, input:not([type]), input[type="text"], input[type="password"], input[type="number"], input[type="search"], .input, .select, .prompt, .name-field, .name-field.title-field { font-size: 16px; }
   /* no double-tap zoom on buttons */

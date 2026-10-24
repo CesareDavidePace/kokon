@@ -457,7 +457,8 @@ export function Hatch({ id, aspect, children }: { id?: string; aspect: number; c
   }, []);
 
   return (
-    <div className="hatch" ref={ref}>
+    // data-hatching: images inside show at once (Develop.tsx), the hatch reveals them.
+    <div className="hatch" ref={ref} data-hatching={running ? "" : undefined}>
       {/* The canvas stays visible while the logo opens on it. */}
       {running && <div className="hatch-canvas" ref={canvasBox} />}
       <div className="hatch-body" ref={body}>

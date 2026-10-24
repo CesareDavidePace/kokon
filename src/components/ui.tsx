@@ -37,15 +37,17 @@ export function Popover(props: {
   const sheetRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
-    const onDown = (e: MouseEvent) => {
+    // pointerdown, not mousedown: iOS sends no mouse events for a tap on the sheet's scrim. In the
+    // capture phase: the image stops its own pointerdown (press to compare, the slider).
+    const onDown = (e: PointerEvent) => {
       const t = e.target as Node;
       if (ref.current && !ref.current.contains(t) && !sheetRef.current?.contains(t)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
-    document.addEventListener("mousedown", onDown);
+    document.addEventListener("pointerdown", onDown, true);
     document.addEventListener("keydown", onKey);
     return () => {
-      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("pointerdown", onDown, true);
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);

@@ -1,10 +1,11 @@
 // The top bar: the project's title, then undo/redo, the update pill, the status capsule,
 // private mode, shortcuts and (only while the sidebar is hidden) Settings, then the window's
 // buttons. Its own file so the launch video (marketing/video) shows the same bar.
-import { ArrowDownToLine, CircleHelp, EyeOff, Menu, PanelLeft, Redo2, Settings, SquarePen, Undo2 } from "lucide-react";
+import { ArrowDownToLine, CircleHelp, EyeOff, PanelLeft, Redo2, Settings, SquarePen, Undo2 } from "lucide-react";
 import { api } from "../lib/api";
 import { native } from "../lib/native";
-import { shortcut, useNarrow } from "../lib/platform";
+import { haptic } from "../lib/haptics";
+import { isNarrow, shortcut } from "../lib/platform";
 import { getState, isMissingModel, newProject, openModelSetup, redoVersion, refreshStatus, setPrivateMode, setState, toastError, undoKey, undoVersion, useStore } from "../lib/store";
 import { installUpdate } from "../lib/updates";
 import { SilkSpin } from "./Cocoon";
@@ -13,7 +14,7 @@ import { WindowControls } from "./TitleBar";
 import { IconButton } from "./ui";
 
 /** `quiet`: nothing while the model is loaded and idle (the phone bar has no room for "all is well"). */
-function StatusIndicator({ quiet = false }: { quiet?: boolean }) {
+export function StatusIndicator({ quiet = false }: { quiet?: boolean }) {
   const connected = useStore((s) => s.connected);
   const server = useStore((s) => s.server);
   const busy = useStore((s) => Object.values(s.jobs).some((j) => !["done", "failed", "cancelled"].includes(j.status)));
@@ -110,44 +111,16 @@ function PrivateToggle() {
   );
 }
 
-/** Private mode from the phone menu: turning it off asks first (its images are deleted). */
+/** Private mode from the phone's library: turning it off asks first (its images are deleted). */
 export function togglePrivateMode() {
+  if (isNarrow()) haptic();
   setPrivateMode(!getState().privateMode, () => native.confirm("Turn off private mode? The images made in private mode will be deleted.", "Private mode"));
-}
-
-/** Phone: the menu, the project's title, and only what a thumb needs next to it. Private mode
- * and Settings are in the full-screen menu; the status shows only while it is not "Ready". */
-function PhoneBar() {
-  const overlay = useStore((s) => s.overlay);
-  const privateMode = useStore((s) => s.privateMode);
-  return (
-    <div className="topbar phone">
-      <IconButton title="Menu" onClick={() => setState({ sidebar: true })}>
-        <Menu size={22} />
-      </IconButton>
-      <div className="brand">{overlay === "gallery" ? <span className="project-title">All images</span> : <ProjectTitle />}</div>
-      <div className="toolbar">
-        <StatusIndicator quiet />
-        {privateMode && (
-          <IconButton title="Private mode is on: tap to turn it off" onClick={togglePrivateMode} active>
-            <EyeOff size={20} />
-          </IconButton>
-        )}
-        <HistoryButtons />
-        <IconButton title="New image" onClick={newProject}>
-          <SquarePen size={20} />
-        </IconButton>
-      </div>
-    </div>
-  );
 }
 
 export function TopBar() {
   const overlay = useStore((s) => s.overlay);
   const needsSetup = useStore((s) => s.needsSetup);
   const sidebar = useStore((s) => s.sidebar);
-  const narrow = useNarrow();
-  if (narrow && !needsSetup) return <PhoneBar />;
   return (
     <div className="topbar" data-tauri-drag-region>
       <div className="brand" data-tauri-drag-region>

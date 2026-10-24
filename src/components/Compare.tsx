@@ -1,12 +1,15 @@
 // Before / after views for results made from another image (edit, inpaint, expand, upscale).
 
+import { ChevronDown, SquareSplitHorizontal } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { urls } from "../lib/api";
 import { diffPixels, type CompareBase, type CompareMode } from "../lib/logic";
-import { inBrowser } from "../lib/platform";
+import { haptic } from "../lib/haptics";
+import { inBrowser, isNarrow, useNarrow } from "../lib/platform";
 import { setState, stageImage, useStore } from "../lib/store";
 import type { GenerationRecord } from "../lib/types";
-import { Seg, useFit } from "./ui";
+import { DevelopImg } from "./Develop";
+import { Option, Popover, Seg, useFit } from "./ui";
 import { FullscreenButton } from "./Viewer";
 import { ZoomPan } from "./ZoomPan";
 
@@ -31,10 +34,18 @@ export function CompareFrame({ g, base, fullscreen = false, maskSrc, onFullscree
   const mode = useStore((s) => s.compare);
   const flickerMs = useStore((s) => s.flickerMs);
   const { ref, box } = useFit(g.width / g.height);
+  const phone = useNarrow();
   const [split, setSplit] = useState(0.5);
   const [holding, setHolding] = useState(false);
   const [phase, setPhase] = useState<"before" | "after">("after");
   const dragging = useRef(false);
+  // A finger shows the original only once it rests for a moment: a swipe to the next version
+  // (phone) must not flash it.
+  const hold = useRef<{ timer: number; x: number; y: number } | null>(null);
+  const endHold = () => {
+    if (hold.current) window.clearTimeout(hold.current.timer);
+    hold.current = null;
+  };
   const boxRef = useRef<HTMLDivElement>(null);
   const contentSize = useMemo(() => ({ width: g.width, height: g.height }), [g.width, g.height]);
   // In a browser the Result view loads only the result, as a preview when it is as sharp
@@ -98,25 +109,31 @@ export function CompareFrame({ g, base, fullscreen = false, maskSrc, onFullscree
           if (mode === "slider") {
             dragging.current = true;
             setFromPointer(e.clientX);
+          } else if (mode === "off" && e.pointerType === "touch") {
+            endHold();
+            hold.current = { timer: window.setTimeout(() => setHolding(true), 280), x: e.clientX, y: e.clientY };
           } else if (mode === "off") setHolding(true);
         }}
         onPointerMove={(e) => {
+          if (hold.current && Math.hypot(e.clientX - hold.current.x, e.clientY - hold.current.y) > 10) endHold();
           if (!dragging.current) return;
           e.stopPropagation();
           setFromPointer(e.clientX);
         }}
         onPointerUp={() => {
           dragging.current = false;
+          endHold();
           if (mode === "off") setHolding(false);
         }}
         onPointerCancel={() => {
           dragging.current = false;
+          endHold();
           setHolding(false);
         }}
         onDoubleClick={() => setState({ overlay: null })}
         title={mode === "off" && !zoomed ? "Press and hold (or hold B) to see the original" : undefined}
       >
-        <img className="compare-img" src={after} alt={g.prompt} draggable={false} />
+        <DevelopImg className="compare-img" src={after} placeholder={urls.genThumb(g.id)} alt={g.prompt} />
         {mode === "diff" && !holding && before && <DiffCanvas after={after} before={before} rect={base.rect} tagStyle={tag("left")} />}
         {/* The area painted for the next edit, on the result (the original covers it when shown). */}
         {maskSrc && <img className="stage-mask" src={maskSrc} alt="" draggable={false} />}
@@ -149,7 +166,8 @@ export function CompareFrame({ g, base, fullscreen = false, maskSrc, onFullscree
           </>
         )}
         {label && <span className="compare-tag left" style={tag("left")}>{label}</span>}
-        {!fullscreen && (
+        {!fullscreen && phone && <PhoneCompare />}
+        {!fullscreen && !phone && (
           <div className="compare-overlay" onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
             <CompareBar />
           </div>
@@ -245,13 +263,67 @@ function DiffCanvas({ after, before, rect, tagStyle }: { after: string; before: 
   );
 }
 
+const MODE_SUB: Record<CompareMode, string> = { off: "the new version", slider: "drag across it", flicker: "back and forth", diff: "what changed" };
+
+/** A phone: the views behind one small button on the picture (four side by side don't fit a
+ * narrow picture); its sheet offers them, and Flicker's speeds. */
+function PhoneCompare() {
+  const mode = useStore((s) => s.compare);
+  const flickerMs = useStore((s) => s.flickerMs);
+  return (
+    <div className="compare-pill-wrap" onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+      <Popover
+        trigger={(open, toggle) => (
+          <button className={`compare-pill ${open ? "on" : ""}`} onClick={toggle} title="Compare with the original">
+            <SquareSplitHorizontal size={15} />
+            {MODES.find((m) => m.value === mode)?.label}
+            <ChevronDown size={13} />
+          </button>
+        )}
+      >
+        {(close) => (
+          <>
+            <div className="label">Compare with the original</div>
+            {MODES.map((m) => (
+              <Option
+                key={m.value}
+                selected={mode === m.value}
+                label={m.label}
+                sub={MODE_SUB[m.value]}
+                onClick={() => {
+                  haptic();
+                  setState({ compare: m.value });
+                  if (m.value !== "flicker") close();
+                }}
+              />
+            ))}
+            {mode === "flicker" && (
+              <div className="compare-speed">
+                <span className="muted">Speed</span>
+                <Seg value={String(flickerMs)} options={SPEEDS} onChange={(v) => setState({ flickerMs: Number(v) })} />
+              </div>
+            )}
+          </>
+        )}
+      </Popover>
+    </div>
+  );
+}
+
 /** View switch shown under a result that has an original to compare with. */
 export function CompareBar() {
   const mode = useStore((s) => s.compare);
   const flickerMs = useStore((s) => s.flickerMs);
   return (
     <div className="compare-bar">
-      <Seg value={mode} options={MODES} onChange={(v) => setState({ compare: v })} />
+      <Seg
+        value={mode}
+        options={MODES}
+        onChange={(v) => {
+          if (isNarrow()) haptic();
+          setState({ compare: v });
+        }}
+      />
       {mode === "flicker" && <Seg value={String(flickerMs)} options={SPEEDS} onChange={(v) => setState({ flickerMs: Number(v) })} />}
     </div>
   );

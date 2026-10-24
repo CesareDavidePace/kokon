@@ -1,0 +1,368 @@
+/* Kokon on a phone (components/PhoneApp.tsx, PhoneStage.tsx and the composer's phone variant).
+   Built around an iPhone: safe areas, large continuous-looking corners, glass bars and sheets
+   from the bottom; the rest of Kokon's look (monochrome, the cocoon's motion curve) is kept. */
+
+@media (max-width: 720px) {
+  :root {
+    --radius-img: 24px;
+    /* translucent material for buttons and bars over the page or the image */
+    --glass: rgba(255, 255, 255, 0.72);
+    --glass-strong: rgba(255, 255, 255, 0.86);
+    --glass-edge: inset 0 0 0 0.5px rgba(0, 0, 0, 0.07), 0 1px 2px rgba(0, 0, 0, 0.05), 0 8px 22px -10px rgba(0, 0, 0, 0.2);
+  }
+  :root[data-theme="dark"] {
+    --glass: rgba(44, 44, 44, 0.62);
+    --glass-strong: rgba(34, 34, 34, 0.86);
+    --glass-edge: inset 0 0 0 0.5px rgba(255, 255, 255, 0.1), 0 8px 22px -10px rgba(0, 0, 0, 0.7);
+  }
+}
+
+/* ---------- the shell: it follows the visible part of the screen (the keyboard pushes it up) ---------- */
+.app.phone { display: block; }
+.phone-app { position: fixed; left: 0; right: 0; top: var(--vv-top, 0px); height: var(--vv-h, 100dvh); display: flex; flex-direction: column; overflow: hidden; background: var(--ground); }
+.phone-screen { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
+/* moving between the library and a project: the project comes from the right, the library back from the left */
+.phone-screen.project { animation: phone-push 0.42s var(--ease) both; }
+.phone-screen.library { animation: phone-pop 0.42s var(--ease) both; }
+@keyframes phone-push { from { opacity: 0; transform: translateX(36px); } to { opacity: 1; transform: none; } }
+@keyframes phone-pop { from { opacity: 0; transform: translateX(-36px); } to { opacity: 1; transform: none; } }
+.phone-app .main { flex: 1; min-height: 0; display: flex; position: relative; }
+/* the brush and expand editors over the whole screen, clear of the notch and the home bar */
+.phone-app > .overlay { z-index: 30; padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
+.phone-app > .overlay .editor-stage { padding: 8px 12px; }
+.phone-app > .overlay .editor-tools { padding: 8px 10px 12px; gap: 8px; }
+.phone-app > .overlay .editor-tools .group { border-radius: 22px; }
+
+/* round glass buttons: the top bars, the library */
+.glass-btn { width: 44px; height: 44px; flex: none; border-radius: 50%; display: grid; place-items: center; color: var(--text); background: var(--glass); -webkit-backdrop-filter: blur(20px) saturate(1.8); backdrop-filter: blur(20px) saturate(1.8); box-shadow: var(--glass-edge); transition: transform 0.25s var(--ease), background 0.2s, color 0.2s; }
+.glass-btn:active { transform: scale(0.9); }
+.glass-btn.on { background: var(--invert-bg); color: var(--invert-text); }
+
+/* ---------- a project: top bar ---------- */
+.phone-top { flex: none; display: flex; align-items: center; gap: 8px; padding: calc(env(safe-area-inset-top) + 6px) 12px 6px; min-height: 58px; position: relative; z-index: 5; }
+.phone-title { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.phone-title .project-title { display: block; max-width: 100%; height: 34px; line-height: 34px; padding: 0 12px; border-radius: 17px; font-size: 16.5px; font-weight: 620; letter-spacing: -0.025em; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.phone-title .project-title:active { background: var(--surface); }
+.phone-title .project-title.placeholder { color: var(--text-3); font-weight: 500; }
+.phone-title .title-pencil { display: none; }
+.phone-title .name-field.title-field { width: 100%; height: 36px; border-radius: 12px; text-align: center; font-weight: 600; }
+.private-tag { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 8px; border-radius: 10px; background: var(--invert-bg); color: var(--invert-text); font-size: 11px; font-weight: 600; letter-spacing: 0.01em; }
+.phone-top-end { display: flex; align-items: center; gap: 8px; flex: none; }
+/* the status only while it says something (loading, working, an error): a glass dot */
+.phone-top .status { width: 44px; height: 44px; padding: 0; justify-content: center; border-radius: 50%; background: var(--glass); box-shadow: var(--glass-edge); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); }
+.phone-top .status > span:not(.dot) { display: none; }
+.phone-top .status .silk-spin { margin: 0; }
+
+/* ---------- a project: the stage ----------
+   The rows under the picture keep a fixed place (the bar's room is kept even without one), so
+   moving between versions of other shapes never moves them: only the picture changes, sitting
+   on top of them. */
+.phone-stage { padding: 2px 0 0; justify-content: flex-start; }
+.phone-stage::before { top: 38%; }
+.swipe { flex: 1; min-height: 0; width: 100%; display: flex; touch-action: pan-y; }
+.swipe-track, .swipe-page { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.swipe-page { padding: 0 12px; }
+.swipe-page.enter-right { animation: page-right 0.46s var(--ease) both; }
+.swipe-page.enter-left { animation: page-left 0.46s var(--ease) both; }
+@keyframes page-right { from { opacity: 0; transform: translateX(64px); } to { opacity: 1; transform: none; } }
+@keyframes page-left { from { opacity: 0; transform: translateX(-64px); } to { opacity: 1; transform: none; } }
+/* the picture in the middle of the room above the rows, which stay where they are */
+.phone-stage .stage-frame { align-items: center; }
+.swipe-page { padding-top: 6px; padding-bottom: 6px; }
+/* no "save image" callout on a long press: that press shows the original */
+.phone-stage img { -webkit-touch-callout: none; }
+/* controls on the picture: glass in the theme's colours */
+.phone-stage .fullscreen-btn { top: 10px; right: 10px; width: 36px; height: 36px; border-radius: 50%; opacity: 1; color: var(--text); background: var(--glass); box-shadow: var(--glass-edge); -webkit-backdrop-filter: blur(16px) saturate(1.6); backdrop-filter: blur(16px) saturate(1.6); }
+.phone-stage .fullscreen-btn:hover, .phone-stage .fullscreen-btn:focus-visible { background: var(--glass); }
+/* the comparison views: one glass button on the picture, its sheet lists them */
+.compare-pill-wrap { position: absolute; left: 10px; bottom: 10px; z-index: 2; }
+.compare-pill { height: 34px; padding: 0 11px 0 10px; border-radius: 17px; display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 520; color: var(--text); background: var(--glass); box-shadow: var(--glass-edge); -webkit-backdrop-filter: blur(16px) saturate(1.6); backdrop-filter: blur(16px) saturate(1.6); }
+.compare-pill.on { background: var(--invert-bg); color: var(--invert-text); }
+.compare-speed { display: flex; align-items: center; gap: 12px; padding: 8px 14px 4px; }
+.compare-speed .seg { flex: 1; }
+/* (the desktop's switch on the picture, no longer shown on a phone) */
+.phone-stage .compare-overlay { left: 8px; right: 8px; bottom: 10px; transform: none; opacity: 1; display: flex; justify-content: center; pointer-events: none; }
+.phone-stage .compare-overlay .compare-bar { flex-direction: column-reverse; align-items: center; gap: 6px; pointer-events: auto; }
+.phone-stage .compare-overlay .seg { border-radius: 17px; padding: 3px; background: var(--glass); box-shadow: var(--glass-edge); -webkit-backdrop-filter: blur(16px) saturate(1.6); backdrop-filter: blur(16px) saturate(1.6); }
+.phone-stage .compare-overlay .seg button { height: 30px; padding: 0 11px; border-radius: 14px; font-size: 12.5px; color: var(--text-2); }
+.phone-stage .compare-overlay .seg button:hover { color: var(--text); }
+.phone-stage .compare-overlay .seg button.on { background: var(--pick-bg); color: var(--text); box-shadow: var(--pick); font-weight: 500; }
+.phone-stage .compare-tag { border-radius: 10px; top: 10px; }
+.phone-stage .compare-tag.left { left: 10px; }
+.phone-stage .pending { border-radius: var(--radius-img); }
+.phone-stage .stage-frame > .failed { padding: 0 20px; }
+
+/* under the picture: what it is, then what to do with it, in a room of fixed height */
+.phone-bar { flex: none; width: 100%; min-height: 128px; display: flex; flex-direction: column; }
+.phone-stage .stage-bar { max-width: none; margin-top: 12px; gap: 12px; }
+.phone-stage .stage-meta { padding: 0 16px; gap: 6px; flex-wrap: nowrap; font-size: 12.5px; white-space: nowrap; }
+.phone-stage .stage-meta .ver { font-size: 14px; }
+.phone-stage .stage-meta .dims-seg button { height: 22px; padding: 0 9px; font-size: 12px; }
+.phone-stage .seg-dims { display: none; }
+/* a row of round buttons with their names under them, scrolled sideways when it doesn't fit */
+.phone-stage .phone-actions { width: 100%; padding: 2px 14px 2px; gap: 2px; overflow-x: auto; scrollbar-width: none; justify-content: safe center; background: none; box-shadow: none; border-radius: 0;
+  /* the edges fade: more buttons are a swipe away */
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 12px, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, transparent, #000 12px, #000 calc(100% - 28px), transparent); }
+.phone-actions::-webkit-scrollbar { display: none; }
+.phone-actions > * { flex: none; }
+.phone-actions .act { width: 62px; height: auto; padding: 0; flex-direction: column; gap: 5px; font-size: 11.5px; font-weight: 500; color: var(--text-2); background: none; border-radius: 0; }
+.phone-actions .act svg { width: 46px; height: 46px; padding: 14.5px; border-radius: 50%; background: var(--bg); color: var(--text); box-shadow: var(--lift); transition: transform 0.25s var(--ease), background 0.2s, color 0.2s; }
+.phone-actions .act:hover, .phone-actions .act.active { background: none; color: var(--text); }
+.phone-actions .act.active svg { background: var(--invert-bg); color: var(--invert-text); }
+.phone-actions .act:active svg { transform: scale(0.9); }
+.phone-actions .act-label { display: block; }
+/* a LUT being previewed: its bar as one card */
+.phone-stage .lut-bar { margin: 0 12px; padding: 6px; border-radius: 26px; flex-wrap: wrap; gap: 4px; max-width: calc(100% - 24px); }
+.phone-stage .lut-bar .lut-intensity { flex: 1 1 160px; }
+.phone-stage .lut-bar .lut-intensity input { width: auto; flex: 1; }
+.phone-stage .lut-bar .btn.primary { height: 36px; border-radius: 18px; padding: 0 18px; }
+
+/* the versions: the desktop's timeline (lines and arcs), scrolled by the finger */
+.phone-stage .timeline { flex: none; margin: 14px 0 6px; padding: 0 16px 4px; scrollbar-width: none; }
+.phone-stage .timeline::-webkit-scrollbar { display: none; }
+.phone-stage .frame-img .develop-ph { border-radius: 0; }
+.phone-stage .frame:active .frame-img { transform: scale(0.94); }
+
+/* a new project */
+.phone-empty { flex: 1; width: 100%; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; justify-content: center; gap: 8px; padding: 12px 20px 16px; animation: rise 0.8s var(--ease) both; }
+.phone-empty .kokon-mark { margin-bottom: 10px; color: var(--mark); }
+.phone-empty h1 { margin: 0; font-size: 31px; line-height: 1.08; font-weight: 700; letter-spacing: -0.04em; color: var(--text); }
+.phone-empty > p { margin: 0 0 14px; font-size: 16px; line-height: 1.4; color: var(--text-2); }
+.phone-photo { display: flex; align-items: center; gap: 14px; padding: 14px 18px 14px 14px; border-radius: 28px; background: var(--bg); box-shadow: var(--lift); text-align: left; transition: transform 0.25s var(--ease); }
+.phone-photo-icon { width: 50px; height: 50px; flex: none; border-radius: 18px; display: grid; place-items: center; background: var(--invert-bg); color: var(--invert-text); }
+.phone-photo-text { display: flex; flex-direction: column; gap: 1px; }
+.phone-photo-text strong { font-size: 16.5px; font-weight: 620; letter-spacing: -0.015em; }
+.phone-photo-text span { font-size: 13.5px; color: var(--text-3); }
+.ideas { display: flex; flex-direction: column; gap: 8px; margin-top: 18px; }
+.ideas-label { padding-left: 6px; font-size: 13px; color: var(--text-3); }
+.idea { padding: 13px 18px; border-radius: 22px; background: var(--surface); color: var(--text-2); font-size: 15px; line-height: 1.35; text-align: left; transition: transform 0.25s var(--ease), background 0.2s; }
+.phone-photo:active, .idea:active { transform: scale(0.97); }
+
+/* the keyboard is up: the picture keeps the room, the rows under it give it up */
+html.keyboard .phone-stage .phone-bar, html.keyboard .phone-stage .timeline, html.keyboard .phone-empty .ideas { display: none; }
+
+/* ---------- the prompt ----------
+   Closed: a card at the bottom, the words on top and, under them, what the prompt works on and
+   send. Tapped: a screen of its own for writing (the picture and its rows step aside), with the
+   choices and send over the keyboard. */
+/* In Safari (its toolbar under the page) the card has 28 px corners. Added to the home screen, it
+   sits on the screen's round corners (a home bar: a bottom inset): as far from the bottom as from
+   the sides, its lower corners following the screen's (about 47-62 pt on recent iPhones, less the
+   10 px gap; the upper ones stay 28 px), and the picture and send round, nested in them. On the
+   keyboard: 28 px again. */
+.composer-wrap.phone { --card-r: 28px; --card-r-bottom: 28px; position: relative; z-index: 20; padding: 6px 10px max(8px, calc(env(safe-area-inset-bottom) - 14px)); }
+@media (display-mode: standalone) {
+  html:not(.keyboard) .composer-wrap.phone { --card-r-bottom: clamp(28px, calc(env(safe-area-inset-bottom) * 1.3), 46px); padding-bottom: 10px; }
+  html:not(.keyboard) .composer-wrap.phone:not(.open) .composer { padding: 16px 14px 14px 20px; }
+  html:not(.keyboard) .composer-wrap.phone:not(.open) .closed-row { margin-left: -6px; }
+  html:not(.keyboard) .composer-wrap.phone:not(.open) .prompt-ctx,
+  html:not(.keyboard) .composer-wrap.phone:not(.open) .prompt-ctx img { width: 44px; height: 44px; border-radius: 50%; }
+  html:not(.keyboard) .composer-wrap.phone:not(.open) .send { width: 44px; height: 44px; }
+}
+html.keyboard .composer-wrap.phone { padding-bottom: 8px; }
+.composer-wrap.phone .composer { border-radius: var(--card-r) var(--card-r) var(--card-r-bottom) var(--card-r-bottom); padding: 14px 10px 10px 14px; background: var(--glass-strong); -webkit-backdrop-filter: blur(24px) saturate(1.8); backdrop-filter: blur(24px) saturate(1.8); box-shadow: var(--shadow); }
+.composer-wrap.phone .composer::before { border-radius: calc(var(--card-r) + 1px) calc(var(--card-r) + 1px) calc(var(--card-r-bottom) + 1px) calc(var(--card-r-bottom) + 1px); }
+.prompt-row { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.composer-wrap.phone:not(.open) .prompt { height: 26px !important; line-height: 26px; padding: 0 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.closed-row { display: flex; align-items: center; gap: 10px; }
+.prompt-ctx-wrap { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; }
+.prompt-ctx-label { min-width: 0; font-size: 13px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.composer-wrap.phone .send { width: 42px; height: 42px; }
+.prompt-ctx { position: relative; width: 40px; height: 40px; flex: none; border-radius: 14px; display: grid; place-items: center; background: var(--surface); color: var(--text-2); }
+.prompt-ctx img { display: block; width: 40px; height: 40px; min-width: 0; max-width: none; object-fit: cover; border-radius: 14px; }
+.prompt-ctx .frame-badge { right: -3px; bottom: -3px; width: 18px; height: 18px; box-shadow: 0 0 0 2px var(--bg); }
+.prompt-ctx .num { position: absolute; right: -4px; top: -4px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--invert-bg); color: var(--invert-text); font-size: 10.5px; font-weight: 600; display: grid; place-items: center; box-shadow: 0 0 0 2px var(--bg); }
+
+/* writing: the box takes the screen above the keyboard */
+.phone-screen.project:has(.composer-wrap.open) .phone-top, .phone-screen.project:has(.composer-wrap.open) .main { display: none; }
+.composer-wrap.phone.open { flex: 1; min-height: 0; display: flex; flex-direction: column; padding-top: calc(env(safe-area-inset-top) + 6px); animation: fade 0.25s ease-out both; }
+.composer-wrap.phone.open .composer { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 10px 10px 10px 12px; background: var(--bg); box-shadow: var(--lift); -webkit-backdrop-filter: none; backdrop-filter: none; }
+.composer-wrap.phone.open .prompt-row { flex: 1; min-height: 0; }
+.composer-wrap.phone.open .prompt { flex: 1; height: auto !important; max-height: none; padding: 6px 4px; font-size: 18px; line-height: 1.45; overflow-y: auto; }
+.compose-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.compose-head .glass-btn { width: 40px; height: 40px; background: var(--surface); box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+.compose-hint { min-width: 0; padding-right: 6px; font-size: 12.5px; color: var(--text-3); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* the open box: one kind of button, filled and borderless; a switch that is on is ink */
+.composer-wrap.phone .target { gap: 8px; padding: 0 0 10px; margin-bottom: 4px; }
+.composer-wrap.phone .mode-switch { border-radius: 19px; padding: 3px; }
+.composer-wrap.phone .mode-switch button { height: 32px; min-width: 38px; justify-content: center; padding: 0 10px; border-radius: 16px; }
+.composer-wrap.phone .target-icon, .composer-wrap.phone .ref, .composer-wrap.phone .ref img { border-radius: 14px; }
+.composer-wrap.phone .tool { height: 38px; min-width: 38px; padding: 0 11px; justify-content: center; border: 0; border-radius: 19px; background: var(--surface); color: var(--text); }
+.composer-wrap.phone .tool.on { background: var(--invert-bg); color: var(--invert-text); }
+.composer-wrap.phone .tool-group .tool.on { border-radius: 19px 0 0 19px; padding-right: 6px; }
+.composer-wrap.phone .tool-x { height: 38px; padding: 0 11px 0 6px; border-radius: 0 19px 19px 0; background: var(--invert-bg); color: var(--invert-text); }
+/* the box's buttons scroll sideways, fading at the edge; the send button sits beside them */
+/* (the fade is an overlay, not a mask: iOS Safari does not scroll a masked row by touch) */
+.composer-wrap.phone .controls-row { position: relative; display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.composer-wrap.phone .controls-row::after { content: ""; position: absolute; top: 0; bottom: 0; right: 50px; width: 24px; background: linear-gradient(to right, transparent, var(--bg)); pointer-events: none; }
+.composer-wrap.phone .controls { flex: 1; min-width: 0; gap: 6px; margin-top: 0; padding-right: 20px; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; touch-action: pan-x; scrollbar-width: none; }
+.composer-wrap.phone .controls::-webkit-scrollbar { display: none; }
+.composer-wrap.phone .controls > * { flex: none; }
+.composer-wrap.phone .controls .spacer { flex: 1 0 4px; }
+.composer-wrap.phone .controls .pill { height: 38px; padding: 0 13px; gap: 7px; border: 0; border-radius: 19px; background: var(--surface); color: var(--text); font-size: 13.5px; font-weight: 500; }
+.composer-wrap.phone .controls .pill.on:not(.toggle) { background: var(--surface-3); }
+.composer-wrap.phone .controls .pill.toggle.on { background: var(--invert-bg); color: var(--invert-text); }
+.composer-wrap.phone .controls .pill .lbl { display: inline; }
+.composer-wrap.phone .controls .icon-btn { width: 38px; height: 38px; border-radius: 50%; background: var(--surface); color: var(--text); }
+.composer-wrap.phone .controls .icon-btn.active { background: var(--surface-3); }
+.composer-wrap.phone .controls .seg { border-radius: 19px; padding: 3px; }
+.composer-wrap.phone .controls .seg button { height: 32px; border-radius: 16px; padding: 0 10px; font-size: 13px; }
+.composer-wrap.phone .controls .spacer, .composer-wrap.phone .controls .plan-hint { display: none; }
+.composer-wrap.phone .controls .icon-btn[title="Prompt tips"] { display: none; }
+.composer-wrap.phone .send:disabled { opacity: 1; background: var(--surface-3); color: var(--text-3); box-shadow: none; }
+
+/* ---------- the brush and expand editors ---------- */
+.phone-app > .overlay .overlay-head { height: auto; min-height: 58px; padding: 6px 12px 6px 18px; flex-wrap: wrap; row-gap: 0; }
+.phone-app > .overlay .overlay-head h2 { font-size: 17px; font-weight: 620; letter-spacing: -0.02em; }
+.phone-app > .overlay .overlay-head .muted { order: 3; flex-basis: 100%; margin-top: -6px; padding-bottom: 4px; font-size: 12.5px; }
+.phone-app > .overlay .overlay-head .icon-btn { width: 44px; height: 44px; border-radius: 50%; background: var(--glass); box-shadow: var(--glass-edge); color: var(--text); }
+/* the tools: one card at the bottom; groups as filled capsules, round buttons, Done in ink */
+.phone-app > .overlay .editor-tools { margin: 0 10px 10px; padding: 10px; gap: 8px 6px; justify-content: space-between; border-radius: 28px; background: var(--bg); box-shadow: var(--shadow); }
+.phone-app > .overlay .editor-tools .group { padding: 3px; gap: 2px; border-radius: 22px; background: var(--surface); box-shadow: none; }
+.phone-app > .overlay .editor-tools .icon-btn { width: 40px; height: 40px; border-radius: 50%; color: var(--text); }
+.phone-app > .overlay .editor-tools .icon-btn:hover:not(:disabled) { background: var(--surface-3); }
+.phone-app > .overlay .editor-tools .icon-btn.active { background: var(--invert-bg); color: var(--invert-text); }
+.phone-app > .overlay .editor-tools .pill { height: 40px; padding: 0 13px; border-radius: 20px; color: var(--text); font-size: 13.5px; }
+/* the brush editor: tools and undo on the first line, size and Done on the second */
+.phone-app > .overlay .editor-tools > .group:has(.slider) { order: 3; flex: 1 1 auto; }
+.phone-app > .overlay .editor-tools > .btn.primary { order: 4; }
+.phone-app > .overlay .editor-tools .slider { height: 40px; flex: 1; padding: 0 14px; gap: 12px; font-size: 13.5px; color: var(--text-2); }
+.phone-app > .overlay .editor-tools .slider input { width: auto; flex: 1; }
+.phone-app > .overlay .editor-tools .btn.primary { height: 46px; padding: 0 22px; border-radius: 23px; font-size: 15px; font-weight: 600; }
+/* the expand editor: the four sides in a row of fields, then px/% and Done */
+.phone-app > .overlay .editor-tools > div:not(.group) { width: 100%; }
+.phone-app > .overlay .expand-fields { width: 100%; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.phone-app > .overlay .expand-fields label { flex-direction: column; align-items: stretch; gap: 4px; font-size: 12px; text-align: center; }
+.phone-app > .overlay .expand-fields .num-input { width: 100%; height: 40px; border: 0; border-radius: 14px; background: var(--surface); text-align: center; font-size: 16px; }
+.phone-app > .overlay .expand-fields > div { width: auto !important; grid-column: span 2; }
+.phone-app > .overlay .expand-fields .seg { height: 46px; border-radius: 23px; padding: 4px; }
+.phone-app > .overlay .expand-fields .seg button { height: 38px; border-radius: 19px; font-size: 14px; }
+.phone-app > .overlay .expand-fields .btn.primary { grid-column: span 2; justify-content: center; }
+.phone-app > .overlay .handle.h { width: 8px; height: 48px; border-radius: 4px; }
+.phone-app > .overlay .handle.v { width: 48px; height: 8px; border-radius: 4px; }
+/* zoom in the brush editor: a glass capsule in the theme's colours */
+.phone-app .zoom-controls { padding: 4px; border-radius: 20px; color: var(--text); background: var(--glass); box-shadow: var(--glass-edge); -webkit-backdrop-filter: blur(16px) saturate(1.6); backdrop-filter: blur(16px) saturate(1.6); }
+.phone-app .zoom-btn { height: 34px; min-width: 34px; border-radius: 17px; color: var(--text-2); }
+.phone-app .zoom-btn:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+.phone-app .zoom-minimap { border-radius: 14px; }
+
+/* ---------- the library ---------- */
+.lib-head { flex: none; display: flex; flex-direction: column; gap: 14px; padding: calc(env(safe-area-inset-top) + 10px) 16px 12px; }
+.lib-title-row { display: flex; align-items: center; gap: 8px; }
+.lib-title-row h1 { flex: 1; min-width: 0; margin: 0; display: flex; align-items: center; gap: 10px; font-size: 32px; font-weight: 720; letter-spacing: -0.045em; color: var(--text); }
+.lib-title-row h1 .kokon-mark { color: var(--text); }
+.lib-text-btn { height: 36px; padding: 0 12px; border-radius: 18px; font-size: 15.5px; font-weight: 520; color: var(--text); }
+.lib-text-btn:active { background: var(--surface); }
+.lib-seg { padding: 3px; border-radius: 15px; }
+.lib-seg button { height: 34px; border-radius: 12px; font-size: 14px; font-weight: 520; }
+.lib-body { flex: 1; min-height: 0; position: relative; }
+.lib-scroll { position: absolute; inset: 0; overflow-y: auto; padding: 4px 16px calc(112px + env(safe-area-inset-bottom)); }
+.lib-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 14px; }
+@media (min-width: 540px) { .lib-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.lib-card { display: flex; flex-direction: column; gap: 2px; min-width: 0; text-align: left; -webkit-touch-callout: none; animation: rise 0.55s var(--ease) backwards; }
+.lib-card:nth-child(2) { animation-delay: 0.04s; }
+.lib-card:nth-child(3) { animation-delay: 0.08s; }
+.lib-card:nth-child(4) { animation-delay: 0.12s; }
+.lib-card:nth-child(n + 5) { animation-delay: 0.16s; }
+.lib-cover { position: relative; display: block; aspect-ratio: 1; margin-bottom: 8px; border-radius: 26px; overflow: hidden; background: var(--surface-2); box-shadow: var(--lift); transition: transform 0.3s var(--ease), box-shadow 0.25s; }
+.lib-cover > img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.lib-cover .develop-ph { border-radius: 0; }
+.lib-card:active .lib-cover { transform: scale(0.96); }
+.lib-card.current .lib-cover { box-shadow: 0 0 0 2.5px var(--ground), 0 0 0 4.5px var(--text); }
+.lib-card.picked .lib-cover { transform: scale(0.93); }
+.lib-cover .pick-mark { left: auto; right: 10px; top: 10px; width: 26px; height: 26px; z-index: 2; }
+.lib-card.picked .pick-mark { background: var(--invert-bg); color: var(--invert-text); box-shadow: 0 0 0 2px var(--invert-text); }
+.lib-card-title { padding: 0 6px; font-size: 15px; font-weight: 600; letter-spacing: -0.015em; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lib-card-sub { padding: 0 6px; font-size: 13px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lib-private { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; padding: 14px 10px 14px 16px; border-radius: 24px; background: var(--invert-bg); color: var(--invert-text); font-size: 13.5px; line-height: 1.35; }
+.lib-private > svg { flex: none; }
+.lib-private > span { flex: 1; min-width: 0; opacity: 0.85; }
+.lib-private strong { display: block; font-size: 15px; font-weight: 600; opacity: 1; }
+.lib-private .lib-text-btn { color: inherit; flex: none; }
+.lib-empty { display: flex; flex-direction: column; gap: 6px; padding: 48px 12px; text-align: center; color: var(--text-3); font-size: 14.5px; }
+.lib-empty strong { color: var(--text); font-size: 17px; }
+/* New image: a floating button over the bottom of the list */
+.lib-dock { position: absolute; left: 0; right: 0; bottom: 0; z-index: 5; display: flex; justify-content: center; padding: 28px 16px max(14px, env(safe-area-inset-bottom)); background: linear-gradient(transparent, var(--ground) 55%); pointer-events: none; }
+.lib-dock > * { pointer-events: auto; }
+.lib-new { height: 56px; padding: 0 28px 0 24px; border-radius: 28px; display: inline-flex; align-items: center; gap: 8px; background: var(--invert-bg); color: var(--invert-text); font-size: 17px; font-weight: 600; letter-spacing: -0.01em; box-shadow: 0 14px 32px -12px rgba(0, 0, 0, 0.5); transition: transform 0.25s var(--ease); }
+.lib-new:active { transform: scale(0.95); }
+.lib-dock.select { left: 12px; right: 12px; bottom: max(12px, env(safe-area-inset-bottom)); justify-content: space-between; align-items: center; padding: 8px 8px 8px 20px; border-radius: 30px; background: var(--glass-strong); -webkit-backdrop-filter: blur(24px) saturate(1.8); backdrop-filter: blur(24px) saturate(1.8); box-shadow: var(--shadow); pointer-events: auto; animation: rise 0.3s var(--ease) both; }
+.lib-dock.select .btn { height: 44px; border-radius: 22px; padding: 0 18px; font-size: 15px; }
+
+/* All images, inside the library */
+.library .lib-body > .overlay { background: transparent; animation: none; }
+.library .lib-body > .overlay > .overlay-head { display: none; }
+.library .gallery-bar { padding: 0 16px 12px; gap: 6px; }
+.library .gallery-bar .search { flex: 1 1 100%; max-width: none; height: 40px; border-radius: 14px; }
+.library .gallery-bar .btn { height: 36px; border-radius: 18px; }
+.library .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 0 4px calc(24px + env(safe-area-inset-bottom)); }
+.library .card { border-radius: 10px; box-shadow: none; }
+.library .card .develop-ph { border-radius: 0; }
+.library .gallery-select { bottom: max(12px, env(safe-area-inset-bottom)); border-radius: 26px; min-width: 0; left: 12px; right: 12px; transform: none; flex-wrap: wrap; }
+/* one image of All images: the whole screen */
+.library:has(.preview) .lib-head { display: none; }
+.library .preview .overlay-head { height: auto; min-height: 52px; padding: env(safe-area-inset-top) 12px 0 8px; }
+
+/* one image of All images: a glass back button, round buttons and Open in project in ink */
+.library .preview { background: var(--ground); }
+.library .preview .overlay-head { gap: 10px; }
+.library .preview .overlay-head .icon-btn, .library .preview-bar .icon-btn { width: 44px; height: 44px; border-radius: 50%; color: var(--text); background: var(--glass); box-shadow: var(--glass-edge); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); }
+.library .preview-bar .icon-btn.active { background: var(--invert-bg); color: var(--invert-text); }
+.library .preview .preview-prompt { font-size: 15px; font-weight: 520; }
+.library .preview .preview-pos { font-size: 13px; padding-right: 4px; }
+.library .preview-stage { margin: 4px 12px; }
+.library .preview-bar { gap: 8px; padding: 12px 16px max(14px, env(safe-area-inset-bottom)); }
+.library .preview-bar .dims { display: none; }
+.library .preview-bar .btn.primary { height: 48px; margin-left: 4px; padding: 0 22px; border-radius: 24px; font-size: 15px; font-weight: 600; }
+
+/* Save on an iPhone without HTTPS: the picture to hold, whose system menu saves it to Photos */
+.hold-save { position: fixed; inset: 0; z-index: 210; display: flex; flex-direction: column; background: #000; color: #fff; animation: fade 0.25s ease-out both; }
+.hold-save-head { flex: none; display: flex; align-items: center; gap: 12px; padding: calc(env(safe-area-inset-top) + 8px) 12px 10px 20px; font-size: 15px; line-height: 1.35; }
+.hold-save-head > span { flex: 1; color: rgba(255, 255, 255, 0.85); }
+.hold-save-head strong { color: #fff; font-weight: 600; }
+.hold-save-head .glass-btn { color: #fff; background: rgba(255, 255, 255, 0.14); box-shadow: none; }
+.hold-save-img { flex: 1; min-height: 0; position: relative; display: grid; place-items: center; padding: 8px 12px calc(env(safe-area-inset-bottom) + 16px); }
+/* the image's own long-press menu (Save to Photos) is what this view is for */
+.hold-save-img > img:not(.develop-ph img) { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 18px; -webkit-touch-callout: default; -webkit-user-select: auto; user-select: auto; }
+.hold-save-img .develop-ph { inset: 8px 12px calc(env(safe-area-inset-bottom) + 16px); border-radius: 18px; background: #111; }
+.hold-save-img .develop-ph img { object-fit: contain; }
+
+/* ---------- sheets (menus) like iOS: a grabber, large corners, rising from the bottom ---------- */
+@media (max-width: 720px) {
+  .popover.sheet { border-radius: 32px; padding: 22px 10px 10px; animation: sheet-up 0.42s var(--ease) both; }
+  .popover.sheet::before { content: ""; position: absolute; top: 8px; left: 50%; width: 36px; height: 5px; margin-left: -18px; border-radius: 3px; background: var(--surface-3); }
+  .popover.sheet.panel { padding: 24px 16px 16px; }
+  .popover.sheet .opt { width: 100%; min-height: 50px; padding: 0 14px; gap: 14px; border-radius: 18px; font-size: 16px; }
+  .popover.sheet .opt .check { width: 18px; }
+  .popover.sheet .opt > span:nth-child(2) { white-space: nowrap; }
+  .popover.sheet .opt .sub { font-size: 13px; text-align: right; }
+  .popover.sheet .opt.danger { color: var(--bad); }
+  .popover.sheet .label { padding: 2px 14px 8px; font-size: 13px; letter-spacing: 0; text-transform: none; }
+  .popover.sheet .btn { height: 44px; border-radius: 16px; font-size: 15px; justify-content: center; }
+  .popover.sheet .info-panel { padding: 4px 6px !important; }
+  .sheet-scrim { background: rgba(0, 0, 0, 0.3); }
+  @keyframes sheet-up { from { opacity: 0; transform: translateY(48px); } to { opacity: 1; transform: none; } }
+  /* a project held down: its picture and name */
+  .sheet-head { display: flex; align-items: center; gap: 14px; padding: 2px 6px 12px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
+  .sheet-cover { width: 60px; height: 60px; flex: none; border-radius: 18px; overflow: hidden; background: var(--surface-2); }
+  .sheet-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .sheet-name { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--text-3); }
+  .sheet-name .input { height: 44px; border-radius: 14px; padding: 0 12px; font-weight: 600; }
+  /* full screen: no keyboard hints; the close button clear of the notch, the bars of the home bar */
+  .viewer-hint { display: none; }
+  .viewer-bar { top: calc(env(safe-area-inset-top) + 10px); right: 12px; }
+  .viewer-close { width: 44px; height: 44px; border-radius: 50%; -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); }
+  .viewer-tag { border-radius: 12px; padding: 5px 10px; }
+  .viewer-compare-bar { bottom: calc(14px + env(safe-area-inset-bottom)); }
+  .viewer .zoom-controls { border-radius: 18px; }
+  .viewer-compare-bar .compare-bar { border-radius: 18px; }
+  .viewer-compare-bar .seg button { padding: 0 12px; }
+  /* messages at the top of the screen, like a banner */
+  .app.phone .toasts { top: calc(env(safe-area-inset-top) + 8px); bottom: auto; left: 10px; right: 10px; }
+  .app.phone .toast, .app.phone .star-prompt { border-radius: 24px; padding: 14px 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .phone-screen.project, .phone-screen.library, .swipe-page.enter-right, .swipe-page.enter-left, .lib-card, .phone-empty, .popover.sheet { animation: none; }
+}

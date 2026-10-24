@@ -15,10 +15,12 @@ import type { GenerationRecord, GenerationRequest, JobView, LutEntry, Mode, Size
 import { Cocoon, Hatch } from "./Cocoon";
 import { CompareFrame, CompareFullscreen } from "./Compare";
 import { PROMPT_FADE_MS, usePromptLeave, useTypewriter, useJobPercent, wordStyle } from "./jobMotion";
+import { DevelopImg } from "./Develop";
 import { LutBar, LutButton, LutOverlay } from "./Lut";
 import { IconButton, Popover, useFit } from "./ui";
 import { Fullscreen, FullscreenButton, isTyping, ZoomImage, type ViewerNav } from "./Viewer";
-import { fileManager, inBrowser, shortcut } from "../lib/platform";
+import { fileManager, inBrowser, shortcut, useNarrow } from "../lib/platform";
+import { PhoneActions, PhoneEmpty, Swipe } from "./PhoneStage";
 
 export const MODE_ICON: Record<Mode | "lut", React.ReactNode> = {
   auto: <Wand2 size={11} />,
@@ -227,7 +229,7 @@ function Failed({ job, item }: { job: JobView; item: SessionItem }) {
   );
 }
 
-function InfoPanel({ g }: { g: GenerationRecord }) {
+export function InfoPanel({ g }: { g: GenerationRecord }) {
   const pipeline = pipelineSummary(g);
   const lut = lutInfo(g);
   const rows: [string, string][] = lut ? [
@@ -320,7 +322,7 @@ function UpscaleMenu(props: { source: string; size: Size; original?: Size | null
 }
 
 /** A main action under the image: icon and word (the word hides when the stage is narrow). */
-function ActionButton(props: { title: string; icon: React.ReactNode; label: string; onClick: () => void; active?: boolean }) {
+export function ActionButton(props: { title: string; icon: React.ReactNode; label: string; onClick: () => void; active?: boolean }) {
   return (
     <button className={`act ${props.active ? "active" : ""}`} title={props.title} aria-label={props.label} onClick={props.onClick}>
       {props.icon}
@@ -329,7 +331,7 @@ function ActionButton(props: { title: string; icon: React.ReactNode; label: stri
   );
 }
 
-function UpscaleButton(props: { source: string; size: Size; original?: Size | null; parentId?: string | null }) {
+export function UpscaleButton(props: { source: string; size: Size; original?: Size | null; parentId?: string | null }) {
   return (
     <Popover
       placement="top-end"
@@ -389,10 +391,15 @@ function MoreMenu({ item, path }: { item: SessionItem; path: string | null }) {
   );
 }
 
+/** The size of the image an edit was made from (the upscale menu offers it back), or null. */
+export function sourceSize(g: GenerationRecord): Size | null {
+  return g.references[0] && g.mode !== "generate" && g.mode !== "compose" && g.mode !== "upscale" && g.mode !== "lut" ? { width: g.references[0].width, height: g.references[0].height } : null;
+}
+
 function GenActions({ item, g, showOriginal, onLut }: { item: SessionItem; g: GenerationRecord; showOriginal: boolean; onLut: (lut: LutEntry) => void }) {
   // Save, copy and "show in folder" act on the image on screen: the result or its pre-upscale original.
   const shownPath = (showOriginal && g.pipeline?.original_path) || g.file_path;
-  const original = g.references[0] && g.mode !== "generate" && g.mode !== "compose" && g.mode !== "upscale" && g.mode !== "lut" ? { width: g.references[0].width, height: g.references[0].height } : null;
+  const original = sourceSize(g);
   const [fav, setFav] = useState(g.favorite);
   return (
     <div className="actions">
@@ -509,7 +516,7 @@ function PlainFrame({ src, source, alt, w, h, maskSrc, overlay, fill, onFullscre
   return (
     <div className="stage-frame" ref={ref}>
       <div className="image-box" style={{ width: bw, height: bw * (h / w) }}>
-        <img className="stage-img fill" src={img} alt={alt} draggable={false} />
+        <DevelopImg className="stage-img fill" src={img} placeholder={source ? urls.sourceThumb(source) : undefined} alt={alt} />
         {maskSrc && <img className="stage-mask" src={maskSrc} alt="" draggable={false} />}
         {overlay}
         <FullscreenButton onOpen={onFullscreen} />
@@ -519,7 +526,8 @@ function PlainFrame({ src, source, alt, w, h, maskSrc, overlay, fill, onFullscre
 }
 
 /** Under the image: which image this is and what made it, then what you can do with it. */
-function StageBar(props: { item: SessionItem; label: string; showOriginal: boolean; setShowOriginal: (on: boolean) => void; lutBar: React.ReactNode; onLut: (lut: LutEntry) => void }) {
+/** `phone`: the prompt stays in Details, the actions are the phone's row. */
+function StageBar(props: { item: SessionItem; label: string; showOriginal: boolean; setShowOriginal: (on: boolean) => void; lutBar: React.ReactNode; onLut: (lut: LutEntry) => void; phone?: boolean }) {
   const { item, label, showOriginal, setShowOriginal } = props;
   const g = item.gen;
   const lut = g && lutInfo(g);
@@ -537,16 +545,18 @@ function StageBar(props: { item: SessionItem; label: string; showOriginal: boole
             <WandSparkles size={13} />
           </span>
         )}
+        {!props.phone && (
         <span className="stage-prompt" title={g?.original_prompt ? `${g.prompt}\n\nYour prompt: ${g.original_prompt}` : g?.prompt ?? name}>
           {g ? g.original_prompt || g.prompt || (g.mode === "upscale" ? `${g.references[0]?.width ?? "?"}×${g.references[0]?.height ?? "?"} → ${w}×${h}` : lut ? `${lutLabel(lut)} · ${Math.round(lut.intensity * 100)} %` : "") : name}
         </span>
+        )}
         {from && !props.lutBar ? (
           <span className="seg dims-seg" role="radiogroup" aria-label="Which image to show">
             <button className={showOriginal ? "" : "on"} role="radio" aria-checked={!showOriginal} onClick={() => setShowOriginal(false)} title={`The result, enlarged by ${upscalerLabel(g!.pipeline!.enlarged_with)}`}>
-              Upscaled {w}×{h}
+              Upscaled<span className="seg-dims"> {w}×{h}</span>
             </button>
             <button className={showOriginal ? "on" : ""} role="radio" aria-checked={showOriginal} onClick={() => setShowOriginal(true)} title="What the model made, before the upscaler enlarged it">
-              Original {from.width}×{from.height}
+              Original<span className="seg-dims"> {from.width}×{from.height}</span>
             </button>
           </span>
         ) : (
@@ -555,7 +565,14 @@ function StageBar(props: { item: SessionItem; label: string; showOriginal: boole
           </span>
         )}
       </div>
-      {props.lutBar ?? (g ? <GenActions key={`actions-${g.id}`} item={item} g={g} showOriginal={showOriginal} onLut={props.onLut} /> : <InputActions item={item} onLut={props.onLut} />)}
+      {props.lutBar ??
+        (props.phone ? (
+          <PhoneActions key={`actions-${item.key}`} item={item} showOriginal={showOriginal} onLut={props.onLut} />
+        ) : g ? (
+          <GenActions key={`actions-${g.id}`} item={item} g={g} showOriginal={showOriginal} onLut={props.onLut} />
+        ) : (
+          <InputActions item={item} onLut={props.onLut} />
+        ))}
     </div>
   );
 }
@@ -713,7 +730,8 @@ function Timeline({ labels }: { labels: Record<string, string> }) {
                   else selectItem(it.key);
                 }}
                 onPointerDown={(e) => {
-                  if (e.button === 0 && src) drag.current = { key: it.key, src, x0: e.clientX, y0: e.clientY, moved: false };
+                  // A finger scrolls the timeline; dragging onto the prompt is for a mouse.
+                  if (e.button === 0 && src && e.pointerType !== "touch") drag.current = { key: it.key, src, x0: e.clientX, y0: e.clientY, moved: false };
                 }}
                 onPointerMove={(e) => {
                   const d = drag.current;
@@ -742,7 +760,7 @@ function Timeline({ labels }: { labels: Record<string, string> }) {
               >
                 <span className="frame-box">
                 <span className="frame-img">
-                  {src && <img src={urls.sourceThumb(src)} alt="" draggable={false} />}
+                  {src && <DevelopImg src={urls.sourceThumb(src)} />}
                   {pendingSrc && <img className="dim" src={urls.sourceThumb(pendingSrc)} alt="" draggable={false} />}
                   {pending && !failed && job && job.status !== "queued" && <JobPercent job={job} request={it.request} />}
                   {failed && (
@@ -833,6 +851,8 @@ let lastIntensity = 1;
 export function Stage() {
   const item = useStore(selectedItem);
   const session = useStore((s) => s.session);
+  // A phone: swipe between versions, a row of actions and a filmstrip (PhoneStage.tsx).
+  const phone = useNarrow();
   const job = useStore((s) => (item?.jobId ? s.jobs[item.jobId] : undefined));
   const labels = useMemo(() => sessionLabels(session), [session]);
   // The result whose pre-upscale original is on screen instead of it.
@@ -895,14 +915,16 @@ export function Stage() {
 
   if (!item) {
     return (
-      <div className="stage">
-        <Empty />
+      <div className={`stage ${phone ? "phone-stage" : ""}`}>
+        {phone ? <PhoneEmpty /> : <Empty />}
         <Timeline labels={labels} />
       </div>
     );
   }
 
+  // The picture (or the job's card), and under it the bar with what to do with it.
   let view: React.ReactNode;
+  let bar: React.ReactNode = null;
   if (item.kind === "job") {
     view = !job ? (
       <div className="stage-frame">
@@ -952,7 +974,6 @@ export function Stage() {
       />
     );
     view = (
-      <>
         <Hatch key={item.key} id={g?.id} aspect={w / h}>
         {lutActive ? (
           <PlainFrame
@@ -972,14 +993,15 @@ export function Stage() {
           <PlainFrame key={src} source={source} alt={item.gen?.prompt ?? item.input?.original_name ?? ""} w={w} h={h} maskSrc={maskSrc} fill={!!item.gen} onFullscreen={openFull} />
         )}
         </Hatch>
-        <StageBar item={item} label={labels[item.key]} showOriginal={showOriginal} setShowOriginal={(on) => setOriginalOf(on && g ? g.id : null)} lutBar={lutBar} onLut={startLut} />
-      </>
     );
+    bar = <StageBar item={item} label={labels[item.key]} showOriginal={showOriginal} setShowOriginal={(on) => setOriginalOf(on && g ? g.id : null)} lutBar={lutBar} onLut={startLut} phone={phone} />;
   }
 
   return (
-    <div className="stage">
-      {view}
+    <div className={`stage ${phone ? "phone-stage" : ""}`}>
+      {phone ? <Swipe onTap={canFull && !lutActive ? openFull : undefined}>{view}</Swipe> : view}
+      {/* A phone keeps the bar's room even without one (a job), so the timeline never moves. */}
+      {phone ? <div className="phone-bar">{bar}</div> : bar}
       <Timeline labels={labels} />
       {fullscreen}
     </div>

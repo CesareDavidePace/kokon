@@ -3,7 +3,7 @@ import { Star, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError, configure, setSignedOutHandler } from "./lib/api";
 import { native } from "./lib/native";
-import { inBrowser } from "./lib/platform";
+import { inBrowser, isNarrow, useNarrow } from "./lib/platform";
 import {
   addExampleProjects, closeStarPrompt, loadProjects, dismissToast, getState, initStarPrompt, redoVersion, refreshLoras, refreshStatus, selectItem, setState, startEvents, startTour, submitComposer, toastError, toastInfo, undoVersion, useStore,
 } from "./lib/store";
@@ -22,6 +22,7 @@ import { Shortcuts } from "./components/Shortcuts";
 import { WhatsNew, whatsNewDue } from "./components/WhatsNew";
 import { UpscalerCompare } from "./components/Upscalers";
 import { KokonMark, Welcome } from "./components/Welcome";
+import { PhoneApp } from "./components/PhoneApp";
 import { BareTitleBar } from "./components/TitleBar";
 import { TopBar } from "./components/TopBar";
 import { autoCheckForUpdate } from "./lib/updates";
@@ -120,13 +121,15 @@ export default function App() {
   // Bumped after signing in, to run the start-up again.
   const [attempt, setAttempt] = useState(0);
   const [dragging, setDragging] = useState(false);
+  const narrow = useNarrow();
   // First launch: the tour starts once the main window is free (after welcome and setup).
   const tourPending = useRef(false);
   const tourDue = boot === "ok" && !needsSetup && !overlay;
   useEffect(() => {
     if (!tourDue || !tourPending.current) return;
     tourPending.current = false;
-    startTour();
+    // The tour points at the desktop layout; a phone has its own.
+    if (!isNarrow()) startTour();
   }, [tourDue]);
 
   // Connect to (or start) the local service.
@@ -337,6 +340,29 @@ export default function App() {
     );
   }
 
+  // Settings and the other dialogs, over either layout.
+  const dialogs = (
+    <>
+      {overlay === "settings" && <SettingsDialog />}
+      {overlay === "welcome" && <Welcome />}
+      {overlay === "whats-new" && <WhatsNew />}
+      {overlay === "prompt-tips" && <PromptTips />}
+      {overlay === "shortcuts" && <Shortcuts />}
+      {compareUpscalers && <UpscalerCompare />}
+    </>
+  );
+
+  // A phone: its own layout (components/PhoneApp.tsx); setup keeps the usual one.
+  if (narrow && !needsSetup) {
+    return (
+      <div className="app phone">
+        <PhoneApp />
+        {dialogs}
+        <Toasts />
+      </div>
+    );
+  }
+
   return (
     <div className="app">
       {sidebar && !needsSetup && <Sidebar />}
@@ -351,12 +377,7 @@ export default function App() {
         </div>
         {!needsSetup && overlay !== "inpaint" && overlay !== "expand" && overlay !== "gallery" && <Composer />}
       </div>
-      {overlay === "settings" && <SettingsDialog />}
-      {overlay === "welcome" && <Welcome />}
-      {overlay === "whats-new" && <WhatsNew />}
-      {overlay === "prompt-tips" && <PromptTips />}
-      {overlay === "shortcuts" && <Shortcuts />}
-      {compareUpscalers && <UpscalerCompare />}
+      {dialogs}
       <Tour />
       <Toasts />
     </div>

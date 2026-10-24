@@ -3,7 +3,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, urls } from "../lib/api";
 import { activeLoras, activeOverrides, aspectLabel, buildRequest, composing, editing, enhancerApplies, expansionPixels, formatDuration, hasOutpaint, imageName, MAX_LORAS, moveRef, needsPrompt, parseRatio, toggleLora, wantsPromptReview, type Ref } from "../lib/logic";
 import { native } from "../lib/native";
-import { inBrowser } from "../lib/platform";
+import { haptic } from "../lib/haptics";
+import { inBrowser, useNarrow } from "../lib/platform";
 import {
   addAsReference, addInputs, cancelPromptReview, editShownImage, enhancerAvailable, getState, itemSource, openSettings, selectedItem, sessionLabels, setProjectLoras, setState, startNewImage, submitComposer, toastError, undoEnhancedPrompt, updateComposer, useStore, type SessionItem,
 } from "../lib/store";
@@ -27,6 +28,10 @@ const INPAINT_ACTIONS: { value: InpaintAction; label: string; placeholder: strin
 ];
 
 const INPAINT_VERB: Record<InpaintAction, string> = { edit: "Changing", remove: "Clearing", replace: "Replacing", add: "Adding to" };
+
+/** When a phone's open prompt box was last closed by a tap outside it: that tap only closes it
+ * (PhoneStage.tsx Swipe ignores it). */
+export let promptClosedAt = 0;
 
 /** Images from this device (browser picker, drop, paste): uploaded to the service. */
 export async function uploadFiles(files: File[]) {
@@ -436,6 +441,37 @@ function PromptPlus() {
   );
 }
 
+/** A phone with the box closed: what the prompt works on, as a small picture (the image it edits,
+ * or a new image's first reference) or a spark for a new image from words alone, and in words. */
+function PromptContext() {
+  const c = useStore((s) => s.composer);
+  const nameOf = useRefNames();
+  const first = c.refs[0];
+  if (!first) {
+    return (
+      <span className="prompt-ctx-wrap">
+        <span className="prompt-ctx new">
+          <Sparkles size={16} />
+        </span>
+        <span className="prompt-ctx-label">New image</span>
+      </span>
+    );
+  }
+  const create = composing(c);
+  const n = c.refs.length;
+  return (
+    <span className="prompt-ctx-wrap">
+      <span className="prompt-ctx">
+        <img src={urls.sourceThumb(first.source)} alt="" draggable={false} />
+        {create ? n > 1 && <span className="num">{n}</span> : <span className="frame-badge"><Pencil size={9} /></span>}
+      </span>
+      <span className="prompt-ctx-label">
+        {create ? `New image · ${n === 1 ? "1 reference" : `${n} references`}` : n > 1 ? `Combining ${n} images` : `Editing ${(nameOf(first) ?? "this image").toLowerCase()}`}
+      </span>
+    </span>
+  );
+}
+
 /** Under the prompt: the prompt in the box was written by Prompt+ from the user's words. */
 function EnhancedFrom({ words }: { words: string }) {
   return (
@@ -464,6 +500,33 @@ export function Composer() {
   const review = useStore((s) => s.review);
   const reviewJob = useStore((s) => (s.review ? s.jobs[s.review.jobId] : undefined));
   const reviewing = !!review;
+  // A phone: one line over the image until tapped, then the whole box (over a scrim).
+  const phone = useNarrow();
+  const [opened, setOpened] = useState(false);
+  const expanded = !phone || opened || reviewing;
+  const collapse = () => {
+    taRef.current?.blur();
+    setOpened(false);
+  };
+  // A phone: a tap outside the box (and outside its menus) closes it; the screen above makes room
+  // for it while it is open, nothing covers the screen.
+  useEffect(() => {
+    if (!phone || !opened || reviewing) return;
+    const down = (e: PointerEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest(".composer-wrap, .popover, .sheet-scrim, .modal-scrim, .viewer")) return;
+      promptClosedAt = performance.now();
+      collapse();
+    };
+    // Capture phase: the image stops its own pointerdown (press to compare).
+    document.addEventListener("pointerdown", down, true);
+    return () => document.removeEventListener("pointerdown", down, true);
+  });
+  const submit = () => {
+    if (phone) haptic();
+    submitComposer();
+    if (phone && !wantsPromptReview(getState().composer)) collapse();
+  };
 
   useEffect(() => {
     const ta = taRef.current;
@@ -510,6 +573,9 @@ export function Composer() {
           ? "Describe the extended scene (optional details)…"
           : "Describe the change…";
 
+  // The closed box on a phone has one short line.
+  const shortPlaceholder = !hasImages ? "Describe a new image…" : composing(c) ? "Describe the new image…" : c.mask ? "Describe the painted area…" : "Describe the change…";
+
   const hint = (() => {
     if (error) return error;
     if (!plan) return "";
@@ -533,131 +599,168 @@ export function Composer() {
     ? c.customWidth / c.customHeight
     : (parseRatio(c.aspect) ?? (plan ? plan.output.width / plan.output.height : 1));
 
+  const promptBox = (
+    <textarea
+      id="prompt"
+      ref={taRef}
+      className={`prompt ${reviewing ? "writing" : ""}`}
+      rows={1}
+      value={reviewing ? (reviewJob?.enhanced_prompt ?? "") : c.prompt}
+      readOnly={reviewing}
+      placeholder={expanded ? placeholder : shortPlaceholder}
+      // Emptying a prompt Prompt+ wrote starts over with the user's own words.
+      onChange={(e) => updateComposer({ prompt: e.target.value, ...(e.target.value.trim() ? {} : { enhancedFrom: null }) })}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+          e.preventDefault();
+          submit();
+        } else if (e.key === "ArrowUp" && !c.prompt) {
+          const last = getState().lastPrompt;
+          if (last) {
+            e.preventDefault();
+            updateComposer({ prompt: last });
+          }
+        }
+      }}
+      onFocus={() => phone && setOpened(true)}
+      enterKeyHint={phone ? "send" : undefined}
+      spellCheck
+    />
+  );
+
+  const sendButton = reviewing ? (
+    <button className="send" title="Stop Prompt+ (your prompt stays)" aria-label="Stop Prompt+" onClick={() => cancelPromptReview()}>
+      <Square size={14} strokeWidth={2.4} />
+    </button>
+  ) : (
+    <button
+      className="send"
+      title={wantsPromptReview(c) ? "Write the prompt with Prompt+ (Enter)" : newImage ? "Create (Enter)" : "Apply (Enter)"}
+      aria-label={wantsPromptReview(c) ? "Write the prompt" : "Generate"}
+      disabled={!c.prompt.trim() && needsPrompt(c)}
+      onClick={submit}
+    >
+      {wantsPromptReview(c) ? <WandSparkles size={17} strokeWidth={2.2} /> : <ArrowUp size={18} strokeWidth={2.4} />}
+    </button>
+  );
+
   return (
-    <div className="composer-wrap">
-      <div className="composer">
-        <TargetBar />
-        <textarea
-          id="prompt"
-          ref={taRef}
-          className={`prompt ${reviewing ? "writing" : ""}`}
-          rows={1}
-          value={reviewing ? (reviewJob?.enhanced_prompt ?? "") : c.prompt}
-          readOnly={reviewing}
-          placeholder={placeholder}
-          // Emptying a prompt Prompt+ wrote starts over with the user's own words.
-          onChange={(e) => updateComposer({ prompt: e.target.value, ...(e.target.value.trim() ? {} : { enhancedFrom: null }) })}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-              e.preventDefault();
-              submitComposer();
-            } else if (e.key === "ArrowUp" && !c.prompt) {
-              const last = getState().lastPrompt;
-              if (last) {
-                e.preventDefault();
-                updateComposer({ prompt: last });
-              }
-            }
-          }}
-          spellCheck
-        />
-        {c.enhancedFrom && !reviewing && <EnhancedFrom words={c.enhancedFrom} />}
-        <div className="controls">
-          <AddImage />
+    <div className={`composer-wrap ${phone ? "phone" : ""} ${phone && expanded ? "open" : ""}`}>
+      <div className="composer" onClick={phone && !expanded ? () => taRef.current?.focus() : undefined}>
+        {/* A phone writes on a screen of its own: close it here (sending closes it too). */}
+        {phone && expanded && (
+          <div className="compose-head">
+            <button className="glass-btn" title="Close" aria-label="Close" onClick={collapse}>
+              <ChevronDown size={22} />
+            </button>
+            <span className="compose-hint" title={hintTitle}>
+              {hint}
+            </span>
+          </div>
+        )}
+        {expanded && <TargetBar />}
+        {phone ? (
+          <div className="prompt-row">
+            {promptBox}
+            {!expanded && (
+              <div className="closed-row">
+                <PromptContext />
+                {sendButton}
+              </div>
+            )}
+          </div>
+        ) : (
+          promptBox
+        )}
+        {expanded && c.enhancedFrom && !reviewing && <EnhancedFrom words={c.enhancedFrom} />}
+        {expanded && (
+          <div className="controls-row">
+          <div className="controls">
+            <AddImage />
 
-          {c.mask && (
-            <Seg value={c.inpaintAction} options={INPAINT_ACTIONS} onChange={(v) => updateComposer({ inpaintAction: v })} />
-          )}
+            {c.mask && (
+              <Seg value={c.inpaintAction} options={INPAINT_ACTIONS} onChange={(v) => updateComposer({ inpaintAction: v })} />
+            )}
 
-          {shaped && (
+            {shaped && (
+              <Popover
+                className="wide"
+                trigger={(open, toggle) => (
+                  <button className={`pill ${open ? "on" : ""}`} onClick={toggle} title="Aspect ratio">
+                    <RatioIcon ratio={aspectRatioNow} size={15} />
+                    {aspectText}
+                    <ChevronDown size={13} className="chev" />
+                  </button>
+                )}
+              >
+                {(close) => <AspectGrid value={custom ? aspectLabel(c.customWidth, c.customHeight) : c.aspect} onPick={(r) => (pickAspect(r), close())} auto={{ sub: newImage ? "From the prompt, else square" : "Same as image 1" }} />}
+              </Popover>
+            )}
+
             <Popover
               className="wide"
               trigger={(open, toggle) => (
-                <button className={`pill ${open ? "on" : ""}`} onClick={toggle} title="Aspect ratio">
-                  <RatioIcon ratio={aspectRatioNow} size={15} />
-                  {aspectText}
+                <button className={`pill ${open ? "on" : ""}`} onClick={toggle} title="Resolution">
+                  <Maximize size={14} />
+                  {resolutionLabel(c.resolution, c.customWidth, c.customHeight)}
                   <ChevronDown size={13} className="chev" />
                 </button>
               )}
             >
-              {(close) => <AspectGrid value={custom ? aspectLabel(c.customWidth, c.customHeight) : c.aspect} onPick={(r) => (pickAspect(r), close())} auto={{ sub: newImage ? "From the prompt, else square" : "Same as image 1" }} />}
+              {(close) => <ResolutionMenu plan={plan} close={close} />}
             </Popover>
-          )}
 
-          <Popover
-            className="wide"
-            trigger={(open, toggle) => (
-              <button className={`pill ${open ? "on" : ""}`} onClick={toggle} title="Resolution">
-                <Maximize size={14} />
-                {resolutionLabel(c.resolution, c.customWidth, c.customHeight)}
-                <ChevronDown size={13} className="chev" />
-              </button>
-            )}
-          >
-            {(close) => <ResolutionMenu plan={plan} close={close} />}
-          </Popover>
-
-          <Popover
-            trigger={(open, toggle) => (
-              <button className={`pill ${open ? "on" : ""}`} onClick={toggle} title="Quality">
-                <Gauge size={15} />
-                <span className="lbl">{QUALITY.find((q) => q.value === c.quality)?.label}</span>
-                <ChevronDown size={13} className="chev" />
-              </button>
-            )}
-          >
-            {(close) =>
-              QUALITY.map((q) => <Option key={q.value} selected={c.quality === q.value} label={q.label} sub={q.sub} onClick={() => (updateComposer({ quality: q.value }), close())} />)
-            }
-          </Popover>
-
-          {canEnhance && <PromptPlus />}
-
-          <LoraBadge />
-
-          <Popover
-            placement="top-start"
-            className="panel"
-            trigger={(open, toggle) => (
-              <button
-                className={`icon-btn has-badge ${open ? "active" : ""}`}
-                onClick={toggle}
-                title={overrides.length ? `Advanced: overriding the preset (${overrides.join(", ")})` : "Advanced"}
-                aria-label={overrides.length ? `Advanced settings, ${overrides.length} overrides active` : "Advanced settings"}
-              >
-                <SlidersHorizontal size={17} />
-                {overrides.length > 0 && <span className="override-dot" />}
-              </button>
-            )}
-          >
-            {() => <AdvancedPanel plan={plan} />}
-          </Popover>
-
-
-          <button className="icon-btn" onClick={() => setState({ overlay: "prompt-tips" })} title="Prompt tips" aria-label="Prompt tips">
-            <Lightbulb size={17} />
-          </button>
-
-          <span className="spacer" />
-          <span className="plan-hint" title={hintTitle}>
-            {hint}
-          </span>
-          {reviewing ? (
-            <button className="send" title="Stop Prompt+ (your prompt stays)" aria-label="Stop Prompt+" onClick={() => cancelPromptReview()}>
-              <Square size={14} strokeWidth={2.4} />
-            </button>
-          ) : (
-            <button
-              className="send"
-              title={wantsPromptReview(c) ? "Write the prompt with Prompt+ (Enter)" : newImage ? "Create (Enter)" : "Apply (Enter)"}
-              aria-label={wantsPromptReview(c) ? "Write the prompt" : "Generate"}
-              disabled={!c.prompt.trim() && needsPrompt(c)}
-              onClick={() => submitComposer()}
+            <Popover
+              trigger={(open, toggle) => (
+                <button className={`pill ${open ? "on" : ""}`} onClick={toggle} title="Quality">
+                  <Gauge size={15} />
+                  <span className="lbl">{QUALITY.find((q) => q.value === c.quality)?.label}</span>
+                  <ChevronDown size={13} className="chev" />
+                </button>
+              )}
             >
-              {wantsPromptReview(c) ? <WandSparkles size={17} strokeWidth={2.2} /> : <ArrowUp size={18} strokeWidth={2.4} />}
+              {(close) =>
+                QUALITY.map((q) => <Option key={q.value} selected={c.quality === q.value} label={q.label} sub={q.sub} onClick={() => (updateComposer({ quality: q.value }), close())} />)
+              }
+            </Popover>
+
+            {canEnhance && <PromptPlus />}
+
+            <LoraBadge />
+
+            <Popover
+              placement="top-start"
+              className="panel"
+              trigger={(open, toggle) => (
+                <button
+                  className={`icon-btn has-badge ${open ? "active" : ""}`}
+                  onClick={toggle}
+                  title={overrides.length ? `Advanced: overriding the preset (${overrides.join(", ")})` : "Advanced"}
+                  aria-label={overrides.length ? `Advanced settings, ${overrides.length} overrides active` : "Advanced settings"}
+                >
+                  <SlidersHorizontal size={17} />
+                  {overrides.length > 0 && <span className="override-dot" />}
+                </button>
+              )}
+            >
+              {() => <AdvancedPanel plan={plan} />}
+            </Popover>
+
+
+            <button className="icon-btn" onClick={() => setState({ overlay: "prompt-tips" })} title="Prompt tips" aria-label="Prompt tips">
+              <Lightbulb size={17} />
             </button>
-          )}
-        </div>
+
+            <span className="spacer" />
+            <span className="plan-hint" title={hintTitle}>
+              {hint}
+            </span>
+            {!phone && sendButton}
+          </div>
+          {/* A phone: the buttons scroll; send stays outside them, so nothing slides under it. */}
+          {phone && sendButton}
+          </div>
+        )}
       </div>
     </div>
   );

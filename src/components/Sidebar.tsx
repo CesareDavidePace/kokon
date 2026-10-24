@@ -1,11 +1,9 @@
-import { Check, EyeOff, Images, PanelLeftClose, Pencil, Settings, SquarePen, Trash2, X } from "lucide-react";
+import { Check, Images, PanelLeftClose, Pencil, Settings, SquarePen, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { urls } from "../lib/api";
 import { timeAgo } from "../lib/logic";
 import { native } from "../lib/native";
-import { isNarrow, useNarrow } from "../lib/platform";
 import { deleteProject, deleteProjects, newProject, renameProject, setState, switchProject, useStore } from "../lib/store";
-import { togglePrivateMode } from "./TopBar";
 import { IconButton, NameField } from "./ui";
 import { KokonMark } from "./Welcome";
 
@@ -27,9 +25,6 @@ export function Sidebar() {
   const empty = useStore((s) => s.session.length === 0);
   const overlay = useStore((s) => s.overlay);
   const gallery = overlay === "gallery";
-  const privateMode = useStore((s) => s.privateMode);
-  // On a phone the menu covers the screen.
-  const narrow = useNarrow();
   const [renaming, setRenaming] = useState<string | null>(null);
   // Selection: null = off; otherwise the picked project ids (and the last one clicked, for Shift).
   const [picked, setPicked] = useState<Set<string> | null>(null);
@@ -75,18 +70,11 @@ export function Sidebar() {
   };
 
   return (
-    <aside
-      className={`sidebar ${selecting ? "selecting" : ""}`}
-      // On a phone the drawer closes once you pick where to go.
-      onClick={(e) => {
-        const t = e.target as HTMLElement;
-        if (isNarrow() && !selecting && t.closest(".side-item, .proj") && !t.closest(".proj-rm, .name-field")) setState({ sidebar: false });
-      }}
-    >
+    <aside className={`sidebar ${selecting ? "selecting" : ""}`}>
       <div className="side-head" data-tauri-drag-region>
         <Wordmark />
-        <IconButton title={narrow ? "Close menu" : "Hide sidebar"} onClick={() => setState({ sidebar: false })}>
-          {narrow ? <X size={22} /> : <PanelLeftClose size={18} />}
+        <IconButton title="Hide sidebar" onClick={() => setState({ sidebar: false })}>
+          <PanelLeftClose size={18} />
         </IconButton>
       </div>
       <nav className="side-nav">
@@ -96,12 +84,6 @@ export function Sidebar() {
         <button className={`side-item ${gallery ? "on" : ""}`} onClick={() => setState({ overlay: gallery ? null : "gallery" })}>
           <Images size={16} /> All images
         </button>
-        {/* On a phone the top bar has no room for it. */}
-        {narrow && (
-          <button className="side-item" onClick={togglePrivateMode}>
-            <EyeOff size={16} /> Private mode<span className="side-state">{privateMode ? "On" : "Off"}</span>
-          </button>
-        )}
       </nav>
       {projects.length > 0 && (
         <div className="side-label">

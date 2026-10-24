@@ -12,6 +12,10 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Kokon" />
+    <!-- The colour of the phone's status bar (and Safari's bars): the page's ground for the phone's
+         own appearance; theme.js sets both to the theme chosen in Kokon. -->
+    <meta name="theme-color" content="#f4f4f4" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0a0a0a" media="(prefers-color-scheme: dark)" />
     <!-- Painted before any JavaScript runs, so the window never shows an empty white page
          (the dev server can take seconds to compile; the web view itself needs a moment).
          React replaces #root's content when the app mounts. Colors match styles.css. -->

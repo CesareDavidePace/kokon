@@ -6,6 +6,7 @@ import { inBrowser, isNarrow } from "../lib/platform";
 import { forgetGeneration, openGeneration, setState, toastError, useStore } from "../lib/store";
 import { MODE_LABEL, neighbourAfterRemoval, previewIndex } from "../lib/logic";
 import type { GenerationRecord } from "../lib/types";
+import { DevelopImg } from "./Develop";
 import { IconButton, Seg } from "./ui";
 import { Fullscreen, isTyping, NavArrows, navKey, useMouseActive, ZoomImage, type ViewerNav } from "./Viewer";
 
@@ -229,7 +230,7 @@ export function Gallery() {
             }}
             title={g.prompt}
           >
-            <img src={urls.genThumb(g.id)} alt="" loading="lazy" draggable={false} />
+            <DevelopImg src={urls.genThumb(g.id)} lazy />
             {selecting && <span className="pick-mark">{picked.has(g.id) && <Check size={14} strokeWidth={3} />}</span>}
             <div className={`card-actions ${g.favorite ? "fav" : ""}`} onClick={(e) => e.stopPropagation()}>
               <button title={g.favorite ? "Remove from favorites" : "Favorite"} onClick={() => toggleFav(g)}>
@@ -343,7 +344,9 @@ function Preview(props: {
         <span className="muted preview-pos">{nav.pos}</span>
       </div>
       <div className="preview-stage" onPointerMove={wake} onMouseEnter={wake}>
-        <img key={g.id} className="preview-img" src={urls.gen(g.id)} alt={g.prompt} draggable={false} onDoubleClick={() => setFull(true)} />
+        <div key={g.id} className="preview-img" onDoubleClick={() => setFull(true)}>
+          <DevelopImg src={urls.gen(g.id)} placeholder={urls.genThumb(g.id)} alt={g.prompt} />
+        </div>
         <NavArrows nav={nav} visible={active} />
       </div>
       <div className="preview-bar">

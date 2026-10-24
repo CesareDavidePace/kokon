@@ -11,7 +11,19 @@
     try {
       t = localStorage.getItem("qls.theme.v1");
     } catch (e) {}
-    document.documentElement.dataset.theme = t === "light" || t === "dark" ? t : dark.matches ? "dark" : "light";
+    var theme = t === "light" || t === "dark" ? t : dark.matches ? "dark" : "light";
+    document.documentElement.dataset.theme = theme;
+    // The status bar of a phone (Kokon added to the home screen) in the page's own ground colour
+    // (styles.css --ground), not the manifest's light one.
+    var ground = theme === "dark" ? (document.documentElement.dataset.platform === "mac" ? "#161616" : "#0a0a0a") : "#f4f4f4";
+    // Replaced, not edited: iOS (a home-screen app) seems to read a new tag but not a changed one.
+    document.querySelectorAll('meta[name="theme-color"]').forEach(function (m) {
+      var fresh = document.createElement("meta");
+      fresh.name = "theme-color";
+      fresh.content = ground;
+      if (m.media) fresh.media = m.media;
+      m.replaceWith(fresh);
+    });
   }
   apply();
   dark.addEventListener("change", apply);

@@ -379,8 +379,8 @@ async function hydrate(items: StoredItem[], projectId?: string): Promise<Session
 }
 
 const loadSidebar = () => {
-  // On a phone the sidebar is a drawer over the page: start with it closed.
-  if (isNarrow()) return false;
+  // On a phone the sidebar's place is the library (PhoneApp.tsx): it opens there, on the projects.
+  if (isNarrow()) return true;
   try {
     return localStorage.getItem(SIDEBAR_KEY) !== "0";
   } catch {
@@ -431,7 +431,8 @@ export function setState(patch: Partial<State> | ((s: State) => Partial<State>))
   state = { ...state, ...p };
   if (p.composer) savePrefs(state.composer);
   if (state.session !== prev.session || state.selected !== prev.selected || state.projectId !== prev.projectId) syncProject(prev);
-  if (p.sidebar !== undefined) {
+  // On a phone "sidebar" is the library being open: not the desktop sidebar's saved choice.
+  if (p.sidebar !== undefined && !isNarrow()) {
     try {
       localStorage.setItem(SIDEBAR_KEY, p.sidebar ? "1" : "0");
     } catch {
@@ -707,7 +708,8 @@ export function newProject() {
       ? { projectId: newKey(), session: [], selected: null, overlay: null, redo: [], composer: emptyComposer(s.composer) }
       : { overlay: null, composer: { ...emptyComposer(s.composer), prompt: s.composer.prompt } },
   );
-  focusPrompt();
+  // A phone shows the new project's start first; the writing screen opens when the box is tapped.
+  if (!isNarrow()) focusPrompt();
 }
 
 /** Private mode on: a fresh project whose images stay out of the gallery, the output folder
@@ -728,7 +730,7 @@ export async function setPrivateMode(on: boolean, confirmDiscard: () => Promise<
   // The project being left was saved already (normal mode) or is discarded (private mode).
   setState((st) => ({ privateMode: on, projectId: newKey(), session: [], selected: null, overlay: null, redo: [], composer: emptyComposer(st.composer) }));
   if (on) toastInfo("Private mode: images are not saved, and are deleted when you turn it off or close the app.");
-  focusPrompt();
+  if (!isNarrow()) focusPrompt();
 }
 
 let switching = 0;

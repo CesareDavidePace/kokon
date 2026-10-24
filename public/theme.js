@@ -13,8 +13,10 @@
     } catch (e) {}
     var theme = t === "light" || t === "dark" ? t : dark.matches ? "dark" : "light";
     document.documentElement.dataset.theme = theme;
-    // The status bar of a phone (Kokon added to the home screen) in the page's own ground colour
-    // (styles.css --ground), not the manifest's light one.
+    // The status bar in the page's own ground colour (styles.css --ground): Android's Chrome and iOS
+    // before 26 read these tags. iOS 26+ ignores them and takes the colour of the page at the top
+    // (a fixed element there, else the body), which is why manifest.webmanifest has no theme_color:
+    // a home-screen app would keep that fixed colour (WebKit bug 317153).
     var ground = theme === "dark" ? (document.documentElement.dataset.platform === "mac" ? "#161616" : "#0a0a0a") : "#f4f4f4";
     // Replaced, not edited: iOS (a home-screen app) seems to read a new tag but not a changed one.
     document.querySelectorAll('meta[name="theme-color"]').forEach(function (m) {

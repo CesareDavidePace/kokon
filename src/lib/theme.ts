@@ -41,14 +41,35 @@ export function setStatusBar(color: string | null) {
   });
 }
 
-/** `setStatusBar("#000")` while mounted (a browser only). */
+// Black screens open now (StatusTint shows black while there is one).
+let blackScreens = 0;
+const tintListeners = new Set<() => void>();
+const tintChanged = () => tintListeners.forEach((f) => f());
+
+/** The status bar black while mounted (a browser only): the theme-color tags (Android's Chrome,
+ * iOS before 26) and components/StatusTint (iOS 26+). */
 export function useBlackStatusBar() {
   useEffect(() => {
     if (!inBrowser) return;
     setStatusBar("#000");
-    return () => setStatusBar(null);
+    blackScreens++;
+    tintChanged();
+    return () => {
+      blackScreens--;
+      tintChanged();
+      setStatusBar(null);
+    };
   }, []);
 }
+
+/** Calls `f` when a black screen opens or closes; returns the unsubscribe. */
+export function onBlackScreens(f: () => void): () => void {
+  tintListeners.add(f);
+  return () => tintListeners.delete(f);
+}
+
+/** A black screen (full screen, the photo views) is open. */
+export const blackScreenOpen = () => blackScreens > 0;
 
 export function setThemeChoice(t: ThemeChoice) {
   try {

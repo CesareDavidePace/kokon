@@ -1,4 +1,4 @@
-import { CircleAlert, Cpu, Images, Sparkles, WandSparkles, Wrench, Zap } from "lucide-react";
+import { CircleAlert, Container, FolderSync, ShieldCheck, Smartphone, TabletSmartphone } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { formatBytes, installProgress, installStep, installTimeLeft } from "../lib/logic";
@@ -7,38 +7,38 @@ import type { GpuBackend, InstallItem, InstallStatus, ModelsStatus } from "../li
 import { KokonMark } from "./Welcome";
 
 /** The release these notes describe. Shown once to people updating from an earlier version. */
-export const WHATS_NEW_VERSION = "0.10.2";
+export const WHATS_NEW_VERSION = "0.11.0";
 
 const NEWS = [
   {
-    icon: Images,
-    title: "New image from your references",
-    text: "With New image, add photos of a person, a product or a style: Kokon makes a new picture with them, sized by your quality and aspect ratio, and Prompt+ writes the scene for you.",
+    icon: Smartphone,
+    title: "Kokon on your phone",
+    text: "Open Settings → Other devices, choose a password and scan the QR code: a phone, a tablet or another computer on your network uses Kokon in its browser. The images are still made on this computer and kept in its gallery.",
   },
   {
-    icon: WandSparkles,
-    title: "Read the prompt first",
-    text: "The Prompt+ menu can write the prompt into the box, so you can read and change it before the image is made. Long prompts for crowded scenes are no longer cut short.",
+    icon: TabletSmartphone,
+    title: "Made for a phone screen",
+    text: "On a phone Kokon has a layout of its own: your projects as the home screen, versions you swipe through, a screen of its own for writing the prompt, and an icon for the home screen.",
   },
   {
-    icon: Sparkles,
-    title: "Cleaner edits",
-    text: "An edit made with the same seed as the image it starts from came out over-sharpened and often ignored the request. Kokon now picks another seed and tells you.",
+    icon: FolderSync,
+    title: "The same projects everywhere",
+    text: "Every device sees the same list of projects: a version made on the phone shows up in that project on the computer.",
   },
   {
-    icon: Zap,
-    title: "Faster on AMD and Intel",
-    text: "With Vulkan, the last step of each image takes a few seconds again instead of up to a minute on AMD cards. Thanks to hakanavgin and Solembumm3 for the reports.",
+    icon: ShieldCheck,
+    title: "Off until you turn it on",
+    text: "Nothing listens on the network before you set a password, each browser asks for it once, and five wrong tries make that device wait. From outside your home, use Tailscale or another VPN (guide in the docs).",
   },
   {
-    icon: Cpu,
-    title: "A newer engine",
-    text: "Kokon's engine follows the latest stable-diffusion.cpp, with a fix for AMD and Intel cards without Resizable BAR.",
+    icon: Container,
+    title: "Docker and Linux servers",
+    text: "Kokon without a window, for NVIDIA cards: the Docker image ghcr.io/gabrielelozupone/kokon, or kokon-service --remote on a Linux machine.",
   },
   {
-    icon: Wrench,
-    title: "For developers",
-    text: "kokon-mcp --help, and every route of the local HTTP API in the docs. Thanks to shrinivas-sn.",
+    icon: CircleAlert,
+    title: "Your own model files",
+    text: "Kokon warns when the image model is the base Qwen-Image 2.1 instead of Turbo (Kokon runs Turbo's 8 steps), and the MCP server works with folders listed in QLS_MCP_ALLOWED_DIRS.",
   },
 ];
 

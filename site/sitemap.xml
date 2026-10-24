@@ -33,6 +33,12 @@
     <image:image><image:loc>https://kokon.app/assets/img/remote-laptop.webp</image:loc></image:image>
     <image:image><image:loc>https://kokon.app/assets/img/remote-phone.webp</image:loc></image:image>
   </url>
+  <url>
+    <loc>https://kokon.app/ai-image-editing-from-your-phone/</loc>
+    <lastmod>2026-10-24</lastmod>
+    <image:image><image:loc>https://kokon.app/assets/img/remote-phone.webp</image:loc></image:image>
+    <image:image><image:loc>https://kokon.app/assets/img/remote-phone-library.webp</image:loc></image:image>
+  </url>
   <url><loc>https://kokon.app/support/</loc><lastmod>2026-10-22</lastmod></url>
   <url><loc>https://kokon.app/press/</loc><lastmod>2026-10-21</lastmod></url>
 </urlset>

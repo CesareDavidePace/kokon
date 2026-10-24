@@ -25,6 +25,7 @@ Key facts (version 0.11.0, October 2026):
 - [Run Qwen-Image 2.1 locally](https://kokon.app/qwen-image-2-1-local/): step-by-step setup on Windows, Mac and Linux without Python or ComfyUI, speed, troubleshooting
 - [Prompt guide](https://kokon.app/prompt-guide/): how to write prompts for Qwen-Image 2.1, with vague vs clear examples (negative prompts, text in images, edit prompts)
 - [Use Kokon from your phone, or run it as a server](https://kokon.app/self-hosted/): browser access from other devices, headless Linux, Docker for NVIDIA, Tailscale
+- [Edit photos with AI on your phone, using your own PC's GPU](https://kokon.app/ai-image-editing-from-your-phone/): Settings → Other devices, QR code, password, home-screen app; compared with ComfyUI + --listen + a mobile front end
 - [Free local image generation for AI agents (MCP)](https://kokon.app/mcp-image-generation/): use Kokon from Claude Code, Cursor or any MCP client
 
 ## Code and downloads
@@ -33,4 +34,5 @@ Key facts (version 0.11.0, October 2026):
 - [Latest release](https://github.com/GabrieleLozupone/kokon/releases/latest): Windows installer and Mac app
 - [npm package kokon-mcp](https://www.npmjs.com/package/kokon-mcp): MCP server launcher
 - [Demo video](https://www.youtube.com/watch?v=y2NAJkZ4vH0): 85 seconds
+- [What's new in 0.11](https://youtu.be/XnC_7P2_cww): Kokon on your phone, 77 seconds
 - [What's new in 0.10](https://www.youtube.com/watch?v=qGiGXasJJNI): 42 seconds

@@ -48,14 +48,18 @@ export function CompareFrame({ g, base, fullscreen = false, maskSrc, onFullscree
   };
   const boxRef = useRef<HTMLDivElement>(null);
   const contentSize = useMemo(() => ({ width: g.width, height: g.height }), [g.width, g.height]);
-  // In a browser the Result view loads only the result, as a preview when it is as sharp
-  // (stageImage); the original loads the first time a view shows it, then stays. Comparisons
-  // and full screen use full-size images. The desktop app loads both at full size at once.
-  const result = mode === "off" && !fullscreen;
-  const after = result ? stageImage(`gen:${g.id}`, box.w, box.h) : urls.gen(g.id);
+  // In a browser both images are previews while they are as sharp as the full ones: on the
+  // stage when the box fits (stageImage), in full screen until the zoom passes the preview
+  // (`wantsFull`, then the full images stay). The original loads the first time a view shows
+  // it, then stays; Changes always compares the previews (its map is 1024 px). The desktop app
+  // loads both at full size at once.
   const beforeWanted = useRef(!inBrowser);
-  if (!result || holding) beforeWanted.current = true;
-  const before = beforeWanted.current ? urls.input(base.inputId) : undefined;
+  if (mode !== "off" || holding) beforeWanted.current = true;
+  const images = (wantsFull: boolean) => {
+    if (!inBrowser) return { after: urls.gen(g.id), before: urls.input(base.inputId), diff: [urls.gen(g.id), urls.input(base.inputId)] };
+    const pick = (source: string) => (fullscreen ? (wantsFull ? urls.source(source) : urls.sourcePreview(source)) : stageImage(source, box.w, box.h));
+    return { after: pick(`gen:${g.id}`), before: beforeWanted.current ? pick(`input:${base.inputId}`) : undefined, diff: [urls.genPreview(g.id), urls.inputPreview(base.inputId)] };
+  };
 
   useEffect(() => {
     if (mode !== "flicker") return;
@@ -94,14 +98,16 @@ export function CompareFrame({ g, base, fullscreen = false, maskSrc, onFullscree
   // In full screen the box keeps the image's own size inside ZoomPan, which scales it; `k`
   // undoes that scale for the labels and the slider handle so they stay at screen size.
   // While zoomed in a drag pans the image; the handle still moves the split.
-  const frame = (scale: number, zoomed: boolean) => {
-    const k = 1 / scale;
+  // Drawn flat (a browser, see ZoomPan) the box is laid out at its drawn size: nothing to undo.
+  const frame = (scale: number, zoomed: boolean, flat = false, wantsFull = false) => {
+    const k = flat ? 1 : 1 / scale;
+    const { after, before, diff } = images(wantsFull);
     const tag = (side: "left" | "right") => ({ transform: `scale(${k})`, transformOrigin: `top ${side}` });
     return (
       <div
         ref={boxRef}
         className={`compare-box ${mode === "slider" ? "slider" : ""} ${zoomed ? "zoomed" : ""}`}
-        style={fullscreen ? { width: g.width, height: g.height } : { width: box.w, height: box.h }}
+        style={fullscreen ? (flat ? { width: "100%", height: "100%" } : { width: g.width, height: g.height }) : { width: box.w, height: box.h }}
         onPointerDown={(e) => {
           if (e.button !== 0 || zoomed) return;
           e.stopPropagation();
@@ -134,7 +140,7 @@ export function CompareFrame({ g, base, fullscreen = false, maskSrc, onFullscree
         title={mode === "off" && !zoomed ? "Press and hold (or hold B) to see the original" : undefined}
       >
         <DevelopImg className="compare-img" src={after} placeholder={urls.genThumb(g.id)} alt={g.prompt} />
-        {mode === "diff" && !holding && before && <DiffCanvas after={after} before={before} rect={base.rect} tagStyle={tag("left")} />}
+        {mode === "diff" && !holding && before && <DiffCanvas after={diff[0]} before={diff[1]} rect={base.rect} tagStyle={tag("left")} />}
         {/* The area painted for the next edit, on the result (the original covers it when shown). */}
         {maskSrc && <img className="stage-mask" src={maskSrc} alt="" draggable={false} />}
         {/* The original stays mounted (hidden) so switching is instant. */}
@@ -182,8 +188,8 @@ export function CompareFrame({ g, base, fullscreen = false, maskSrc, onFullscree
   if (fullscreen)
     return (
       <div className="viewer-frame">
-        <ZoomPan contentSize={contentSize} resetKey={g.id} enableToggleZoom={false} minimapSrc={after}>
-          {({ transform, isZoomed }) => frame(transform.scale, isZoomed)}
+        <ZoomPan contentSize={contentSize} resetKey={g.id} enableToggleZoom={false} flat={inBrowser} minimapSrc={inBrowser ? urls.genThumb(g.id) : urls.gen(g.id)}>
+          {({ transform, isZoomed, flat, wantsFull }) => frame(transform.scale, isZoomed, flat, wantsFull)}
         </ZoomPan>
       </div>
     );

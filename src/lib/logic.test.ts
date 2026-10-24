@@ -3,7 +3,7 @@ import {
   activeLoras, activeOverrides, buildRequest, composing, editing, reviewRequest, wantsPromptReview, toggleLora, MAX_LORAS, jobPercent, compareBase, composerFromRecord, enhancerApplies, diffPixels, emptyComposer, expansionPixels, expansionPreset, jobLabel, jobSecondsLeft, lutInfo, moveRef, needsPrompt, normalizeQuality, persistentAdvanced, pipelineSummary,
   planPipeline, remainingSeconds, sizeForWidth, timeAgo, upscaleRequest, upscaleTargets, versionLabels, type JobClock, type Ref,
   neighbourAfterRemoval, pageOutdated, previewIndex, starPromptDue, STAR_PROMPT_AFTER, formatBytes, formatDuration, installItemShort, installItemText, installProgress, installStep, installTimeLeft, timelineLinks, undoTarget, aspectLabel, parseRatio, sizeForRatio, expandToRatio, expandToSize, arcLayout,
-  goneVersions, PREVIEW_SIDE, stageFitsPreview,
+  goneVersions, PREVIEW_SIDE, stageFitsPreview, viewerWantsFull,
 } from "./logic";
 import type { GenerationRecord, InstallItem, JobView, LoraItem, Plan } from "./types";
 
@@ -560,6 +560,21 @@ describe("page version", () => {
     expect(pageOutdated("0.11.1", "0.11.2", "0.11.1")).toBe(true);
     expect(pageOutdated("0.11.0", undefined, null)).toBe(false);
     expect(pageOutdated("", "0.11.0", null)).toBe(false);
+  });
+});
+
+describe("full screen in a browser", () => {
+  it("keeps the preview until the zoom needs the full image", () => {
+    const square = { width: 4096, height: 4096 };
+    // Fitted to an iPhone (390 px wide, 3x): 1170 device px, the preview is enough.
+    expect(viewerWantsFull(square, 390 / 4096, 3)).toBe(false);
+    // Pinched in a little past it, or at 100 %.
+    expect(viewerWantsFull(square, 0.11, 3)).toBe(true);
+    expect(viewerWantsFull(square, 1, 3)).toBe(true);
+    // A portrait image fitted by its height already needs more than the preview.
+    expect(viewerWantsFull({ width: 1536, height: 2048 }, 520 / 2048, 3)).toBe(true);
+    // Size not known yet.
+    expect(viewerWantsFull({ width: 0, height: 0 }, 1, 3)).toBe(false);
   });
 });
 

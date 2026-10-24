@@ -835,6 +835,12 @@ export function stageFitsPreview(w: number, h: number, dpr: number): boolean {
   return w > 0 && h > 0 && Math.max(w, h) * (dpr > 0 ? dpr : 1) <= PREVIEW_SIDE;
 }
 
+/** Full screen in a browser: an image of `size` drawn at `scale` needs the full file, not the
+ * preview. Fitted to a phone it doesn't; zoomed in past ~1280 device px it does. */
+export function viewerWantsFull(size: { width: number; height: number }, scale: number, dpr: number): boolean {
+  return size.width > 0 && size.height > 0 && !stageFitsPreview(size.width * scale, size.height * scale, dpr);
+}
+
 /** Versions to drop after loading a project's records in one answer: the ones the service knew
  * (their key was in its copy, `known`) but sent no record for, i.e. deleted from the gallery.
  * A version it did not know yet (added here, not saved) is looked up on its own instead. */

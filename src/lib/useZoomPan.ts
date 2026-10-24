@@ -53,6 +53,9 @@ export interface UseZoomPanReturn {
   isZoomed: boolean;
   isPanning: boolean;
   isPinching: boolean;
+  /** The transform has been fitted to the container at least once (before that it is a
+   * placeholder at 100 %). */
+  fitted: boolean;
   canZoom: boolean;
   fitTransform: ZoomTransform;
   zoomIn: () => void;
@@ -97,6 +100,7 @@ export function useZoomPan(options: UseZoomPanOptions = {}): UseZoomPanReturn {
   const [transform, setTransformState] = useState<ZoomTransform>({ x: 0, y: 0, scale: 1 });
   const [isPanning, setIsPanning] = useState(false);
   const [isPinching, setIsPinching] = useState(false);
+  const [fitted, setFitted] = useState(false);
 
   // Track if user is currently at "fit" scale so resize preserves fit
   const wasAtFitRef = useRef(true);
@@ -200,6 +204,7 @@ export function useZoomPan(options: UseZoomPanOptions = {}): UseZoomPanReturn {
       if (resetKeyChanged || contentChanged) stopInertia();
       wasAtFitRef.current = true;
       setTransformState(fitTransform);
+      setFitted(true);
     } else {
       // Re-clamp current transform to new container dimensions
       setTransformState((prev) => {
@@ -489,6 +494,7 @@ export function useZoomPan(options: UseZoomPanOptions = {}): UseZoomPanReturn {
     isZoomed,
     isPanning,
     isPinching,
+    fitted,
     canZoom,
     fitTransform,
     zoomIn,

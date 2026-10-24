@@ -10,12 +10,17 @@ import {
 } from "../lib/zoomMath";
 import { isTyping, useMouseActive } from "./Viewer";
 import { getState } from "../lib/store";
+import { viewerWantsFull } from "../lib/logic";
 
 export interface ZoomPanContext {
   transform: ZoomTransform;
   isZoomed: boolean;
   isPanning: boolean;
   isPinching: boolean;
+  /** Children are laid out at the drawn size (`flat`), not at the content's own size. */
+  flat: boolean;
+  /** The content is drawn with more device pixels than a preview has (stays true once set). */
+  wantsFull: boolean;
   zoomIn: () => void;
   zoomOut: () => void;
   zoomFit: () => void;
@@ -45,6 +50,16 @@ export interface ZoomPanProps {
   className?: string;
   /** Ref to access zoom/pan actions imperatively */
   zoomRef?: React.Ref<ZoomPanHandle>;
+  /** Lay the content out at its drawn size and move it with a 2D translate, instead of at its
+   * own size scaled by a 3D transform. WebKit backs a composited layer at its untransformed
+   * size x the device scale (GraphicsLayerCA: the transform-aware scale is disabled), so a
+   * 4096 px image shrunk to a phone screen cost ~150 MB of layer per element and edits
+   * crashed Safari on an iPhone 15. Flat, the content paints into the screen-sized viewer
+   * layer. Children must fill the content box. */
+  flat?: boolean;
+  /** A screen-sized copy of `src`, shown until the zoom needs more pixels than it has (needs
+   * `contentSize`, the full image's size). */
+  previewSrc?: string;
 }
 
 export interface ZoomPanHandle {
@@ -175,9 +190,12 @@ export function ZoomPan({
   resetKey,
   className = "",
   zoomRef,
+  flat = false,
+  previewSrc,
 }: ZoomPanProps) {
   const [naturalSize, setNaturalSize] = useState<Size | null>(null);
-  const activeContentSize = (src && naturalSize) ? naturalSize : (contentSize ?? naturalSize);
+  // A preview's own size is not the content's.
+  const activeContentSize = (src && naturalSize && !(previewSrc && contentSize)) ? naturalSize : (contentSize ?? naturalSize);
 
   const [mouseActive, wakeMouse] = useMouseActive(2200);
 
@@ -259,6 +277,27 @@ export function ZoomPan({
     style,
   } = zoom.containerProps;
 
+  // Once zoomed past what a preview can show, the full image (kept when zooming out again).
+  const full = React.useRef({ key: resetKey ?? src, on: false });
+  if (full.current.key !== (resetKey ?? src)) full.current = { key: resetKey ?? src, on: false };
+  if (zoom.fitted && activeContentSize && viewerWantsFull(activeContentSize, zoom.transform.scale, window.devicePixelRatio || 1)) full.current.on = true;
+  const wantsFull = full.current.on;
+  const shownSrc = previewSrc && contentSize && !wantsFull ? previewSrc : src;
+  const scale = zoom.transform.scale;
+  const contentStyle: React.CSSProperties = flat
+    ? {
+        width: activeContentSize ? activeContentSize.width * scale : undefined,
+        height: activeContentSize ? activeContentSize.height * scale : undefined,
+        transform: `translate(${zoom.transform.x}px, ${zoom.transform.y}px)`,
+      }
+    : {
+        width: activeContentSize?.width,
+        height: activeContentSize?.height,
+        transform: `translate3d(${zoom.transform.x}px, ${zoom.transform.y}px, 0px) scale(${scale})`,
+        transformOrigin: "0 0",
+        willChange: zoom.isPanning ? "transform" : "auto",
+      };
+
   const zoomPercent = Math.round(zoom.transform.scale * 100);
   const isMinimapVisible =
     zoom.isZoomed &&
@@ -289,20 +328,11 @@ export function ZoomPan({
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerCancel}
     >
-      <div
-        className="zoom-pan-content"
-        style={{
-          width: activeContentSize?.width,
-          height: activeContentSize?.height,
-          transform: `translate3d(${zoom.transform.x}px, ${zoom.transform.y}px, 0px) scale(${zoom.transform.scale})`,
-          transformOrigin: "0 0",
-          willChange: zoom.isPanning ? "transform" : "auto",
-        }}
-      >
-        {typeof children === "function" ? children(zoom) : children}
-        {src && (
+      <div className="zoom-pan-content" style={contentStyle}>
+        {typeof children === "function" ? children({ ...zoom, flat, wantsFull }) : children}
+        {shownSrc && (
           <img
-            src={src}
+            src={shownSrc}
             alt={alt}
             draggable={false}
             className="zoom-pan-img"

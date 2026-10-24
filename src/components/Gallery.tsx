@@ -369,7 +369,7 @@ function Preview(props: {
       </div>
       {full && (
         <Fullscreen hint="Scroll or click to zoom · Drag to pan" onClose={() => setFull(false)} nav={nav}>
-          <ZoomImage key={g.id} src={urls.gen(g.id)} alt={g.prompt} />
+          <ZoomImage key={g.id} src={urls.gen(g.id)} source={`gen:${g.id}`} size={{ width: g.width, height: g.height }} alt={g.prompt} />
         </Fullscreen>
       )}
     </div>

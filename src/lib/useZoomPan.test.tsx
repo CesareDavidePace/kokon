@@ -431,8 +431,14 @@ describe("CompareFrame & ZoomPan Integration", () => {
 
     const content = container.querySelector(".zoom-pan-content") as HTMLElement;
     expect(content).not.toBeNull();
-    expect(content.style.width).toBe("1600px");
-    expect(content.style.height).toBe("1200px");
+    // A browser lays the content out flat, at its drawn size (ZoomPan `flat`): the image's
+    // shape, with the comparison box filling it and no scale transform.
+    const w = parseFloat(content.style.width);
+    const h = parseFloat(content.style.height);
+    expect(w).toBeGreaterThan(0);
+    expect(w / h).toBeCloseTo(1600 / 1200, 5);
+    expect(content.style.transform).not.toContain("scale");
+    expect((container.querySelector(".compare-box") as HTMLElement).style.width).toBe("100%");
 
     // Both before and after images must be mounted
     const afterImg = container.querySelector(".compare-img") as HTMLImageElement;

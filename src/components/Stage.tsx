@@ -836,7 +836,8 @@ function StageFullscreen({ item, session, showOriginal, onClose }: { item: Sessi
     hint = "Hold B for the original";
   } else {
     const src = g ? urls.gen(g.id) : urls.input(item.input!.id);
-    content = <ZoomImage key={src} src={src} alt={g?.prompt ?? item.input?.original_name ?? ""} />;
+    const size = g ? { width: g.width, height: g.height } : { width: item.input!.width, height: item.input!.height };
+    content = <ZoomImage key={src} src={src} source={g ? `gen:${g.id}` : `input:${item.input!.id}`} size={size} alt={g?.prompt ?? item.input?.original_name ?? ""} />;
   }
   return (
     <Fullscreen hint={hint} onClose={onClose} nav={nav}>

@@ -4,7 +4,9 @@
 import { ChevronLeft, ChevronRight, Maximize2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { urls } from "../lib/api";
 import { native } from "../lib/native";
+import { inBrowser } from "../lib/platform";
 import { ZoomPan } from "./ZoomPan";
 
 export const isTyping = (t: EventTarget | null) => t instanceof HTMLElement && (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName));
@@ -179,7 +181,20 @@ function FullscreenShell({ children, hint, onClose, nav }: { children: ReactNode
   );
 }
 
-/** Fit to screen; wheel to zoom, drag to pan, click to toggle 100%, + / - / 0 / 1 shortcuts. */
-export function ZoomImage({ src, alt }: { src: string; alt: string }) {
-  return <ZoomPan src={src} alt={alt} />;
+/** Fit to screen; wheel to zoom, drag to pan, click to toggle 100%, + / - / 0 / 1 shortcuts.
+ * With the image's `source` ("gen:…" / "input:…") and `size`, a browser shows the preview until
+ * the zoom needs the full image, and the thumbnail in the mini-map; a browser always draws it
+ * flat (see ZoomPan). The desktop app loads the full image at once. */
+export function ZoomImage({ src, alt, source, size }: { src: string; alt: string; source?: string; size?: { width: number; height: number } }) {
+  const known = inBrowser && source && size && size.width > 0 && size.height > 0;
+  return (
+    <ZoomPan
+      src={src}
+      alt={alt}
+      flat={inBrowser}
+      contentSize={known ? size : undefined}
+      previewSrc={known ? urls.sourcePreview(source) : undefined}
+      minimapSrc={known ? urls.sourceThumb(source) : undefined}
+    />
+  );
 }

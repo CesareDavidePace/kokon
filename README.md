@@ -24,7 +24,7 @@
   <img src="assets/readme/badges/nvidia.svg" alt="NVIDIA, 8 GB of VRAM or more (8 GB in beta)">
   <img src="assets/readme/badges/amd.svg" alt="AMD, 8 GB of VRAM or more, beta">
   <img src="assets/readme/badges/intel.svg" alt="Intel Arc, 12 GB of VRAM or more, beta">
-  <img src="assets/readme/badges/apple.svg" alt="Apple Silicon, 32 GB of unified memory recommended, beta">
+  <img src="assets/readme/badges/apple.svg" alt="Apple Silicon, 16 GB of unified memory or more, beta">
   <br>
   <a href="#use-it-from-your-ai-agent"><img src="assets/readme/badges/mcp.svg" alt="MCP server included"></a>
   <a href="docs/docker.md"><img src="assets/readme/badges/docker.svg" alt="Docker image for NVIDIA (CUDA)"></a>

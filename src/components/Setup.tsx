@@ -479,6 +479,7 @@ export function Setup() {
                       models={models}
                       officialFiles={(chosen?.files ?? []).filter((f) => f.kind === "model")}
                       vramMib={vram}
+                      backend={backend ?? hw?.backend}
                       initialScan={scan}
                       onSaved={async (m) => {
                         setModels(m);

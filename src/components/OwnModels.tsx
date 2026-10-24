@@ -4,7 +4,7 @@ import { api } from "../lib/api";
 import { formatBytes } from "../lib/logic";
 import { native } from "../lib/native";
 import { toastError } from "../lib/store";
-import type { InstallItem, ModelFileInfo, ModelRole, ModelScan, ModelSlot, ModelsStatus } from "../lib/types";
+import type { GpuBackend, InstallItem, ModelFileInfo, ModelRole, ModelScan, ModelSlot, ModelsStatus } from "../lib/types";
 
 const ROLES: { role: ModelRole; label: string; official: string }[] = [
   { role: "diffusion", label: "Image model", official: "turbo_q4_k" },
@@ -33,6 +33,8 @@ export function OwnModels(props: {
   /** The chosen preset's official model files (sizes of what can be downloaded). */
   officialFiles: InstallItem[];
   vramMib: number | null;
+  /** The engine chosen in Setup (FP8 files are slow on Vulkan). */
+  backend?: GpuBackend | null;
   /** A scan to start from (Setup's "Search another folder"). */
   initialScan: ModelScan | null;
   /** Resolves once Setup has checked the new files (the button spins until then). */
@@ -163,6 +165,8 @@ export function OwnModels(props: {
   const found = rows.filter((r) => r.c.kind === "path").length;
   const dit = choice.diffusion.kind === "path" ? info(choice.diffusion.path) : null;
   const tooLarge = !!dit && props.vramMib != null && dit.size / 2 ** 20 > props.vramMib - 4096;
+  // RX 9070 XT (#38): FP8 safetensors 3.07 s/it on Vulkan, the Q4_K GGUF 1.75 s/it.
+  const slowFp8 = !!dit && dit.role === "diffusion" && dit.weights === "FP8" && props.backend === "vulkan";
   const skipped = scan ? scan.files.filter((f) => !f.compatible).length : 0;
 
   const save = async () => {
@@ -300,6 +304,12 @@ export function OwnModels(props: {
           This image model is {formatBytes(dit!.size)}, probably too large for {Math.round((props.vramMib ?? 0) / 1024)} GB of VRAM. Kokon makes smaller images to fit, but it may still run out of memory
           or be slow. A 4-bit or 8-bit version (GGUF Q4_K or Q8_0, or INT8) works better on this card.
         </div>
+      )}
+
+      {dit?.role === "diffusion" && dit.compatible && dit.warning && <div className="setup-note">{dit.warning}</div>}
+
+      {editing && slowFp8 && (
+        <div className="setup-note">FP8 files run much slower on AMD and Intel cards with Vulkan than the GGUF (Q4_K) file Kokon downloads. For speed, download the official file or choose a GGUF.</div>
       )}
 
       {editing && (

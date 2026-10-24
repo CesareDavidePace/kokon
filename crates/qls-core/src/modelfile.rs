@@ -72,6 +72,83 @@ pub struct FileInfo {
     pub official: bool,
     /// Why it can't be used, when it can't.
     pub problem: Option<String>,
+    /// Usable, but probably not what the user wants (e.g. the base model instead of Turbo).
+    pub warning: Option<String>,
+}
+
+/// Kokon always runs 8 steps at CFG 1, made for Turbo. Base 2.1 files can't be told from Turbo
+/// by their headers: no GGUF or safetensors metadata says which, the tensors are the same, and
+/// some sizes are identical (Comfy-Org's bf16 base and Turbo; 20 Turbo files share a size with
+/// a base file). The size plus a SHA-256 of 64 KiB in the middle of the file can: these are the
+/// base files of the most downloaded Hugging Face repos (read with range requests, 10-24), none
+/// matching any of 94 Turbo and other few-step files of the same repos. Anything else says
+/// nothing (renamed Turbo files, base files not listed).
+const BASE_21_FILES: &[(u64, &str)] = &[
+    (2466137824, "9c161798726e89072cddb5d70e5a196b"), // unsloth qwen-image-2.1-Q2_K.gguf
+    (2561716256, "a4c6daf181be93142f167c9e4667dbbc"), // leejet qwen_image_2.1-Q2_K.gguf
+    (2724742880, "d4d26f471810a0f0dc675944d2be1924"), // unsloth qwen-image-2.1-Q3_K_S.gguf
+    (3168290528, "bd3752e7d863c8df9d5d042de3488e5a"), // unsloth qwen-image-2.1-Q3_K_M.gguf
+    (3185944736, "586b9b255f2e3e097eee4f8bafa0850f"), // Abiray qwen_image_2.1_Q3_K_M.gguf, chfm qwen_image_2.1_Q3_K_M.gguf
+    (3270553632, "5d7048b78a3b2df900166c1a8ac876a5"), // leejet qwen_image_2.1-Q3_K.gguf
+    (3291064512, "e1a8f2306e453afe6549f3577c86efe2"), // vantagewithai qwen_image_2.1-Q3_K_M.gguf
+    (3612493536, "67c83ca54c8036c768308769f8d72ad2"), // unsloth qwen-image-2.1-Q3_K_XL.gguf
+    (3906356960, "c57b51b81d4a85d4b273129920ae587a"), // unsloth qwen-image-2.1-Q4_K_S.gguf
+    (4059320480, "099ffc7c8b66f427c05a2e0706bf6c3f"), // Abiray qwen_image_2.1_Q4_K_S.gguf, chfm qwen_image_2.1_Q4_K_S.gguf
+    (4101050592, "58bb432e917f8f610e00eceeff1e4f02"), // realrebelai Qwen-Image-2.1-Q2.gguf
+    (4189343904, "1696be4eb5fecd4f354cb0e118819399"), // Abiray qwen_image_2.1_Q4_K_M.gguf, chfm qwen_image_2.1_Q4_K_M.gguf
+    (4197494816, "5ae1889c9fd37507e87f0170af4ea980"), // leejet qwen_image_2.1-Q4_0.gguf
+    (4197494816, "7791a8748c0d0727bd1a3c4a7ca21b91"), // leejet qwen_image_2.1-Q4_K.gguf
+    (4197519520, "0e97a1e82518709c899f7b8e5e9c8f47"), // molbal qwen_image_2.1_Q4_0.gguf
+    (4199565024, "d03f794c7744ebf2f1df0151458d4241"), // unsloth qwen-image-2.1-Q4_K_M.gguf
+    (4209922240, "0678c23db9840bbb265dce11dfc48be1"), // vantagewithai qwen_image_2.1-Q4_K_M.gguf
+    (4335931552, "755ecca9be94e545531bda02d2acaf97"), // pottokao qwen_image_2.1-Q4_K_M.gguf
+    (4501948128, "110ef4fb579a5eed0b52c7594eafaccd"), // unsloth qwen-image-2.1-Q5_K_S.gguf
+    (4616949984, "79cc5a5cb48c21596f39ab1c8e238217"), // realrebelai Qwen-Image-2.1-Q3.gguf
+    (4892053728, "f40c5df5432736a7a953c8ae69dd50d9"), // AlperKTS qwen_image_2.1_Q5_K_M.gguf
+    (5007397024, "a1e58a779b53412d307eb9a4e0000d46"), // Abiray qwen_image_2.1_Q5_K_M.gguf, chfm qwen_image_2.1_Q5_K_M.gguf
+    (5043572928, "14039c41b30f6443eb8a28b8a5a70d7f"), // vantagewithai qwen_image_2.1-Q5_K_M.gguf
+    (5069910048, "bcdac75586d11dcde99a935c0e553d9d"), // leejet qwen_image_2.1-Q5_0.gguf
+    (5390223072, "dca7a328d94c49c53fab2c5c259567e8"), // unsloth qwen-image-2.1-Q5_K_M.gguf
+    (5836994752, "9d861897e5255cbab6db91ec91e88b66"), // AlperKTS qwen_image_2.1_Q6_K.gguf, vantagewithai qwen_image_2.1-Q6_K.gguf
+    (5876578464, "23d09e7714b3641d9130dd850b5db1a1"), // Abiray qwen_image_2.1_Q6_K.gguf, chfm qwen_image_2.1_Q6_K.gguf
+    (5959127264, "a1e972c9f56372ed05d2142eac2113d1"), // realrebelai Qwen-Image-2.1-Q4.gguf
+    (5996851232, "c7042abf259e719c0a8117fc321908b3"), // leejet qwen_image_2.1-Q6_K.gguf
+    (5996875936, "02ad268597e9d6a56291e0bafa3a0fd4"), // pottokao qwen_image_2.1-Q6_K.gguf
+    (6271551200, "168ec8bb471af351a3714e6f830aa096"), // unsloth qwen-image-2.1-Q6_K.gguf
+    (6386946272, "907b38b2362fc00ed89fe8e63c83634a"), // realrebelai Qwen-Image-2.1-Q5.gguf
+    (6718506720, "236a277e74a3e9f8318d155c852e560a"), // unsloth qwen-image-2.1-Q6_K_XL.gguf
+    (7122877560, "5b12ee486a70057e7aab9d6f27d692a4"), // unsloth Qwen-Image-2.1-FP8.safetensors
+    (7256783064, "8c89c3e5287042df8caae7caed4a534f"), // Comfy-Org qwen_image_2.1_int8_convrot.safetensors
+    (7256792832, "4081561cafec5fb7cdf38acb303cb76d"), // molbal qwen_image_2.1_Q8_CR.gguf
+    (7258361376, "4a9cf6c2d044d96530466136cd947d0f"), // unsloth Qwen-Image-2.1-INT8.safetensors
+    (7258370288, "146ae07af7fffe0951929fa21e60a85e"), // unsloth Qwen-Image-2.1-INT8-ConvRot.safetensors
+    (7559876800, "b3dfc14156f79c4b4c364339b9cfd44f"), // vantagewithai qwen_image_2.1-Q8_0.gguf
+    (7591579808, "78583ffc68b81636214d2e256897c693"), // Abiray qwen_image_2.1_Q8_0.gguf, chfm qwen_image_2.1_Q8_0.gguf
+    (7624265888, "c260b1700f7cefe84ceaf3f35a68acc1"), // AlperKTS qwen_image_2.1_Q8_0.gguf
+    (7640860384, "89058a41b72324a2f07248e5ac12577b"), // unsloth qwen-image-2.1-Q8_0.gguf
+    (7687155744, "3c373d22008758e1fc98025b8f3c633e"), // leejet qwen_image_2.1-Q8_0.gguf
+    (7687180448, "e908bf2548068b028052c75873bff894"), // pottokao qwen_image_2.1-Q8_0.gguf, molbal qwen_image_2.1_Q8.gguf
+    (7687180512, "45a0ac5e923b289ad57032dfb0d2bf40"), // realrebelai Qwen-Image-2.1-Q8.gguf
+    (14230275808, "e50b4686aeda3ceab7e8387531dbdaac"), // unsloth qwen-image-2.1-F16.gguf
+    (14230280616, "1e7f4ad57f2927649e3a7556f8914bd9"), // Comfy-Org qwen_image_2.1_bf16.safetensors
+];
+const FINGERPRINT_BYTES: u64 = 64 << 10;
+
+const BASE_MODEL_WARNING: &str = "This looks like the base Qwen-Image 2.1 model, not Turbo. Kokon always runs 8 steps, which is made for Turbo: with the base model, images come out soft and unfinished. Download the official Turbo file, or choose a Qwen-Image 2.1 Turbo file.";
+
+/// The first 32 hex digits of the SHA-256 of 64 KiB in the middle of the file.
+fn fingerprint(path: &Path, size: u64) -> std::io::Result<String> {
+    use sha2::{Digest, Sha256};
+    let mut f = std::fs::File::open(path)?;
+    f.seek(SeekFrom::Start(size / 2))?;
+    let mut buf = Vec::new();
+    f.take(FINGERPRINT_BYTES).read_to_end(&mut buf)?;
+    Ok(hex::encode(Sha256::digest(&buf))[..32].to_string())
+}
+
+/// A known base 2.1 file (`table`: size, fingerprint). Only files of a listed size are read.
+fn is_known_base(path: &Path, size: u64, table: &[(u64, &str)]) -> bool {
+    table.iter().any(|(s, _)| *s == size) && fingerprint(path, size).is_ok_and(|fp| table.iter().any(|(s, f)| *s == size && *f == fp))
 }
 
 struct Tensor {
@@ -91,12 +168,16 @@ pub fn official_download(path: &Path, size: u64) -> Option<Download> {
 
 /// Reads the header of `path` and says what it is. Errors only for files that cannot be read.
 pub fn inspect(path: &Path) -> std::io::Result<FileInfo> {
+    inspect_with(path, BASE_21_FILES)
+}
+
+fn inspect_with(path: &Path, base_files: &[(u64, &str)]) -> std::io::Result<FileInfo> {
     let meta = std::fs::metadata(path)?;
     if !meta.is_file() {
         return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "not a file"));
     }
     let size = meta.len();
-    let mut info = FileInfo { path: path.to_path_buf(), size, role: None, compatible: false, has_vision: false, weights: String::new(), official: false, problem: None };
+    let mut info = FileInfo { path: path.to_path_buf(), size, role: None, compatible: false, has_vision: false, weights: String::new(), official: false, problem: None, warning: None };
     let name = path.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
     let ext = name.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
     let parsed = match ext {
@@ -127,6 +208,9 @@ pub fn inspect(path: &Path) -> std::io::Result<FileInfo> {
     info.weights = main_weight_type(&tensors);
     classify(&tensors, &meta, &name, &mut info);
     info.official = info.compatible && official_download(path, size).is_some();
+    if info.compatible && info.role == Some(Role::Diffusion) && !info.official && is_known_base(path, size, base_files) {
+        info.warning = Some(BASE_MODEL_WARNING.into());
+    }
     Ok(info)
 }
 
@@ -728,6 +812,38 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn warns_about_known_base_files_only() {
+        // Useful_Disaster_7606 (Reddit, 10-24): the base 2.1 GGUF at 8 steps, no warning.
+        let dir = tempfile::tempdir().unwrap();
+        let dit: &[(&str, u32, &[u64])] = &[("txt_in.text_norm.weight", 30, &[4096]), ("img_in.weight", 12, &[64, 4096])];
+        let base = dir.path().join("qwen_image_2.1-Q4_K.gguf");
+        write_gguf(&base, &[("general.architecture", "qwen_image")], &[], dit);
+        let size = std::fs::metadata(&base).unwrap().len();
+        let fp = fingerprint(&base, size).unwrap();
+        let table = [(size, fp.as_str())];
+        let b = inspect_with(&base, &table).unwrap();
+        assert_eq!((b.compatible, b.problem.as_deref()), (true, None), "a warning, not a block");
+        assert!(b.warning.unwrap().contains("not Turbo"));
+        // Renamed, it is still the base model.
+        let renamed = dir.path().join("my-turbo.gguf");
+        std::fs::copy(&base, &renamed).unwrap();
+        assert!(inspect_with(&renamed, &table).unwrap().warning.is_some());
+        // A Turbo file of the same size (other weights): nothing.
+        let turbo = dir.path().join("qwen_image_2.1_turbo-Q4_K.gguf");
+        write_gguf(&turbo, &[("general.architecture", "qwen_image")], &[], &[dit[0], ("img_in.weight", 13, &[64, 4096])]);
+        assert_eq!(std::fs::metadata(&turbo).unwrap().len(), size);
+        assert_eq!(inspect_with(&turbo, &table).unwrap().warning, None);
+        // Unknown files and the real table: nothing.
+        assert_eq!(inspect(&base).unwrap().warning, None);
+        // Only diffusion models are checked.
+        let vae = dir.path().join("vae.safetensors");
+        write_st(&vae, &[("conv2.weight", "BF16", &[64, 64, 1, 1, 1]), ("decoder.conv1.weight", "BF16", &[1152, 64, 1, 3, 3]), ("encoder.conv1.weight", "BF16", &[96, 3, 3, 3, 3])]);
+        let vsize = std::fs::metadata(&vae).unwrap().len();
+        let vfp = fingerprint(&vae, vsize).unwrap();
+        assert_eq!(inspect_with(&vae, &[(vsize, vfp.as_str())]).unwrap().warning, None);
+    }
+
+    #[test]
     fn rejects_unsafe_split_and_broken_files() {
         let dir = tempfile::tempdir().unwrap();
         for (name, needle) in [("model.ckpt", "can run code"), ("model.bin", "can run code"), ("model-00001-of-00004.safetensors", "split into several"), ("notes.txt", "Not a model file")] {
@@ -810,7 +926,7 @@ pub(crate) mod tests {
 
     #[test]
     fn diffusion_pick_follows_vram() {
-        let f = |name: &str, gib: u64| FileInfo { path: PathBuf::from(name), size: gib << 30, role: Some(Role::Diffusion), compatible: true, has_vision: false, weights: String::new(), official: false, problem: None };
+        let f = |name: &str, gib: u64| FileInfo { path: PathBuf::from(name), size: gib << 30, role: Some(Role::Diffusion), compatible: true, has_vision: false, weights: String::new(), official: false, problem: None, warning: None };
         let files = [f("bf16", 20), f("int8", 10), f("q4", 5)];
         assert_eq!(best(&files, Some(16 * 1024)).diffusion, Some(PathBuf::from("int8")), "the largest that leaves room");
         assert_eq!(best(&files, Some(8 * 1024)).diffusion, Some(PathBuf::from("q4")), "nothing fits: the smallest");

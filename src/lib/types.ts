@@ -367,6 +367,8 @@ export interface ModelFileInfo {
   weights: string;
   official: boolean;
   problem: string | null;
+  /** Usable, but probably not what the user wants (e.g. the base model instead of Turbo). */
+  warning?: string | null;
 }
 
 export interface ModelScan {

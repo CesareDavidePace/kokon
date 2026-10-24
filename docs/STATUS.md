@@ -15,6 +15,11 @@ branch `server-0.11`, being tested before the release:
 - Access from the local network: off by default, behind a password (Argon2id hash) with a limit on attempts.
   For access from outside, a guide to Tailscale or another VPN: [remote-access.md](remote-access.md).
 - A Docker image for NVIDIA (CUDA): [docker.md](docker.md). An AMD/Intel (Vulkan) image once it can be tested.
+- Own model files: a warning (in setup and at startup) when the image model is a known base Qwen-Image 2.1
+  file instead of Turbo (Kokon runs 8 steps, made for Turbo), and a hint in setup that FP8 files run much
+  slower than the GGUF on AMD/Intel with Vulkan ([#38](https://github.com/GabrieleLozupone/kokon/issues/38)).
+- MCP: an output folder listed in `QLS_MCP_ALLOWED_DIRS` now works (the service refused it), and the error for a
+  folder outside the allowed ones names the variable ([#39](https://github.com/GabrieleLozupone/kokon/issues/39)).
 - Later: the desktop app as a client of a Kokon server elsewhere.
 
 ## Next

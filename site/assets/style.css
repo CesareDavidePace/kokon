@@ -56,6 +56,10 @@ body::before { content: ""; position: fixed; inset: 0; pointer-events: none; z-i
 .nav .spacer { flex: 1; }
 .gh { display: none; align-items: center; gap: 8px; font-size: 14px; color: var(--text-2); }
 .gh:hover { color: var(--text); }
+.kofi { display: none; align-items: center; gap: 7px; font-size: 14px; color: var(--text-2); }
+.kofi:hover { color: var(--text); }
+.kofi svg, .kofi-btn svg { width: 16px; height: 16px; fill: #ff5e5b; flex: none; }
+.nav .kofi-btn { display: none; }
 .burger { display: inline-flex; align-items: center; gap: 9px; height: 38px; padding: 0 15px 0 13px; border-radius: 999px; background: var(--card-hi); box-shadow: inset 0 0 0 1px var(--line-hi); font-size: 14.5px; font-weight: 560; letter-spacing: -0.01em; transition: background 0.2s; }
 .burger:hover, .menu-open .burger { background: rgba(255, 255, 255, 0.1); }
 .burger .bars { position: relative; width: 16px; height: 10px; }
@@ -64,7 +68,7 @@ body::before { content: ""; position: fixed; inset: 0; pointer-events: none; z-i
 .burger .bars span:last-child { top: 8.4px; width: 11px; }
 .menu-open .burger .bars span:first-child { top: 4.2px; transform: rotate(45deg); }
 .menu-open .burger .bars span:last-child { top: 4.2px; width: 16px; transform: rotate(-45deg); }
-@media (min-width: 900px) { .nav-links, .gh { display: flex; } .burger { display: none; } }
+@media (min-width: 900px) { .nav-links, .gh, .kofi { display: flex; } .burger { display: none; } }
 @media (max-width: 899px) {
   .nav .wrap { gap: 12px; }
   .nav .btn[data-dl-auto] { display: none; }
@@ -81,6 +85,8 @@ body::before { content: ""; position: fixed; inset: 0; pointer-events: none; z-i
   .nav-links .top { display: flex; height: auto; margin-top: 18px; padding: 14px 4px; border-radius: 0; font-size: 17px; font-weight: 560; color: var(--text); background: none; border-bottom: 1px solid var(--line); }
   .nav-more { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 24px 4px 0; font-size: 15px; }
   .nav-more a:hover { color: var(--text); }
+  .nav .kofi-btn { display: flex; width: 100%; margin-top: 22px; background: #ff5e5b; color: #fff; }
+  .nav .kofi-btn svg { fill: #fff; }
 }
 html.menu-lock, html.menu-lock body { overflow: hidden; }
 

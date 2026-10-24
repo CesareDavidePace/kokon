@@ -31,6 +31,8 @@ branch `server-0.11`, being tested before the release:
 - Fixed on iPhone: full screen could crash the page (Safari ran out of memory on large results and edits): in a
   browser it now draws the image at screen size, shows the preview until you zoom in past it, and loads the
   original only when a comparison shows it. Take Photo uploads the picture (only the photo library worked).
+- On a phone, a photo just taken can be flipped before it is uploaded (selfies from Safari's camera are not
+  mirrored the way the Camera app saves them), and menus open lower, near the bottom edge.
 - Own model files: a warning (in setup and at startup) when the image model is a known base Qwen-Image 2.1
   file instead of Turbo (Kokon runs 8 steps, made for Turbo), and a hint in setup that FP8 files run much
   slower than the GGUF on AMD/Intel with Vulkan ([#38](https://github.com/GabrieleLozupone/kokon/issues/38)).

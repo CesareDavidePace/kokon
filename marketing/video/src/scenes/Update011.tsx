@@ -6,14 +6,14 @@
 // (app/timeline011.ts): no camera moves. The on-screen words carry every message, since Reddit
 // plays muted.
 import { Check, CloudOff, Compass, Lock, PlusSquare, Share, UserX, X } from "lucide-react";
-import { useLayoutEffect, useMemo, type CSSProperties, type ReactNode } from "react";
+import { useLayoutEffect, useMemo, type ComponentProps, type CSSProperties, type ReactNode } from "react";
 import { AbsoluteFill, Img, spring, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
 import { siDocker, siLinux, siNvidia } from "simple-icons";
 import { encode } from "uqr";
 import { KokonMark } from "../../../../src/components/Welcome";
 import { AppWindow } from "../app/AppWindow";
 import { type Curve, fanAngle, HomeScene, IPhone, Link, NetPill, Packet, Pc, PHONE_SCREEN } from "../app/Devices011";
-import { appState, gen, genItem, jobItem, ref, settingsState } from "../app/fixtures";
+import { appState, gen, genItem, jobItem, PROJECTS, ref, settingsState } from "../app/fixtures";
 import { Mark } from "../app/Mark";
 import { Backdrop, Caption, inOut, prog, Pointer, typed, typingDone } from "../app/motion";
 import { Music, Send, Sfx, Voice } from "../app/sound";
@@ -40,19 +40,24 @@ const Shot = ({ from, to, children }: { from: number; to: number; children: Reac
 };
 
 // ---------------------------------------------------------------------------------------------
-// The project on the phone: a beach photo, and the edit that puts him on a flamingo.
+// The project on the phone: a beach photo, a sunset version of it, and the edit that puts him on a
+// flamingo (made from the photo).
 // ---------------------------------------------------------------------------------------------
 const BEACH = gen("beach", "generate", "A man on the beach, arms open");
+const SUNSET = gen("beach-sunset", "edit", "Make it sunset, with golden light on the water", "beach");
 const FLAMINGO = gen("beach-flamingo", "edit", PROMPT_011, "beach");
-const BEACH_DAY = { projects: [{ id: "current", title: "Beach day", updatedAt: Date.now() - 60_000, cover: "gen:beach-flamingo", count: 2 }], projectId: "current", sidebar: false };
-/** A photo picked on the phone: an upload, so an input, not a result. */
-const PICKED = { key: "ref-photo", source: "input:beach", width: 1760, height: 2368, name: "IMG_2048.jpg" };
+/** Beach day in the library: before the flamingo (two images, the sunset its cover), and after. */
+const beachDay = (done: boolean) => ({ id: "current", title: "Beach day", updatedAt: Date.now() - (done ? 60_000 : 40 * 60_000), cover: done ? "gen:beach-flamingo" : "gen:beach-sunset", count: done ? 3 : 2 });
+const BEACH_DAY = { projects: [beachDay(true), ...PROJECTS], projectId: "current", sidebar: false };
+/** The phone's home: the projects the computer keeps, Beach day first. */
+const LIBRARY = { projects: [beachDay(false), ...PROJECTS], projectId: "current", sidebar: true };
 const resultState = (patch: Partial<State> = {}) =>
-  appState({ ...BEACH_DAY, session: [genItem(BEACH), genItem(FLAMINGO)], selected: "beach-flamingo", composer: { ...appState().composer, refs: [ref("beach-flamingo")] }, ...patch });
+  appState({ ...BEACH_DAY, session: [genItem(BEACH), genItem(SUNSET), genItem(FLAMINGO)], selected: "beach-flamingo", composer: { ...appState().composer, refs: [ref("beach-flamingo")] }, ...patch });
 
-/** Kokon in the phone's browser (390×776 under the status bar), light as on the site. */
-const PhoneApp = ({ state, card, split, height = PHONE_SCREEN.h }: { state: State; card?: CardMotion; split?: number; height?: number }) => (
-  <AppWindow state={state} width={PHONE_SCREEN.w} height={height} phone light className="in-phone" card={card} split={split} />
+/** Kokon on the phone (390×776 under the status bar), light as on the site: as added to the home
+ * screen (`standalone`), or in Safari over its toolbar. */
+const PhoneApp = ({ state, height = PHONE_SCREEN.h, standalone = true, className, ...rest }: { state: State; height?: number; standalone?: boolean } & Omit<ComponentProps<typeof AppWindow>, "state" | "width" | "height" | "phone" | "light">) => (
+  <AppWindow state={state} width={PHONE_SCREEN.w} height={height} phone light standalone={standalone} className={["in-phone", className].filter(Boolean).join(" ")} {...rest} />
 );
 
 /** The computer's settings: Other devices, before and after the password (mocks/api.ts answers
@@ -344,7 +349,7 @@ function SignIn() {
     <AbsoluteFill>
       <Backdrop glow={0.7} />
       <IPhone x={PHONE_AT.x} y={PHONE_AT.y} scale={PHONE_AT.s}>
-        {f < LOGIN.open ? <LoginPage chars={chars} /> : <PhoneApp state={appState({ ...BEACH_DAY, projects: [] })} height={PHONE_SCREEN.h - SAFARI_BAR} />}
+        {f < LOGIN.open ? <LoginPage chars={chars} /> : <PhoneApp state={appState(LIBRARY)} height={PHONE_SCREEN.h - SAFARI_BAR} standalone={false} />}
         <SafariBar />
         <Touch x={LOGIN_BUTTON[0]} y={LOGIN_BUTTON[1]} at={LOGIN.tap} />
       </IPhone>
@@ -426,7 +431,7 @@ function AddHome() {
       <IPhone x={PHONE_AT.x} y={PHONE_AT.y} scale={PHONE_AT.s} dark={onHome} full={onHome ? <HomeScreen f={f} /> : undefined}>
         {!onHome && (
           <>
-            <PhoneApp state={appState({ ...BEACH_DAY, projects: [] })} height={PHONE_SCREEN.h - SAFARI_BAR} />
+            <PhoneApp state={appState(LIBRARY)} height={PHONE_SCREEN.h - SAFARI_BAR} standalone={false} />
             <SafariBar />
             <ShareSheet p={prog(f, HOME.sheet, 10)} />
             {/* the sheet's second row from the bottom: Add to Home Screen (rows 48 px, the sheet 8 px up) */}
@@ -445,17 +450,26 @@ function AddHome() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 4. Using it: + a photo, the prompt, Send. The photo runs along the link to the computer (its
-// fans speed up, the GPU glows), the result runs back, Download.
+// 4. Using it: the library, Beach day, a swipe back to the photo, the prompt written and sent. The
+// photo runs along the link to the computer (its fans speed up, the GPU glows), the result runs
+// back and develops into view, Download.
 // ---------------------------------------------------------------------------------------------
 const USE_PHONE = { x: 200, y: 96, s: 1.02 };
 const USE_PC = { x: 1440, y: 250, s: 1.5 };
 /** The link from the phone's side to the computer's (frame px). */
 const USE_LINK: Curve = [660, 470, 900, 300, 1180, 330, 1428, 560];
-/** The composer's + and Send, and Download under the result (phone px, Probe011). */
-const ADD: [number, number] = [39, 742];
-const SEND: [number, number] = [354, 742];
-const DOWNLOAD: [number, number] = [256, 462];
+/** Where the finger goes (phone px under the status bar, measured on stills): Beach day's card in
+ * the library, the picture it drags, the closed prompt, Send over the keyboard, Save in the row
+ * once it has slid, and how far the row slides. */
+const CARD: [number, number] = [102, 214];
+const PICTURE: [number, number] = [150, 300];
+const PROMPT_CARD: [number, number] = [170, 690];
+const SEND: [number, number] = [352, 440];
+const SAVE: [number, number] = [281, 476];
+const ROW_SLIDE = 150;
+/** The keyboard's height over the screen's foot (the app shrinks above it, as on an iPhone). */
+const KB_H = 300;
+
 /** What the phone shows once Download is tapped: a banner with the photo, as for any download. */
 function Downloaded({ f }: { f: number }) {
   const p = prog(f, USE.download + 4, 10);
@@ -474,27 +488,115 @@ function Downloaded({ f }: { f: number }) {
   );
 }
 
+/** The iPhone's keyboard (light), rising at `at`; the key of the letter just typed pressed. */
+const KEY_ROWS = ["qwertyuiop", "asdfghjkl", "zxcvbnm"];
+function Keyboard({ f, at, text }: { f: number; at: number; text: string }) {
+  const up = prog(f, at, 8, inOut);
+  const last = text.slice(-1).toLowerCase();
+  const face = (on: boolean, fn = false): CSSProperties => ({ height: 42, borderRadius: 6, background: on ? "#aeb3bc" : fn ? "#abb0ba" : "#fff", boxShadow: "0 1px 0 rgba(0,0,0,0.3)", display: "flex", alignItems: "center", justifyContent: "center", color: "#000" });
+  const key = (c: string) => (
+    <span key={c} style={{ ...face(c === last), width: 33, font: `400 23px/1 -apple-system, ${font}` }}>
+      {c}
+    </span>
+  );
+  const fn = (label: string, w: number) => <span style={{ ...face(false, true), width: w, font: `400 16px/1 -apple-system, ${font}` }}>{label}</span>;
+  const row = (children: ReactNode, pad = 3) => <div style={{ display: "flex", justifyContent: "center", gap: 6, padding: `0 ${pad}px` }}>{children}</div>;
+  const bar = <span style={{ width: 1, height: 24, background: "#b5b9c0" }} />;
+  return (
+    <div style={{ position: "absolute", left: 0, right: 0, top: PHONE_SCREEN.h - KB_H, height: KB_H + 60, zIndex: 30, background: "#d1d4da", transform: `translateY(${(1 - up) * (KB_H + 60)}px)`, display: "flex", flexDirection: "column", gap: 11, paddingTop: 8 }}>
+      <div style={{ height: 36, display: "flex", alignItems: "center", justifyContent: "space-around", font: `400 16px/1 -apple-system, ${font}`, color: "#222" }}>
+        <span>“wave”</span>
+        {bar}
+        <span>waves</span>
+        {bar}
+        <span>wavy</span>
+      </div>
+      {row(KEY_ROWS[0].split("").map(key))}
+      {row(KEY_ROWS[1].split("").map(key), 22)}
+      {row(
+        <>
+          {fn("⇧", 44)}
+          <span style={{ width: 8 }} />
+          {KEY_ROWS[2].split("").map(key)}
+          <span style={{ width: 8 }} />
+          {fn("⌫", 44)}
+        </>,
+      )}
+      {row(
+        <>
+          {fn("123", 88)}
+          <span style={{ ...face(last === " "), flex: 1, font: `400 16px/1 -apple-system, ${font}` }}>space</span>
+          {fn("return", 88)}
+        </>,
+      )}
+    </div>
+  );
+}
+
+/** Slides the phone's actions row to `px` (the app's own scroll, which a video can't swipe). */
+function ScrollRow({ px }: { px: number }) {
+  useLayoutEffect(() => {
+    const row = document.querySelector<HTMLElement>(".in-phone .phone-actions");
+    if (row) row.scrollLeft = px;
+  });
+  return null;
+}
+
 /** The computer's work: 0 idle, 1 busy (fans fast, warm glow). */
 const busy = (i: number) => prog(i, USE.job - 8, 20, inOut) * (1 - prog(i, USE.back, 30, inOut));
 
 function UsePhone() {
   const f = useCurrentFrame();
-  const base = appState({ ...BEACH_DAY, projects: [{ ...BEACH_DAY.projects[0], title: "Beach day" }] });
+  const composer = appState().composer;
+  const before = [genItem(BEACH), genItem(SUNSET)];
+  const opened = { ...LIBRARY, sidebar: false };
+  // Send is pressed on the writing screen; it closes a moment later.
+  const sent = USE.send + 4;
+  const writing = f >= USE.prompt + 2 && f < sent;
   let state: State;
   let card: CardMotion | undefined;
-  if (f < USE.photo) state = base;
-  else if (f < USE.send) state = appState({ ...BEACH_DAY, composer: { ...base.composer, refs: [PICKED], prompt: f < USE.type ? "" : typed(PROMPT_011, f, USE.type, USE.cps) } });
-  else if (f < USE.result) {
-    const j = jobItem("j-phone", "edit", PROMPT_011, "beach-flamingo", undefined, Math.min(8, Math.floor((f - USE.job) / 12)));
-    state = appState({ ...BEACH_DAY, session: [j.item], selected: "j-phone", jobs: { "j-phone": j.job } });
+  // The project slides in from the tap on (before it, the library has long been there).
+  let vars: Record<string, string | number> = f >= USE.open ? { "--t-screen": ((f - USE.open) / FPS).toFixed(3) } : {};
+  // Each phase is a window of its own: the composer keeps "open" in its own state once focused.
+  const phase = f < USE.open ? "library" : f < USE.swiped ? "swipe" : writing ? "writing" : f < sent ? "photo" : f < USE.result ? "job" : "result";
+  let page: string | undefined;
+  const dragEnd = USE.swipe + USE.drag;
+  if (f < USE.open) state = appState(LIBRARY);
+  else if (f < USE.swiped) {
+    // Beach day opens on its last version; the finger drags it right and lets go, it slides off.
+    state = appState({ ...opened, session: before, selected: "beach-sunset", composer: { ...composer, refs: [ref("beach-sunset")] } });
+    const drag = prog(f, USE.swipe, USE.drag, inOut);
+    const away = prog(f, dragEnd, USE.swiped - dragEnd);
+    const dx = f < dragEnd ? 120 * drag : 120 - 30 * away;
+    const o = f < dragEnd ? 1 - dx / 600 : 0.8 * (1 - away);
+    vars = { ...vars, "--swipe-dx": `${dx.toFixed(1)}px`, "--swipe-o": o.toFixed(3) };
+  } else if (f < sent) {
+    const prompt = f < USE.type ? "" : typed(PROMPT_011, f, USE.type, USE.cps);
+    state = appState({ ...opened, session: before, selected: "beach", composer: { ...composer, refs: [ref("beach")], prompt }, ...(writing ? { writing: true } : {}) } as Partial<State>);
+    vars = { ...vars, "--t-page": ((f - USE.swiped) / FPS).toFixed(3) };
+    page = "page-enter-left";
+  } else if (f < USE.result) {
+    const j = jobItem("j-phone", "edit", PROMPT_011, "beach-flamingo", "beach", Math.min(8, Math.floor((f - USE.job) / 12)));
+    state = appState({ ...opened, session: [...before, j.item], selected: "j-phone", jobs: { "j-phone": j.job }, composer: { ...composer, refs: [ref("beach")] } });
     card = { t: Math.max(0, (f - USE.send) / FPS), pctAt: (t) => Math.min(99, Math.max(0, (t - 0.7) / 3.2) * 100) };
-  } else state = appState({ ...BEACH_DAY, session: [genItem(FLAMINGO)], selected: "beach-flamingo", composer: { ...base.composer, refs: [ref("beach-flamingo")] } });
+  } else state = resultState();
+  const develop = f >= USE.result ? { match: "img/beach-flamingo", t: (f - USE.result) / FPS } : null;
+  const typedNow = f >= USE.type && f < sent ? typed(PROMPT_011, f, USE.type, USE.cps) : "";
+  // The finger on the picture follows the drag.
+  const swipeX = PICTURE[0] + 120 * prog(f, USE.swipe, USE.drag, inOut);
+  const slide = prog(f, USE.row, 10, inOut);
   return (
     <>
-      <PhoneApp state={state} card={card} />
-      <Touch x={ADD[0]} y={ADD[1]} at={USE.plus} />
+      <PhoneApp key={phase} state={state} card={card} vars={vars} className={page} develop={develop} keyboard={writing} height={writing ? PHONE_SCREEN.h - KB_H : PHONE_SCREEN.h} />
+      {f >= USE.result && <ScrollRow px={ROW_SLIDE * slide} />}
+      {writing && <Keyboard f={f} at={USE.prompt + 2} text={typedNow} />}
+      <Touch x={CARD[0]} y={CARD[1]} at={USE.open} />
+      {f < USE.swiped && <Touch x={swipeX} y={PICTURE[1]} at={USE.swipe} from={USE.swipe - 6} />}
+      <Touch x={PROMPT_CARD[0]} y={PROMPT_CARD[1]} at={USE.prompt} />
       <Touch x={SEND[0]} y={SEND[1]} at={USE.send} />
-      <Touch x={DOWNLOAD[0]} y={DOWNLOAD[1]} at={USE.download} />
+      {/* the row slid left by a finger, then Save */}
+      {f < USE.row + 16 && <Touch x={SAVE[0] + ROW_SLIDE * (1 - slide)} y={SAVE[1]} at={USE.row} from={USE.row - 6} />}
+      <Touch x={SAVE[0]} y={SAVE[1]} at={USE.download} />
       <Downloaded f={f} />
     </>
   );
@@ -822,8 +924,9 @@ function Sounds() {
       <Sfx name="pop" at={HOME.icon} />
       <Sfx name="click" at={HOME.open} gain={0.7} />
       {/* using it */}
-      <Sfx name="click" at={USE.plus} gain={0.7} />
-      <Sfx name="pop" at={USE.photo} gain={0.7} />
+      <Sfx name="click" at={USE.open} gain={0.7} />
+      <Sfx name="swipe" at={USE.swipe + USE.drag} gain={0.5} />
+      <Sfx name="click" at={USE.prompt} gain={0.7} />
       <Sfx name="typing" at={USE.type} dur={typeEnd - USE.type} gain={0.8} />
       <Send at={USE.send} />
       <Sfx name="travel" at={USE.out} />

@@ -24,6 +24,8 @@ export const SIZES: Record<string, [number, number]> = {
   // The 0.11 video: a beach photo and the edit that puts him on a flamingo (use-case set, 2K).
   beach: [1760, 2368],
   "beach-flamingo": [1760, 2368],
+  // ...and a sunset version of the beach photo (the project has two versions before the flamingo).
+  "beach-sunset": [1760, 2368],
 };
 
 export const PROMPTS = {
@@ -177,6 +179,8 @@ export function appState(patch: Partial<State> = {}): State {
     privateMode: false,
     redo: [],
     update: null,
+    // The phone's writing screen, opened by a scene (loaders/phone-composer.cjs): never carried over.
+    ...({ writing: false } as Partial<State>),
     ...patch,
   };
 }

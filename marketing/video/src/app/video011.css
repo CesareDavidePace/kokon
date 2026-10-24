@@ -2,3 +2,12 @@
 .kokon-window.in-phone { border-radius: 0; box-shadow: none; }
 /* The sign-in page, as kokon-service serves it before the app (Login.tsx): centred on the page. */
 .kokon-window.login-page { align-items: center; justify-content: center; padding-bottom: 120px; }
+/* The phone layout's one-off entrances on the scene's clocks (AppWindow `clocks`), not the film's:
+   the project sliding in from the library (--t-screen), the version swiped to (--t-page, with
+   .page-enter-left/right), an image developing (--t-develop, mocks/Develop.tsx). */
+.kokon-window .phone-screen { animation-delay: calc(var(--t-screen, 100) * -1s) !important; }
+.kokon-window.page-enter-left .swipe-page { animation: page-left 0.46s var(--ease) both; animation-delay: calc(var(--t-page, 100) * -1s) !important; }
+.kokon-window.page-enter-right .swipe-page { animation: page-right 0.46s var(--ease) both; animation-delay: calc(var(--t-page, 100) * -1s) !important; }
+.kokon-window img.develop-in { animation-delay: calc(var(--t-develop, 100) * -1s) !important; }
+/* a finger dragging the picture sideways (Swipe in PhoneStage.tsx moves .swipe-track the same way) */
+.kokon-window .swipe-track { transform: translateX(var(--swipe-dx, 0px)); opacity: var(--swipe-o, 1); }

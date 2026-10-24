@@ -65,13 +65,19 @@ const cueOf = (n: number, i: number) => CUES_011.find((c) => c.line === n && c.f
 export const said = (n: number, i: number) => sentenceAt(cueOf(n, i), i);
 export const saidEnd = (n: number, i: number) => said(n, i) + Math.round((span(n, i)[1] - span(n, i)[0]) * FPS);
 
-/** The phone in use (shot `use`): + tapped on "Pick a photo", the prompt typed from "describe", Send; the photo
- * travels to the computer, the job runs there, the result travels back, Download. */
+/** The phone in use (shot `use`): the library, Beach day tapped (it opens on its sunset version);
+ * on "Pick a photo" a swipe back to the beach photo; the prompt tapped (the writing screen, the
+ * keyboard) before "describe", typed from it, Send; the photo travels to the computer, the job
+ * runs there, the result travels back and develops into view; the actions row slid to Save, Download. */
 export const PROMPT_011 = "Put him on a pink flamingo, surfing a wave";
 const U = SHOT.use;
 export const USE = {
-  plus: U + 20,
-  photo: U + 30,
+  open: U + 10,
+  /** The finger on the picture, dragging it right, let go: the beach slides in from the left. */
+  swipe: U + 28,
+  drag: 10,
+  swiped: U + 44,
+  prompt: 0,
   type: said(4, 1),
   cps: 26,
   send: 0,
@@ -80,12 +86,16 @@ export const USE = {
   job: 0,
   back: 0,
   result: 0,
+  /** The actions row slid left by a finger, so Save is in reach. */
+  row: 0,
   download: 0,
 };
+USE.prompt = USE.type - 6;
 USE.send = USE.type + Math.ceil((PROMPT_011.length * FPS) / USE.cps) + 10;
 USE.out = USE.send + 2;
 USE.job = USE.out + 22;
 USE.back = USE.job + 110;
 USE.result = USE.back + 22;
 USE.download = Math.min(USE.result + 40, SHOT.safe - 16);
+USE.row = USE.download - 18;
 CUES_011[7].at = USE.out + 4;

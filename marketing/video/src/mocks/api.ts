@@ -24,6 +24,9 @@ export const urls = {
   genThumb: (id: string) => staticFile(`thumb/${id}.jpg`),
   source: (s: string) => staticFile(`img/${s.replace(/^(gen|input):/, "")}.jpg`),
   sourceThumb: (s: string) => staticFile(`thumb/${s.replace(/^(gen|input):/, "")}.jpg`),
+  // A browser's screen-sized previews (the phone's stage): the same images.
+  sourcePreview: (s: string) => staticFile(`img/${s.replace(/^(gen|input):/, "")}.jpg`),
+  genOriginal: (id: string) => staticFile(`img/${id}.jpg`),
 };
 export function subscribe() {
   return () => {};

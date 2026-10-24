@@ -2,7 +2,7 @@
 // context with the service client, the project folder and a progress callback.
 
 import { z } from "zod";
-import { allowedRoots, checkInput, checkOutput, PathError } from "./paths.js";
+import { allowedRoots, checkInput, checkOutput, jobWorkspace, PathError } from "./paths.js";
 import { ServiceClient, ServiceError } from "./service.js";
 
 const quality = z
@@ -177,7 +177,9 @@ export function label(j: JobView): string {
 
 async function runJob(ctx: ToolContext, body: Record<string, unknown>, includePreview: boolean): Promise<ToolResult> {
   // The calling model writes the prompt: Kokon's own prompt writer (Prompt+) never runs for MCP.
-  const job = await ctx.client.call<JobView>("POST", "/jobs", { ...body, enhance: false, workspace: ctx.cwd, client: "mcp" });
+  const out = typeof body.output_path === "string" ? body.output_path : undefined;
+  const workspace = out ? jobWorkspace(out, ctx.cwd, await roots(ctx)) : ctx.cwd;
+  const job = await ctx.client.call<JobView>("POST", "/jobs", { ...body, enhance: false, workspace, client: "mcp" });
   let last = "";
   let cancelled = false;
   const onAbort = () => {

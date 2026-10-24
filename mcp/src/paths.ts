@@ -19,6 +19,9 @@ export const MAX_INPUT_BYTES = 200 * 1024 * 1024;
 
 export class PathError extends Error {}
 
+/** How to allow another folder (#39). */
+export const ALLOW_HINT = "To allow it, add the folder to QLS_MCP_ALLOWED_DIRS (separated by semicolons) in the env of the MCP client's config, then restart the client.";
+
 function realish(target: string): string {
   // Resolve symlinks/junctions on the deepest existing ancestor.
   let cur = target;
@@ -64,7 +67,7 @@ export function normalize(raw: string, cwd: string): string {
 export function checkInput(raw: string, cwd: string, roots: string[]): string {
   const abs = normalize(raw, cwd);
   if (!INPUT_EXT.includes(p.extname(abs).toLowerCase())) throw new PathError("Only PNG, JPEG, WebP, BMP, GIF, TIFF and HEIC images are supported.");
-  if (!roots.some((r) => isWithin(abs, r))) throw new PathError(`${abs} is outside the allowed folders (${roots.join("; ")}).`);
+  if (!roots.some((r) => isWithin(abs, r))) throw new PathError(`${abs} is outside the allowed folders (${roots.join("; ")}). ${ALLOW_HINT}`);
   let st: fs.Stats;
   try {
     st = fs.statSync(abs);
@@ -81,8 +84,15 @@ export function checkOutput(raw: string, cwd: string, roots: string[]): string {
   const ext = p.extname(abs).toLowerCase();
   if (!ext) abs += ".png";
   else if (!OUTPUT_EXT.includes(ext)) throw new PathError("output_path must end in .png, .jpg or .webp.");
-  if (!roots.some((r) => isWithin(abs, r))) throw new PathError(`${abs} is outside the allowed output folders (${roots.join("; ")}).`);
+  if (!roots.some((r) => isWithin(abs, r))) throw new PathError(`${abs} is outside the allowed output folders (${roots.join("; ")}). ${ALLOW_HINT}`);
   return abs;
+}
+
+/** The workspace to send with a job: the service writes outputs only to its own output folder
+ * and the workspace, so an output in a QLS_MCP_ALLOWED_DIRS folder sends that folder (#39). */
+export function jobWorkspace(out: string | undefined, cwd: string, roots: string[]): string {
+  if (!out || isWithin(out, cwd)) return cwd;
+  return roots.find((r) => isWithin(out, r)) ?? cwd;
 }
 
 export function allowedRoots(cwd: string, outputDir: string | null): string[] {

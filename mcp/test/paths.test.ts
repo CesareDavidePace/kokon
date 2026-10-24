@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { checkInput, checkOutput, isWithin, normalize, PathError } from "../src/paths";
+import { checkInput, checkOutput, isWithin, jobWorkspace, normalize, PathError } from "../src/paths";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "qls-mcp-"));
 const proj = path.join(tmp, "proj");
@@ -49,5 +49,15 @@ describe("outputs", () => {
     expect(checkOutput("assets/hero", proj, roots)).toBe(path.join(proj, "assets", "hero.png"));
     expect(() => checkOutput("../escape.png", proj, roots)).toThrow(/outside/);
     expect(() => checkOutput("x.exe", proj, roots)).toThrow(/png/);
+  });
+  it("says how to allow another folder (#39)", () => {
+    expect(() => checkOutput(path.join(outside, "y.png"), proj, roots)).toThrow(/QLS_MCP_ALLOWED_DIRS \(separated by semicolons\)/);
+    expect(() => checkInput(path.join(outside, "x.png"), proj, roots)).toThrow(/QLS_MCP_ALLOWED_DIRS/);
+  });
+  it("sends the allowed folder an output goes to as the job's workspace", () => {
+    const extra = [proj, outside];
+    expect(jobWorkspace(path.join(proj, "a.png"), proj, extra)).toBe(proj);
+    expect(jobWorkspace(path.join(outside, "sub", "a.png"), proj, extra)).toBe(outside);
+    expect(jobWorkspace(undefined, proj, extra)).toBe(proj);
   });
 });

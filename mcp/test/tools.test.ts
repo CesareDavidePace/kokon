@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { handlers, label, schemas, toErrorResult } from "../src/tools";
@@ -55,6 +58,32 @@ describe("input validation", () => {
       ["A watercolour fox in snow.", false, "generate"],
       ["x", false, "generate"],
     ]);
+  });
+  it("an output in a QLS_MCP_ALLOWED_DIRS folder is sent with that folder as the workspace (#39)", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "qls-mcp-ws-"));
+    const [proj, extra] = [path.join(tmp, "proj"), path.join(tmp, "thumbs")];
+    fs.mkdirSync(proj);
+    fs.mkdirSync(extra);
+    const sent: Record<string, unknown>[] = [];
+    const client = {
+      call: async (method: string, p: string, body?: Record<string, unknown>) => {
+        if (p === "/config") return { outputDir: path.join(tmp, "out") };
+        if (method === "POST" && body) sent.push(body);
+        return { id: "j", status: "failed", error: { code: "x", message: "stop here" }, results: [], notes: [], queue_position: 0, plan: null, stage: null, step: null };
+      },
+    };
+    const ctx = { client: client as never, cwd: proj, progress: () => {} };
+    const before = process.env.QLS_MCP_ALLOWED_DIRS;
+    process.env.QLS_MCP_ALLOWED_DIRS = extra;
+    try {
+      await handlers.generate_image({ prompt: "x", output_path: path.join(extra, "Upscaled", "a.png") } as never, ctx);
+      await handlers.generate_image({ prompt: "x", output_path: "a.png" } as never, ctx);
+      await handlers.generate_image({ prompt: "x" } as never, ctx);
+    } finally {
+      if (before === undefined) delete process.env.QLS_MCP_ALLOWED_DIRS;
+      else process.env.QLS_MCP_ALLOWED_DIRS = before;
+    }
+    expect(sent.map((b) => b.workspace)).toEqual([extra, proj, proj]);
   });
   it("width without height is rejected before any service call", async () => {
     const ctx = { client: {} as never, cwd: process.cwd(), progress: () => {} };

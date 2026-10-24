@@ -40,8 +40,17 @@ struct Fixture {
 fn fixture(with_password: bool) -> Fixture {
     isolate_settings();
     let dir = tempfile::tempdir().unwrap();
-    let engine = Engine::new(AppConfig::default(), dir.path()).unwrap();
-    let state = Arc::new(AppState {
+    let state = start(dir.path());
+    if with_password {
+        state.remote.set_password(PASSWORD).unwrap();
+    }
+    Fixture { _dir: dir, state }
+}
+
+/// The service starting on `dir` (again, for a restart).
+fn start(dir: &std::path::Path) -> Arc<AppState> {
+    let engine = Engine::new(AppConfig::default(), dir).unwrap();
+    Arc::new(AppState {
         engine,
         token: "t".repeat(64),
         leases: Mutex::new(HashMap::new()),
@@ -50,12 +59,8 @@ fn fixture(with_password: bool) -> Fixture {
         quick_exit: std::sync::atomic::AtomicBool::new(false),
         shutdown: tokio::sync::Notify::new(),
         started: Instant::now(),
-        remote: RemoteState::new(dir.path(), false),
-    });
-    if with_password {
-        state.remote.set_password(PASSWORD).unwrap();
-    }
-    Fixture { _dir: dir, state }
+        remote: RemoteState::new(dir, false),
+    })
 }
 
 fn app(f: &Fixture, lan: bool, ip: &str) -> Router {
@@ -283,6 +288,23 @@ async fn a_new_password_or_a_logout_ends_sessions() {
     assert_eq!(login(&a, "a brand new one").await.status, StatusCode::OK);
     let short = send(&local, "POST", "/api/v1/remote/password", &[("authorization", &auth)], Some(json!({ "password": "short" }))).await;
     assert_eq!(short.status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn a_sign_in_survives_a_restart_until_the_password_changes() {
+    let mut f = fixture(true);
+    let a = app(&f, true, "192.168.1.50");
+    let phone = sign_in(&a).await;
+    let kept = std::fs::read_to_string(f._dir.path().join("remote-sessions.json")).unwrap();
+    assert!(!kept.contains(phone.split_once('=').unwrap().1), "only a hash of the cookie is kept");
+    f.state = start(f._dir.path());
+    let a = app(&f, true, "192.168.1.50");
+    assert_eq!(send(&a, "GET", "/api/v1/status", &[("cookie", &phone)], None).await.status, StatusCode::OK);
+    // Set from a terminal while the service was off.
+    qls_core::remote::set_password(&qls_core::remote::password_file(f._dir.path()), "set while off").unwrap();
+    f.state = start(f._dir.path());
+    let a = app(&f, true, "192.168.1.50");
+    assert_eq!(send(&a, "GET", "/api/v1/status", &[("cookie", &phone)], None).await.status, StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]

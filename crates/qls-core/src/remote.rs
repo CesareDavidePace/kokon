@@ -3,8 +3,9 @@
 //!
 //! - the password is stored only as an Argon2id hash (`remote-auth.json` in the data folder,
 //!   never in `config.json`, which the API returns);
-//! - a login opens a session (a random cookie value, kept in memory: a restart signs browsers
-//!   out); changing the password ends every session;
+//! - a login opens a session (a random cookie value); `remote-sessions.json` keeps only the
+//!   SHA-256 of each value, so browsers stay signed in across a restart (an app update, a
+//!   reboot); changing the password ends every session;
 //! - 5 wrong passwords in a row from one address lock it for 1 minute, doubling up to 15;
 //! - a browser session may use only the endpoints the UI needs, and never one that takes a
 //!   path on the server or changes what the computer runs (see [`browser_allowed`]).
@@ -13,13 +14,14 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use argon2::{
     Argon2,
     password_hash::{PasswordHasher, PasswordVerifier, phc::PasswordHash},
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::error::{AppError, AppResult, ErrorCode};
 use crate::planner::GenerationRequest;
@@ -124,37 +126,130 @@ impl Limiter {
     }
 }
 
-/// Signed-in browsers: cookie value → expiry.
+/// `<data dir>/remote-sessions.json`.
+pub fn sessions_file(data_dir: &Path) -> PathBuf {
+    data_dir.join("remote-sessions.json")
+}
+
+fn sha256_hex(s: &str) -> String {
+    hex::encode(Sha256::digest(s.as_bytes()))
+}
+
+fn unix_secs(t: SystemTime) -> u64 {
+    t.duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// What `remote-sessions.json` holds: never a cookie value, only its SHA-256 (a copy of the file
+/// signs no one in), and the SHA-256 of the password hash the sessions were opened under.
+#[derive(Serialize, Deserialize, Default)]
+struct SessionsFile {
+    password: String,
+    /// SHA-256 of the cookie value → expiry (seconds since 1970).
+    sessions: HashMap<String, u64>,
+}
+
+/// Signed-in browsers. Wall-clock expiry, so it means the same after a restart.
 #[derive(Default)]
 pub struct Sessions {
-    by_id: Mutex<HashMap<String, Instant>>,
+    /// `None`: in memory only.
+    file: Option<PathBuf>,
+    state: Mutex<SessionsFile>,
 }
 
 impl Sessions {
-    pub fn create(&self, now: Instant) -> String {
-        let id = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
-        let mut m = self.by_id.lock().unwrap();
-        m.retain(|_, exp| *exp > now);
-        if m.len() >= MAX_SESSIONS
-            && let Some(oldest) = m.iter().min_by_key(|(_, exp)| **exp).map(|(k, _)| k.clone())
+    /// Loads the sessions kept in `file`, minus the expired ones; all of them end if the password
+    /// changed while the service was off (`--set-password` from a terminal).
+    pub fn open(file: PathBuf, password_hash: Option<&str>, now: SystemTime) -> Self {
+        let password = password_hash.map(sha256_hex).unwrap_or_default();
+        let loaded: Option<SessionsFile> = std::fs::read_to_string(&file).ok().and_then(|t| serde_json::from_str(&t).ok());
+        let mut st = SessionsFile { password, sessions: HashMap::new() };
+        // A file that is unreadable, from another password or with nothing left goes.
+        let mut changed = file.exists();
+        if let Some(f) = loaded
+            && f.password == st.password
+            && password_hash.is_some()
         {
-            m.remove(&oldest);
+            let n = f.sessions.len();
+            let t = unix_secs(now);
+            st.sessions = f.sessions.into_iter().filter(|(_, exp)| *exp > t).collect();
+            if st.sessions.len() > MAX_SESSIONS {
+                let mut by_exp: Vec<u64> = st.sessions.values().copied().collect();
+                by_exp.sort_unstable();
+                let keep_from = by_exp[by_exp.len() - MAX_SESSIONS];
+                st.sessions.retain(|_, exp| *exp >= keep_from);
+            }
+            changed = st.sessions.len() != n || st.sessions.is_empty();
         }
-        m.insert(id.clone(), now + SESSION_TTL);
+        let s = Self { file: Some(file), state: Mutex::new(st) };
+        if changed {
+            let st = s.state.lock().unwrap();
+            if st.sessions.is_empty() { s.remove_file() } else { s.save(&st) }
+        }
+        s
+    }
+
+    /// Written whole to a temporary file, then renamed over the old one (readable by the owner
+    /// only on Unix). A failure only costs a sign-in after the next restart.
+    fn save(&self, st: &SessionsFile) {
+        let Some(file) = &self.file else { return };
+        let Ok(body) = serde_json::to_string(st) else { return };
+        let tmp = file.with_extension("json.tmp");
+        let res = std::fs::write(&tmp, body).and_then(|_| {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+            }
+            std::fs::rename(&tmp, file)
+        });
+        if let Err(e) = res {
+            let _ = std::fs::remove_file(&tmp);
+            tracing::warn!("cannot save browser sessions to {}: {e}", file.display());
+        }
+    }
+
+    fn remove_file(&self) {
+        if let Some(file) = &self.file
+            && let Err(e) = std::fs::remove_file(file)
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!("cannot remove {}: {e}", file.display());
+        }
+    }
+
+    pub fn create(&self, now: SystemTime) -> String {
+        let id = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
+        let t = unix_secs(now);
+        let mut st = self.state.lock().unwrap();
+        st.sessions.retain(|_, exp| *exp > t);
+        if st.sessions.len() >= MAX_SESSIONS
+            && let Some(oldest) = st.sessions.iter().min_by_key(|(_, exp)| **exp).map(|(k, _)| k.clone())
+        {
+            st.sessions.remove(&oldest);
+        }
+        st.sessions.insert(sha256_hex(&id), t + SESSION_TTL.as_secs());
+        self.save(&st);
         id
     }
 
-    pub fn valid(&self, id: &str, now: Instant) -> bool {
-        self.by_id.lock().unwrap().get(id).is_some_and(|exp| *exp > now)
+    pub fn valid(&self, id: &str, now: SystemTime) -> bool {
+        self.state.lock().unwrap().sessions.get(&sha256_hex(id)).is_some_and(|exp| *exp > unix_secs(now))
     }
 
     pub fn remove(&self, id: &str) {
-        self.by_id.lock().unwrap().remove(id);
+        let mut st = self.state.lock().unwrap();
+        if st.sessions.remove(&sha256_hex(id)).is_some() {
+            self.save(&st);
+        }
     }
 
-    /// The password changed or was removed: every browser signs in again.
-    pub fn clear(&self) {
-        self.by_id.lock().unwrap().clear();
+    /// The password changed or was removed (`password_hash`: the one now in use): every
+    /// browser signs in again, after a restart too.
+    pub fn clear(&self, password_hash: Option<&str>) {
+        let mut st = self.state.lock().unwrap();
+        st.sessions.clear();
+        st.password = password_hash.map(sha256_hex).unwrap_or_default();
+        self.remove_file();
     }
 }
 
@@ -262,7 +357,7 @@ mod tests {
     #[test]
     fn sessions_expire_and_end_with_a_new_password() {
         let s = Sessions::default();
-        let t = Instant::now();
+        let t = SystemTime::now();
         let a = s.create(t);
         let b = s.create(t);
         assert_ne!(a, b);
@@ -272,8 +367,80 @@ mod tests {
         assert!(!s.valid(&a, t + SESSION_TTL + Duration::from_secs(1)));
         s.remove(&a);
         assert!(!s.valid(&a, t) && s.valid(&b, t));
-        s.clear();
+        s.clear(None);
         assert!(!s.valid(&b, t));
+    }
+
+    #[test]
+    fn sessions_survive_a_restart_as_hashes_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = sessions_file(dir.path());
+        let t = SystemTime::now();
+        let s = Sessions::open(f.clone(), Some("hash-1"), t);
+        let a = s.create(t);
+        let b = s.create(t);
+        s.remove(&b);
+        let text = std::fs::read_to_string(&f).unwrap();
+        assert!(!text.contains(&a), "the cookie value is never written");
+        assert!(!text.contains("hash-1"));
+        drop(s);
+        let s = Sessions::open(f.clone(), Some("hash-1"), t + Duration::from_secs(3600));
+        assert!(s.valid(&a, t) && !s.valid(&b, t));
+        // A password set while the service was off ends them, and so does none at all.
+        let s = Sessions::open(f.clone(), Some("hash-2"), t);
+        assert!(!s.valid(&a, t));
+        assert!(!f.exists());
+        let c = s.create(t);
+        assert!(!Sessions::open(f.clone(), None, t).valid(&c, t));
+    }
+
+    #[test]
+    fn expired_sessions_are_dropped_on_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = sessions_file(dir.path());
+        let t = SystemTime::now();
+        let s = Sessions::open(f.clone(), Some("h"), t);
+        let old = s.create(t);
+        let new = s.create(t + Duration::from_secs(86_400));
+        let later = t + SESSION_TTL + Duration::from_secs(60);
+        let s = Sessions::open(f.clone(), Some("h"), later);
+        assert!(!s.valid(&old, later) && s.valid(&new, later));
+        let kept: SessionsFile = serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
+        assert_eq!(kept.sessions.len(), 1, "the file is rewritten without the expired one");
+        let all_gone = Sessions::open(f.clone(), Some("h"), later + SESSION_TTL);
+        assert!(!all_gone.valid(&new, later) && !f.exists());
+    }
+
+    #[test]
+    fn clear_empties_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = sessions_file(dir.path());
+        let t = SystemTime::now();
+        let s = Sessions::open(f.clone(), Some("h"), t);
+        let a = s.create(t);
+        assert!(f.exists());
+        s.clear(Some("new"));
+        assert!(!f.exists() && !s.valid(&a, t));
+        assert!(!Sessions::open(f.clone(), Some("h"), t).valid(&a, t), "not back after a restart");
+        // New sign-ins are kept under the new password.
+        let b = s.create(t);
+        assert!(Sessions::open(f.clone(), Some("new"), t).valid(&b, t));
+        std::fs::write(&f, "not json").unwrap();
+        assert!(!Sessions::open(f.clone(), Some("new"), t).valid(&b, t), "a broken file counts as none");
+        assert!(!f.exists());
+    }
+
+    #[test]
+    fn at_most_max_sessions_are_loaded() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = sessions_file(dir.path());
+        let t = SystemTime::now();
+        let sessions = (0..MAX_SESSIONS as u64 + 5).map(|i| (format!("{i}"), unix_secs(t) + 1000 + i)).collect();
+        std::fs::write(&f, serde_json::to_string(&SessionsFile { password: sha256_hex("h"), sessions }).unwrap()).unwrap();
+        let s = Sessions::open(f.clone(), Some("h"), t);
+        let st = s.state.lock().unwrap();
+        assert_eq!(st.sessions.len(), MAX_SESSIONS);
+        assert!(!st.sessions.contains_key("0"), "the oldest go first");
     }
 
     #[test]

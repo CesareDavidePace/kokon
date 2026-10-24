@@ -209,7 +209,20 @@ export function subscribe(onEvent: (e: ServiceEvent) => void, onState?: (connect
     es.onerror = () => {
       onState?.(false);
       es?.close();
-      if (!closed) retry = window.setTimeout(open, 1500);
+      if (closed) return;
+      retry = window.setTimeout(open, 1500);
+      // An EventSource never says why it failed: a browser whose session ended (new password, a
+      // restart that didn't keep it) goes to the sign-in now, not at the next heartbeat.
+      if (inBrowser)
+        api.session().then(
+          (s) => {
+            if (s.signed_in || closed) return;
+            closed = true;
+            window.clearTimeout(retry);
+            onSignedOut();
+          },
+          () => {},
+        );
     };
   };
   open();

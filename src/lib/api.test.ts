@@ -3,7 +3,7 @@
 // when the session ends.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api, configure, setSignedOutHandler, urls } from "./api";
+import { api, configure, setSignedOutHandler, subscribe, urls } from "./api";
 import { inBrowser } from "./platform";
 
 function reply(status: number, body: unknown) {
@@ -46,5 +46,33 @@ describe("api in a browser", () => {
     expect(signedOut).toHaveBeenCalledTimes(1);
     await expect(api.login("wrong one")).rejects.toThrow();
     expect(signedOut).toHaveBeenCalledTimes(1);
+  });
+
+  it("goes to the sign-in as soon as the event stream fails for a signed-out browser", async () => {
+    configure("/api/v1", "");
+    const signedOut = vi.fn();
+    setSignedOutHandler(signedOut);
+    const streams: { onerror: (() => void) | null; close: () => void }[] = [];
+    vi.stubGlobal("EventSource", class {
+      onopen = null;
+      onmessage = null;
+      onerror: (() => void) | null = null;
+      constructor(public url: string) {
+        streams.push(this);
+      }
+      close() {}
+    });
+    let signedIn = true;
+    vi.stubGlobal("fetch", vi.fn(() => reply(200, { signed_in: signedIn, password_set: true })));
+    const stop = subscribe(() => {});
+    // Still signed in (the service restarted): only the usual retry.
+    streams[0].onerror?.();
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    expect(signedOut).not.toHaveBeenCalled();
+    signedIn = false;
+    streams[0].onerror?.();
+    await vi.waitFor(() => expect(signedOut).toHaveBeenCalledTimes(1));
+    expect((fetch as unknown as { mock: { calls: [string][] } }).mock.calls[1][0]).toBe("/api/v1/auth/session");
+    stop();
   });
 });

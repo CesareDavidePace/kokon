@@ -65,19 +65,21 @@ struct Lan {
 impl RemoteState {
     pub fn new(data_dir: &std::path::Path, forced: bool) -> Self {
         let file = remote::password_file(data_dir);
-        let s = Self {
-            hash: RwLock::new(None),
-            seen: Mutex::new(None),
+        let seen = std::fs::metadata(&file).and_then(|m| m.modified()).ok();
+        let hash = remote::load_hash(&file);
+        // Sign-ins from before a restart stay, as long as the password is the same.
+        let sessions = Sessions::open(remote::sessions_file(data_dir), hash.as_deref(), SystemTime::now());
+        Self {
+            hash: RwLock::new(hash),
+            seen: Mutex::new(seen),
             file,
-            sessions: Sessions::default(),
+            sessions,
             limiter: Limiter::default(),
             forced,
             listener: Mutex::new(None),
             error: Mutex::new(None),
             epoch: tokio::sync::watch::channel(0).0,
-        };
-        s.reload_if_changed();
-        s
+        }
     }
 
     pub fn password_set(&self) -> bool {
@@ -85,7 +87,7 @@ impl RemoteState {
     }
 
     fn end_sessions(&self) {
-        self.sessions.clear();
+        self.sessions.clear(self.hash().as_deref());
         self.epoch.send_modify(|e| *e += 1);
     }
 
@@ -215,7 +217,7 @@ fn cookie_value(headers: &HeaderMap) -> Option<String> {
 
 /// A signed-in browser (valid session cookie).
 pub fn browser_session(state: &AppState, headers: &HeaderMap) -> bool {
-    cookie_value(headers).is_some_and(|id| state.remote.sessions.valid(&id, Instant::now()))
+    cookie_value(headers).is_some_and(|id| state.remote.sessions.valid(&id, SystemTime::now()))
 }
 
 fn peer_ip(req: &Request) -> IpAddr {
@@ -277,7 +279,7 @@ pub async fn login(State(s): State<Arc<AppState>>, req: Request) -> Response {
         return err(ErrorCode::LoginRequired, "Wrong password.");
     }
     s.remote.limiter.succeed(ip);
-    let id = s.remote.sessions.create(Instant::now());
+    let id = s.remote.sessions.create(SystemTime::now());
     tracing::info!("browser signed in from {ip}");
     let cookie = format!("{SESSION_COOKIE}={id}; Path=/; HttpOnly; SameSite=Strict; Max-Age={}", SESSION_TTL.as_secs());
     let mut r = Json(json!({ "signed_in": true })).into_response();

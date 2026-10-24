@@ -194,12 +194,16 @@ export const urls = {
   inputThumb: (id: string) => `${base}/inputs/${id}/thumb${tq("?")}`,
   gen: (id: string) => `${base}/gallery/${id}/image${tq("?")}`,
   genThumb: (id: string) => `${base}/gallery/${id}/thumb${tq("?")}`,
+  /** Screen-sized copies for a browser's stage (at most `PREVIEW_SIDE` px, logic.ts). */
+  genPreview: (id: string) => `${base}/gallery/${id}/preview${tq("?")}`,
+  inputPreview: (id: string) => `${base}/inputs/${id}/preview${tq("?")}`,
   /** The result before the upscaler enlarged it (`pipeline.original_path`). */
   genOriginal: (id: string) => `${base}/gallery/${id}/original${tq("?")}`,
   /** Full image for a "gen:<id>" / "input:<id>" source. */
   source: (s: string) => (s.startsWith("gen:") ? urls.gen(s.slice(4)) : urls.input(s.slice(6))),
   /** A LUT on a "gen:"/"input:" source at full strength, at most `max` px on its long side. */
   lutPreview: (name: string, source: string, max: number) => `${base}/luts/${encodeURIComponent(name)}/preview?source=${encodeURIComponent(source)}&max=${max}${tq("&")}`,
+  sourcePreview: (s: string) => (s.startsWith("gen:") ? urls.genPreview(s.slice(4)) : urls.inputPreview(s.slice(6))),
   sourceThumb: (s: string) => (s.startsWith("gen:") ? urls.genThumb(s.slice(4)) : urls.inputThumb(s.slice(6))),
 };
 

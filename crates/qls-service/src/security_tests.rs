@@ -323,3 +323,33 @@ async fn the_network_stays_closed_without_a_password() {
     assert!(!f.state.engine.config().remote_access);
     assert_eq!(r.body["listening"], false);
 }
+
+#[tokio::test]
+async fn a_browser_opens_a_project_with_one_request_and_previews() {
+    let f = fixture(true);
+    let a = app(&f, true, "192.168.1.50");
+    let cookie = sign_in(&a).await;
+    let c = ("cookie", cookie.as_str());
+    let img = image::RgbaImage::from_pixel(2000, 1000, image::Rgba([10, 20, 30, 255]));
+    let png = qls_core::imaging::encode_png(&img, &[], None, true).unwrap();
+    let input = f.state.engine.store.put_input(&png, Some("a.png"), None).unwrap();
+    let project = json!({ "meta": { "id": "p", "title": "t", "updatedAt": 1.0 }, "items": [
+        { "key": "i", "kind": "input", "inputId": input.id },
+        { "key": "r-gone", "kind": "gen", "genId": "gone" },
+    ] });
+    let r = send(&a, "PUT", "/api/v1/projects/p", &[c, CSRF], Some(json!({ "project": project }))).await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
+    let r = send(&a, "GET", "/api/v1/projects/p/records", &[c], None).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.body["inputs"][&input.id]["width"], 2000);
+    assert_eq!(r.body["generations"], json!({}), "a deleted version is left out");
+    assert_eq!(send(&a, "GET", "/api/v1/projects/nope/records", &[c], None).await.status, StatusCode::NOT_FOUND);
+    let r = send(&a, "GET", &format!("/api/v1/inputs/{}/preview", input.id), &[c], None).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.headers[header::CONTENT_TYPE], "image/jpeg");
+    assert!(r.headers[header::CACHE_CONTROL].to_str().unwrap().contains("immutable"));
+    assert!(f.state.engine.store.input_preview_path(&input.id).with_extension("preview.jpg").is_file());
+    assert_eq!(send(&a, "GET", "/api/v1/gallery/gone/preview", &[c], None).await.status, StatusCode::NOT_FOUND);
+    // Signed out: nothing.
+    assert_eq!(send(&a, "GET", "/api/v1/projects/p/records", &[], None).await.status, StatusCode::UNAUTHORIZED);
+}

@@ -266,8 +266,9 @@ pub fn browser_allowed(method: &str, path: &str) -> bool {
         ("GET", ["setup", "hardware" | "install" | "legacy-upscalers"]) => true,
         ("GET", ["enhancer", "defaults"]) => true,
         ("GET", ["jobs", _] | ["jobs", _, "wait"]) => true,
-        ("GET", ["inputs", _] | ["inputs", _, "image" | "thumb"]) => true,
-        ("GET", ["gallery", _] | ["gallery", _, "image" | "thumb" | "original"]) => true,
+        ("GET", ["inputs", _] | ["inputs", _, "image" | "thumb" | "preview"]) => true,
+        ("GET", ["gallery", _] | ["gallery", _, "image" | "thumb" | "preview" | "original"]) => true,
+        ("GET", ["projects", _, "records"]) => true,
         ("GET", ["luts", _, "preview"]) => true,
         ("GET" | "PUT" | "DELETE", ["projects", _]) => true,
         ("PUT", ["config"]) => true,
@@ -449,6 +450,9 @@ mod tests {
         for (m, p) in [
             ("GET", "/status"),
             ("GET", "/gallery/abc/image"),
+            ("GET", "/gallery/abc/preview"),
+            ("GET", "/inputs/abc/preview"),
+            ("GET", "/projects/abc/records"),
             ("GET", "/events"),
             ("POST", "/jobs"),
             ("POST", "/inputs"),
@@ -478,6 +482,8 @@ mod tests {
             ("POST", "/remote/password"),
             ("DELETE", "/jobs"),
             ("GET", "/gallery/a/b/c"),
+            ("POST", "/gallery/abc/preview"),
+            ("PUT", "/projects/abc/records"),
         ] {
             assert!(!browser_allowed(m, p), "{m} {p}");
         }

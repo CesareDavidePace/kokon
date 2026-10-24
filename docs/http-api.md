@@ -87,6 +87,7 @@ can be read and changed; send it back as `prompt` with `"enhanced_from"` set to 
 | POST | `/inputs/import` | Import an image from a path on this machine: `{"path": "..."}`; `?private=true` is allowed |
 | GET | `/inputs/{id}` | The stored input's record |
 | GET | `/inputs/{id}/image`, `/inputs/{id}/thumb` | The image, or its thumbnail |
+| GET | `/inputs/{id}/preview` | A screen-sized copy (at most 1280 px on the long side, JPEG; PNG if it has transparency), made on first request |
 | POST | `/image-info` | Size, aspect, type and embedded generation metadata of an image |
 | POST | `/private/clear` | End private mode: delete every private input and result |
 
@@ -100,6 +101,7 @@ can be read and changed; send it back as `prompt` with `"enhanced_from"` set to 
 | DELETE | `/gallery/{id}` | Delete a result and its files |
 | GET | `/gallery/{id}/image` | The result image |
 | GET | `/gallery/{id}/thumb` | Its thumbnail |
+| GET | `/gallery/{id}/preview` | A screen-sized copy, as for inputs |
 | GET | `/gallery/{id}/original` | The result before the upscaler enlarged it, when it was kept |
 | POST | `/gallery/{id}/export` | Save a copy to a path: `{"path": "...", "overwrite": false, "original": false}`; the format follows the file extension |
 

@@ -3417,6 +3417,7 @@ version = "0.10.2"
 dependencies = [
  "axum",
  "futures-util",
+ "image",
  "qls-core",
  "rpassword",
  "rust-embed",

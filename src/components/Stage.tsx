@@ -9,7 +9,7 @@ import {
 } from "../lib/logic";
 import { canCopyImage, native } from "../lib/native";
 import {
-  addAsReference, addResult, cancelJob, focusPrompt, getState, itemSource, removeSessionItem, reusePrompt, selectedItem, selectItem, sessionLabels, sessionLinks, setState, submitRequest, toastError, toastInfo, useStore, type SessionItem,
+  addAsReference, addResult, cancelJob, focusPrompt, getState, itemSource, removeSessionItem, reusePrompt, selectedItem, selectItem, sessionLabels, sessionLinks, setState, stageImage, submitRequest, toastError, toastInfo, useStore, type SessionItem,
 } from "../lib/store";
 import type { GenerationRecord, GenerationRequest, JobView, LutEntry, Mode, Size } from "../lib/types";
 import { Cocoon, Hatch } from "./Cocoon";
@@ -500,13 +500,16 @@ function InputActions({ item, onLut }: { item: SessionItem; onLut: (lut: LutEntr
  * full-screen button in its top-right corner. */
 /** `fill`: enlarged to fill the frame like the card it replaces (a result); otherwise never shown
  * wider than it is. */
-function PlainFrame({ src, alt, w, h, maskSrc, overlay, fill, onFullscreen }: { src: string; alt: string; w: number; h: number; maskSrc?: string; overlay?: React.ReactNode; fill?: boolean; onFullscreen: () => void }) {
+/** One image on the stage. With `source` ("gen:"/"input:"), a browser may load its preview
+ * (`stageImage`); `src` is loaded as it is. */
+function PlainFrame({ src, source, alt, w, h, maskSrc, overlay, fill, onFullscreen }: { src?: string; source?: string; alt: string; w: number; h: number; maskSrc?: string; overlay?: React.ReactNode; fill?: boolean; onFullscreen: () => void }) {
   const { ref, box } = useFit(w / h);
   const bw = fill ? box.w : Math.min(box.w, w);
+  const img = source ? stageImage(source, bw, bw * (h / w)) : src;
   return (
     <div className="stage-frame" ref={ref}>
       <div className="image-box" style={{ width: bw, height: bw * (h / w) }}>
-        <img className="stage-img fill" src={src} alt={alt} draggable={false} />
+        <img className="stage-img fill" src={img} alt={alt} draggable={false} />
         {maskSrc && <img className="stage-mask" src={maskSrc} alt="" draggable={false} />}
         {overlay}
         <FullscreenButton onOpen={onFullscreen} />
@@ -954,7 +957,7 @@ export function Stage() {
         {lutActive ? (
           <PlainFrame
             key={src}
-            src={src}
+            source={source}
             alt={g?.prompt ?? item.input?.original_name ?? ""}
             w={w}
             h={h}
@@ -966,7 +969,7 @@ export function Stage() {
         ) : item.gen && base ? (
           <CompareFrame key={`compare-${item.gen.id}`} g={item.gen} base={base} maskSrc={maskSrc} onFullscreen={openFull} />
         ) : (
-          <PlainFrame key={src} src={src} alt={item.gen?.prompt ?? item.input?.original_name ?? ""} w={w} h={h} maskSrc={maskSrc} fill={!!item.gen} onFullscreen={openFull} />
+          <PlainFrame key={src} source={source} alt={item.gen?.prompt ?? item.input?.original_name ?? ""} w={w} h={h} maskSrc={maskSrc} fill={!!item.gen} onFullscreen={openFull} />
         )}
         </Hatch>
         <StageBar item={item} label={labels[item.key]} showOriginal={showOriginal} setShowOriginal={(on) => setOriginalOf(on && g ? g.id : null)} lutBar={lutBar} onLut={startLut} />

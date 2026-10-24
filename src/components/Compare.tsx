@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { urls } from "../lib/api";
 import { diffPixels, type CompareBase, type CompareMode } from "../lib/logic";
-import { setState, useStore } from "../lib/store";
+import { inBrowser } from "../lib/platform";
+import { setState, stageImage, useStore } from "../lib/store";
 import type { GenerationRecord } from "../lib/types";
 import { Seg, useFit } from "./ui";
 import { FullscreenButton } from "./Viewer";
@@ -36,8 +37,14 @@ export function CompareFrame({ g, base, fullscreen = false, maskSrc, onFullscree
   const dragging = useRef(false);
   const boxRef = useRef<HTMLDivElement>(null);
   const contentSize = useMemo(() => ({ width: g.width, height: g.height }), [g.width, g.height]);
-  const after = urls.gen(g.id);
-  const before = urls.input(base.inputId);
+  // In a browser the Result view loads only the result, as a preview when it is as sharp
+  // (stageImage); the original loads the first time a view shows it, then stays. Comparisons
+  // and full screen use full-size images. The desktop app loads both at full size at once.
+  const result = mode === "off" && !fullscreen;
+  const after = result ? stageImage(`gen:${g.id}`, box.w, box.h) : urls.gen(g.id);
+  const beforeWanted = useRef(!inBrowser);
+  if (!result || holding) beforeWanted.current = true;
+  const before = beforeWanted.current ? urls.input(base.inputId) : undefined;
 
   useEffect(() => {
     if (mode !== "flicker") return;
@@ -110,7 +117,7 @@ export function CompareFrame({ g, base, fullscreen = false, maskSrc, onFullscree
         title={mode === "off" && !zoomed ? "Press and hold (or hold B) to see the original" : undefined}
       >
         <img className="compare-img" src={after} alt={g.prompt} draggable={false} />
-        {mode === "diff" && !holding && <DiffCanvas after={after} before={before} rect={base.rect} tagStyle={tag("left")} />}
+        {mode === "diff" && !holding && before && <DiffCanvas after={after} before={before} rect={base.rect} tagStyle={tag("left")} />}
         {/* The area painted for the next edit, on the result (the original covers it when shown). */}
         {maskSrc && <img className="stage-mask" src={maskSrc} alt="" draggable={false} />}
         {/* The original stays mounted (hidden) so switching is instant. */}
@@ -199,7 +206,7 @@ function DiffCanvas({ after, before, rect, tagStyle }: { after: string; before: 
         im.onerror = fail;
         // A separate URL: the displayed <img> loads without CORS, and reusing that cached
         // response for a CORS request would fail.
-        im.src = `${src}&cors=1`;
+        im.src = `${src}${src.includes("?") ? "&" : "?"}cors=1`;
       });
     Promise.all([load(after), load(before)])
       .then(([a, b]) => {

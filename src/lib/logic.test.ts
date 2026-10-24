@@ -3,6 +3,7 @@ import {
   activeLoras, activeOverrides, buildRequest, composing, editing, reviewRequest, wantsPromptReview, toggleLora, MAX_LORAS, jobPercent, compareBase, composerFromRecord, enhancerApplies, diffPixels, emptyComposer, expansionPixels, expansionPreset, jobLabel, jobSecondsLeft, lutInfo, moveRef, needsPrompt, normalizeQuality, persistentAdvanced, pipelineSummary,
   planPipeline, remainingSeconds, sizeForWidth, timeAgo, upscaleRequest, upscaleTargets, versionLabels, type JobClock, type Ref,
   neighbourAfterRemoval, pageOutdated, previewIndex, starPromptDue, STAR_PROMPT_AFTER, formatBytes, formatDuration, installItemShort, installItemText, installProgress, installStep, installTimeLeft, timelineLinks, undoTarget, aspectLabel, parseRatio, sizeForRatio, expandToRatio, expandToSize, arcLayout,
+  goneVersions, PREVIEW_SIDE, stageFitsPreview,
 } from "./logic";
 import type { GenerationRecord, InstallItem, JobView, LoraItem, Plan } from "./types";
 
@@ -559,5 +560,38 @@ describe("page version", () => {
     expect(pageOutdated("0.11.1", "0.11.2", "0.11.1")).toBe(true);
     expect(pageOutdated("0.11.0", undefined, null)).toBe(false);
     expect(pageOutdated("", "0.11.0", null)).toBe(false);
+  });
+});
+
+describe("opening a project in a browser", () => {
+  it("shows the preview only where it is as sharp as the full image", () => {
+    expect(PREVIEW_SIDE).toBe(1280);
+    // iPhone (390 px wide, 3x): a square image fills the width, 1170 device px.
+    expect(stageFitsPreview(390, 390, 3)).toBe(true);
+    // A portrait image there is drawn taller than the preview.
+    expect(stageFitsPreview(366, 488, 3)).toBe(false);
+    // A desktop browser: fits at 1x, not on a 2x screen.
+    expect(stageFitsPreview(1000, 750, 1)).toBe(true);
+    expect(stageFitsPreview(1000, 750, 2)).toBe(false);
+    expect(stageFitsPreview(1280, 1280, 1)).toBe(true);
+    expect(stageFitsPreview(1281, 600, 1)).toBe(false);
+    // Not measured yet, or an odd devicePixelRatio.
+    expect(stageFitsPreview(0, 0, 3)).toBe(false);
+    expect(stageFitsPreview(600, 600, 0)).toBe(true);
+  });
+
+  it("drops only the versions the service knew and has no record for", () => {
+    const items = [
+      { key: "i", kind: "input", inputId: "in1" },
+      { key: "a", kind: "gen", genId: "g1" },
+      { key: "gone", kind: "gen", genId: "g2" },
+      { key: "new", kind: "gen", genId: "g3" },
+      { key: "j", kind: "job" },
+    ];
+    const records = { generations: { g1: {} }, inputs: { in1: {} } };
+    expect([...goneVersions(items, records, ["i", "a", "gone", "j"])]).toEqual(["gone"]);
+    // A deleted input is dropped too; with no copy known, nothing is dropped.
+    expect([...goneVersions(items, { generations: { g1: {}, g2: {}, g3: {} }, inputs: {} }, ["i"])]).toEqual(["i"]);
+    expect(goneVersions(items, { generations: {}, inputs: {} }, []).size).toBe(0);
   });
 });

@@ -253,6 +253,11 @@ impl Store {
         self.data_dir.join("thumbs").join(format!("{id}.jpg"))
     }
 
+    /// Where the browser's screen-sized copy of result `id` is kept (see [`preview`]).
+    pub fn preview_path(&self, id: &str) -> PathBuf {
+        self.data_dir.join("thumbs").join(format!("{id}.preview"))
+    }
+
     /// The bundled example projects' images ([`crate::examples`]).
     pub fn examples_dir(&self) -> PathBuf {
         self.data_dir.join("examples")
@@ -362,6 +367,9 @@ impl Store {
             let _ = std::fs::remove_file(&f);
         }
         let _ = std::fs::remove_file(self.thumb_path(id));
+        let preview = self.preview_path(id);
+        let _ = std::fs::remove_file(preview.with_extension("preview.jpg"));
+        let _ = std::fs::remove_file(preview.with_extension("preview.png"));
         let _ = std::fs::remove_file(self.original_path(id));
         Ok(())
     }
@@ -445,10 +453,52 @@ impl Store {
         self.data_dir.join("inputs").join(format!("{id}.thumb.jpg"))
     }
 
+    /// Where the browser's screen-sized copy of input `id` is kept (see [`preview`]).
+    pub fn input_preview_path(&self, id: &str) -> PathBuf {
+        self.data_dir.join("inputs").join(format!("{id}.preview"))
+    }
+
     /// Full-size JPEG shown in the UI for inputs the WebView cannot display (HEIC).
     pub fn input_display_path(&self, id: &str) -> PathBuf {
         self.data_dir.join("inputs").join(format!("{id}.display.jpg"))
     }
+}
+
+/// Long side of the screen-sized copy a browser shows on the stage. A phone's stage is about
+/// 1170 device px wide (iPhone: 390 CSS px x 3). Measured 10-24 on 3 images: 140-370 kB as JPEG
+/// q85 against 6-7 MB for a 2048x2048 PNG, about 40 ms to make.
+pub const PREVIEW_SIDE: u32 = 1280;
+
+/// The screen-sized copy of the image at `src` (at most [`PREVIEW_SIDE`] on its long side; a
+/// smaller image keeps its size), made on first request and kept at `stem` + ".jpg", or + ".png"
+/// for an image with transparency, which JPEG would lose. Returns the file and its type.
+pub fn preview(src: &Path, stem: &Path) -> AppResult<(PathBuf, &'static str)> {
+    let jpg = stem.with_extension("preview.jpg");
+    let png = stem.with_extension("preview.png");
+    if jpg.is_file() {
+        return Ok((jpg, "image/jpeg"));
+    }
+    if png.is_file() {
+        return Ok((png, "image/png"));
+    }
+    let bytes = std::fs::read(src).map_err(|e| AppError::io("read the image", src, e))?;
+    let img = crate::imaging::decode_image(&bytes)?;
+    let small = crate::imaging::thumbnail(&img.pixels, PREVIEW_SIDE);
+    let (out, data, ct) = if img.has_transparency {
+        (png, crate::imaging::encode_png(&small, &[], None, true)?, "image/png")
+    } else {
+        (jpg, crate::imaging::encode_jpeg(&small, 85)?, "image/jpeg")
+    };
+    if let Some(dir) = out.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    // Two browsers may ask at once: each writes its own file, the rename is atomic.
+    let tmp = out.with_extension(format!("{}.part", uuid::Uuid::new_v4().simple()));
+    std::fs::write(&tmp, &data).map_err(|e| AppError::io("save the preview", &tmp, e))?;
+    if std::fs::rename(&tmp, &out).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    Ok((out, ct))
 }
 
 #[cfg(test)]
@@ -583,5 +633,42 @@ mod tests {
         assert!(s.input_thumb_path(&a.id).is_file());
         assert!(s.get_input("../../etc").is_err());
         assert!(s.put_input(b"garbage", None, None).is_err());
+    }
+
+    #[test]
+    fn previews_are_screen_sized_and_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(dir.path()).unwrap();
+        let big = dir.path().join("big.png");
+        std::fs::write(&big, crate::imaging::encode_png(&image::RgbaImage::from_pixel(2048, 1024, image::Rgba([9, 99, 199, 255])), &[], None, true).unwrap()).unwrap();
+        let stem = s.preview_path("g1");
+        let (p, ct) = preview(&big, &stem).unwrap();
+        assert_eq!(ct, "image/jpeg");
+        assert_eq!(p, dir.path().join("thumbs").join("g1.preview.jpg"));
+        let img = crate::imaging::decode_image(&std::fs::read(&p).unwrap()).unwrap();
+        assert_eq!((img.pixels.width(), img.pixels.height()), (PREVIEW_SIDE, PREVIEW_SIDE / 2));
+        // Made once: later requests read the kept file.
+        std::fs::remove_file(&big).unwrap();
+        assert_eq!(preview(&big, &stem).unwrap().0, p);
+        assert!(preview(&big, &s.preview_path("g2")).is_err(), "no source, no preview");
+        // A smaller image keeps its size; transparency stays (PNG).
+        let small = dir.path().join("small.png");
+        std::fs::write(&small, crate::imaging::encode_png(&image::RgbaImage::from_pixel(300, 200, image::Rgba([1, 2, 3, 255])), &[], None, true).unwrap()).unwrap();
+        let (p, ct) = preview(&small, &s.input_preview_path("abc")).unwrap();
+        assert_eq!(ct, "image/jpeg");
+        assert_eq!(crate::imaging::decode_image(&std::fs::read(&p).unwrap()).unwrap().pixels.dimensions(), (300, 200));
+        let clear = dir.path().join("clear.png");
+        std::fs::write(&clear, crate::imaging::encode_png(&image::RgbaImage::from_pixel(1600, 1600, image::Rgba([1, 2, 3, 0])), &[], None, true).unwrap()).unwrap();
+        let (p, ct) = preview(&clear, &s.preview_path("g3")).unwrap();
+        assert_eq!(ct, "image/png");
+        let img = crate::imaging::decode_image(&std::fs::read(&p).unwrap()).unwrap();
+        assert!(img.has_transparency);
+        assert_eq!(img.pixels.dimensions(), (PREVIEW_SIDE, PREVIEW_SIDE));
+        // Removing the result removes its preview.
+        let mut r = rec("g1", "p", "2026-10-24T10:00:00.000Z");
+        r.file_path = dir.path().join("out").join("g1.png").to_string_lossy().into_owned();
+        s.insert_generation(&r).unwrap();
+        s.delete_generation("g1", &dir.path().join("out")).unwrap();
+        assert!(!dir.path().join("thumbs").join("g1.preview.jpg").exists());
     }
 }

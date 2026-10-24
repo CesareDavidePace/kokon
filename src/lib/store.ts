@@ -8,8 +8,8 @@
 import { inBrowser, isNarrow } from "./platform";
 import { useSyncExternalStore } from "react";
 import { markFresh } from "../components/Cocoon";
-import { api, ApiError, setPrivateInputs, subscribe } from "./api";
-import { activeLoras, buildRequest, composing, emptyComposer, goneVersions, needsPrompt, newKey, pageOutdated, persistentAdvanced, refFromGen, refFromInput, reviewRequest, starPromptDue, timelineLinks, undoTarget, versionLabels, wantsPromptReview, type CompareMode, type Composer, type Ref } from "./logic";
+import { api, ApiError, setPrivateInputs, subscribe, urls } from "./api";
+import { activeLoras, buildRequest, composing, emptyComposer, goneVersions, needsPrompt, newKey, pageOutdated, persistentAdvanced, refFromGen, refFromInput, reviewRequest, stageFitsPreview, starPromptDue, timelineLinks, undoTarget, versionLabels, wantsPromptReview, type CompareMode, type Composer, type Ref } from "./logic";
 import type { AppErrorBody, GenerationRecord, GenerationRequest, InputRecord, JobView, LoraItem, ServerState, StatusResponse } from "./types";
 
 export type Overlay = null | "gallery" | "settings" | "inpaint" | "expand" | "welcome" | "whats-new" | "prompt-tips" | "shortcuts";
@@ -742,11 +742,36 @@ export async function switchProject(id: string, selectKey?: string) {
   const data = projects[id];
   if (!data) return;
   const token = ++switching;
-  const session = await hydrate(data.items);
+  preloadStage(data, selectKey);
+  const session = await hydrate(data.items, id);
   if (token !== switching) return;
   const keep = (k: string | null | undefined) => (k && session.some((i) => i.key === k) ? k : null);
   const selected = keep(selectKey) ?? keep(data.selected) ?? session[session.length - 1]?.key ?? null;
   setState((s) => ({ projectId: id, session, selected, overlay: null, redo: [], composer: { ...composerFor(s.composer, session, selected), loras: data.loras ?? null } }));
+}
+
+// In a browser the stage shows a screen-sized preview when it is as sharp there (logic.ts
+// stageFitsPreview). Until a stage has measured itself, a phone is assumed to fit.
+let stageFits = isNarrow();
+let preloading: HTMLImageElement | null = null;
+
+/** The image the stage loads, drawn at `w`×`h` CSS px: in a browser the preview when it fits,
+ * else (and always in the desktop app) the full image. */
+export function stageImage(source: string, w: number, h: number): string {
+  if (!inBrowser) return urls.source(source);
+  if (w > 0 && h > 0) stageFits = stageFitsPreview(w, h, window.devicePixelRatio || 1);
+  return stageFits ? urls.sourcePreview(source) : urls.source(source);
+}
+
+/** A project is being opened: its selected version's preview starts loading now, alongside
+ * its records, instead of after them (a browser only). */
+function preloadStage(data: ProjectData, selectKey?: string) {
+  if (!inBrowser || !stageFits) return;
+  const it = data.items.find((i) => i.key === selectKey) ?? data.items.find((i) => i.key === data.selected) ?? data.items.findLast((i) => i.kind !== "job");
+  const src = it && storedSource(it);
+  if (!src) return;
+  preloading = new Image();
+  preloading.src = urls.sourcePreview(src);
 }
 
 /** Switches the project's LoRAs (the composer's LoRA badge); new projects start with the ones

@@ -102,10 +102,12 @@ pub fn router(state: Arc<AppState>, lan: bool) -> Router {
         .route("/inputs/{id}", get(get_input))
         .route("/inputs/{id}/image", get(input_image))
         .route("/inputs/{id}/thumb", get(input_thumb))
+        .route("/inputs/{id}/preview", get(input_preview))
         .route("/gallery", get(gallery_list))
         .route("/gallery/{id}", get(gallery_get).patch(gallery_patch).delete(gallery_delete))
         .route("/gallery/{id}/image", get(gallery_image))
         .route("/gallery/{id}/thumb", get(gallery_thumb))
+        .route("/gallery/{id}/preview", get(gallery_preview))
         .route("/gallery/{id}/original", get(gallery_original))
         .route("/gallery/{id}/export", post(gallery_export))
         .route("/image-info", post(image_info))
@@ -1057,6 +1059,20 @@ async fn input_thumb(State(s): St, AxPath(id): AxPath<String>) -> ApiResult<Resp
     serve_file(&store.input_thumb_path(&id), Some("image/jpeg")).await
 }
 
+/// A screen-sized copy of `src` for the browser's stage, made once (`qls_core::store::preview`).
+async fn serve_preview(src: PathBuf, stem: PathBuf) -> ApiResult<Response> {
+    let (p, ct) = tokio::task::spawn_blocking(move || qls_core::store::preview(&src, &stem)).await.map_err(AppError::internal)??;
+    serve_file(&p, Some(ct)).await
+}
+
+async fn input_preview(State(s): St, AxPath(id): AxPath<String>) -> ApiResult<Response> {
+    let store = s.engine.input_store(&id);
+    let r = store.get_input(&id)?;
+    // From the JPEG kept for display, as `input_image` serves it.
+    let src = if r.format == "heic" { store.input_display_path(&id) } else { PathBuf::from(&r.path) };
+    serve_preview(src, store.input_preview_path(&id)).await
+}
+
 // ---------------------------------------------------------------------------------------
 // Gallery
 // ---------------------------------------------------------------------------------------
@@ -1111,6 +1127,12 @@ async fn gallery_thumb(State(s): St, AxPath(id): AxPath<String>) -> ApiResult<Re
         return serve_file(Path::new(&r.file_path), None).await;
     }
     serve_file(&p, Some("image/jpeg")).await
+}
+
+async fn gallery_preview(State(s): St, AxPath(id): AxPath<String>) -> ApiResult<Response> {
+    let store = s.engine.gen_store(&id);
+    let r = store.get_generation(&id)?;
+    serve_preview(PathBuf::from(&r.file_path), store.preview_path(&id)).await
 }
 
 #[derive(Deserialize)]

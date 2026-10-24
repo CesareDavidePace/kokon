@@ -19,6 +19,8 @@ describe("api in a browser", () => {
     configure("/api/v1", "");
     expect(urls.gen("abc")).toBe("/api/v1/gallery/abc/image");
     expect(urls.inputThumb("x")).toBe("/api/v1/inputs/x/thumb");
+    expect(urls.sourcePreview("gen:abc")).toBe("/api/v1/gallery/abc/preview");
+    expect(urls.sourcePreview("input:x")).toBe("/api/v1/inputs/x/preview");
     expect(urls.lutPreview("warm", "gen:1", 512)).toBe("/api/v1/luts/warm/preview?source=gen%3A1&max=512");
   });
 

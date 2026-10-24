@@ -8,7 +8,7 @@ import { MODE_LABEL, neighbourAfterRemoval, previewIndex } from "../lib/logic";
 import type { GenerationRecord } from "../lib/types";
 import { DevelopImg } from "./Develop";
 import { IconButton, Seg } from "./ui";
-import { Fullscreen, isTyping, NavArrows, navKey, useMouseActive, ZoomImage, type ViewerNav } from "./Viewer";
+import { Fullscreen, isTyping, NavArrows, navKey, SwipeNav, useMouseActive, ZoomImage, type ViewerNav } from "./Viewer";
 
 const PAGE = 60;
 /** Most images the server returns in one request. */
@@ -344,9 +344,12 @@ function Preview(props: {
         <span className="muted preview-pos">{nav.pos}</span>
       </div>
       <div className="preview-stage" onPointerMove={wake} onMouseEnter={wake}>
-        <div key={g.id} className="preview-img" onDoubleClick={() => setFull(true)}>
-          <DevelopImg src={urls.gen(g.id)} placeholder={urls.genThumb(g.id)} alt={g.prompt} />
-        </div>
+        <SwipeNav nav={nav} pageKey={g.id}>
+          <div className="preview-img" onDoubleClick={() => setFull(true)}>
+            {/* A phone shows the screen-sized preview here (full screen loads more when zoomed). */}
+            <DevelopImg src={inBrowser && isNarrow() ? urls.genPreview(g.id) : urls.gen(g.id)} placeholder={urls.genThumb(g.id)} alt={g.prompt} />
+          </div>
+        </SwipeNav>
         <NavArrows nav={nav} visible={active} />
       </div>
       <div className="preview-bar">

@@ -674,6 +674,11 @@ pre.diag { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font
 .zoom-minimap-viewport { position: absolute; border: 1.5px solid #fff; border-radius: 3px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.4); pointer-events: none; }
 /* comparison full screen: the frame leaves room for the view switch at the bottom */
 .viewer-frame { position: absolute; inset: 60px 12px 64px; display: flex; align-items: center; justify-content: center; }
+/* Viewer.tsx SwipeNav: fills its place, the page in it too (children keep their own positions) */
+.swipe-nav, .swipe-nav-page { position: absolute; inset: 0; }
+.swipe-nav { touch-action: pan-y; }
+.swipe-nav-page.enter-right { animation: page-right 0.46s var(--ease) both; }
+.swipe-nav-page.enter-left { animation: page-left 0.46s var(--ease) both; }
 .viewer-compare-bar { position: absolute; left: 0; right: 0; bottom: 14px; display: flex; justify-content: center; }
 .viewer-compare-bar .compare-bar { margin: 0; padding: 4px; border-radius: 12px; background: rgba(20, 20, 20, 0.85); }
 /* full screen is viewed from further away: larger view switch and zoom bar */
@@ -693,6 +698,9 @@ pre.diag { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font
 .nav-arrow.right { right: 14px; }
 .nav-arrow:hover { background: rgba(0, 0, 0, 0.72); }
 .nav-arrow.hidden { opacity: 0; }
+/* A touch screen swipes instead (Viewer.tsx SwipeNav): the hidden arrows would only catch the
+   swipes that start near an edge. */
+@media (hover: none) and (pointer: coarse) { .nav-arrow { display: none; } }
 .nav-arrow:focus-visible { opacity: 1; }
 
 /* gallery preview: one image over the grid */

@@ -378,5 +378,5 @@ html.keyboard .composer-wrap.phone { padding-bottom: 8px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .phone-screen.project, .phone-screen.library, .swipe-page.enter-right, .swipe-page.enter-left, .lib-card, .phone-empty, .popover.sheet { animation: none; }
+  .phone-screen.project, .phone-screen.library, .swipe-page.enter-right, .swipe-page.enter-left, .swipe-nav-page, .lib-card, .phone-empty, .popover.sheet { animation: none; }
 }

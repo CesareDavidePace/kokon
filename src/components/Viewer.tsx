@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, Maximize2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { urls } from "../lib/api";
+import { haptic } from "../lib/haptics";
 import { native } from "../lib/native";
 import { inBrowser } from "../lib/platform";
 import { ZoomPan } from "./ZoomPan";
@@ -103,6 +104,76 @@ export function NavArrows({ nav, visible }: { nav: ViewerNav; visible: boolean }
   );
 }
 
+/** A horizontal swipe steps through `nav` on a touch screen: the picture follows the finger
+ * (only a little past the ends) and the next one slides in from that side, as the phone's
+ * versions do. Not while zoomed in, nor on a control or the comparison slider; a second
+ * finger (pinch) cancels it. `pageKey` names what is shown. */
+export function SwipeNav({ nav, pageKey, className = "", children }: { nav: ViewerNav; pageKey: string; className?: string; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const touch = useRef<{ x: number; y: number; t: number; dx: number; axis: "x" | "y" | null } | null>(null);
+  // The side the page just swiped to slides in from.
+  const [enter, setEnter] = useState<"left" | "right" | null>(null);
+  const place = (dx: number, animate: boolean) => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.transition = animate ? "transform 0.38s var(--ease), opacity 0.38s var(--ease)" : "none";
+    el.style.transform = dx ? `translateX(${dx}px)` : "";
+    el.style.opacity = dx ? String(1 - Math.min(0.5, Math.abs(dx) / 600)) : "";
+  };
+  const cancel = () => {
+    if (touch.current?.axis === "x") place(0, true);
+    touch.current = null;
+  };
+  return (
+    <div
+      className={`swipe-nav ${className}`}
+      onTouchStart={(e) => {
+        const t = e.target as HTMLElement;
+        if (e.touches.length !== 1 || t.closest("button, .zoomed, .compare-box.slider, .zoom-controls, .zoom-minimap, .viewer-compare-bar")) return cancel();
+        touch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: performance.now(), dx: 0, axis: null };
+      }}
+      onTouchMove={(e) => {
+        const s = touch.current;
+        if (!s) return;
+        if (e.touches.length !== 1) return cancel();
+        const dx = e.touches[0].clientX - s.x;
+        const dy = e.touches[0].clientY - s.y;
+        if (!s.axis && Math.hypot(dx, dy) > 8) s.axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+        if (s.axis !== "x") return;
+        s.dx = dx;
+        const end = (dx > 0 && !nav.prev) || (dx < 0 && !nav.next);
+        place(end ? dx * 0.22 : dx, false);
+      }}
+      onTouchEnd={() => {
+        const s = touch.current;
+        touch.current = null;
+        if (!s || s.axis !== "x") return;
+        const fast = Math.abs(s.dx) / Math.max(1, performance.now() - s.t) > 0.45;
+        const go = Math.abs(s.dx) > 64 || fast ? (s.dx < 0 ? nav.next : nav.prev) : undefined;
+        if (!go) return place(0, true);
+        haptic();
+        const el = ref.current;
+        if (el) {
+          el.style.transition = "transform 0.16s ease-in, opacity 0.16s ease-in";
+          el.style.transform = `translateX(${s.dx < 0 ? -90 : 90}px)`;
+          el.style.opacity = "0";
+        }
+        const from = s.dx < 0 ? "right" : "left";
+        window.setTimeout(() => {
+          go();
+          setEnter(from);
+          place(0, false);
+        }, 140);
+      }}
+      onTouchCancel={cancel}
+    >
+      <div ref={ref} key={pageKey} className={`swipe-nav-page ${enter ? `enter-${enter}` : ""}`} onAnimationEnd={(e) => e.target === e.currentTarget && setEnter(null)}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 /** ←/↑ and →/↓ call `nav`; returns true when the key was used. */
 export function navKey(e: KeyboardEvent, nav: ViewerNav | undefined): boolean {
   if (!nav || e.ctrlKey || e.metaKey || e.altKey) return false;
@@ -168,7 +239,13 @@ function FullscreenShell({ children, hint, onClose, nav }: { children: ReactNode
       onDoubleClick={stop}
       onContextMenu={stop}
     >
-      {children}
+      {nav ? (
+        <SwipeNav nav={nav} pageKey={nav.pos ?? ""}>
+          {children}
+        </SwipeNav>
+      ) : (
+        children
+      )}
       {nav && <NavArrows nav={nav} visible={active} />}
       <div className="viewer-bar">
         {nav?.pos && <span className="viewer-tag">{nav.pos}</span>}

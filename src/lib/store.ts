@@ -5,11 +5,11 @@
 // every project is kept as ids in `projects` (persisted) and re-loaded from the service when
 // opened again.
 
-import { isNarrow } from "./platform";
+import { inBrowser, isNarrow } from "./platform";
 import { useSyncExternalStore } from "react";
 import { markFresh } from "../components/Cocoon";
 import { api, ApiError, setPrivateInputs, subscribe } from "./api";
-import { activeLoras, buildRequest, composing, emptyComposer, needsPrompt, newKey, persistentAdvanced, refFromGen, refFromInput, reviewRequest, starPromptDue, timelineLinks, undoTarget, versionLabels, wantsPromptReview, type CompareMode, type Composer, type Ref } from "./logic";
+import { activeLoras, buildRequest, composing, emptyComposer, needsPrompt, newKey, pageOutdated, persistentAdvanced, refFromGen, refFromInput, reviewRequest, starPromptDue, timelineLinks, undoTarget, versionLabels, wantsPromptReview, type CompareMode, type Composer, type Ref } from "./logic";
 import type { AppErrorBody, GenerationRecord, GenerationRequest, InputRecord, JobView, LoraItem, ServerState, StatusResponse } from "./types";
 
 export type Overlay = null | "gallery" | "settings" | "inpaint" | "expand" | "welcome" | "whats-new" | "prompt-tips" | "shortcuts";
@@ -395,10 +395,33 @@ export async function refreshStatus() {
       }
     }
     setState({ status: st, server: { state: st.server.state, owned: st.server.owned, error: st.server.error } });
+    if (inBrowser) reloadIfOutdated(st.service.version);
     return st;
   } catch {
     return null;
   }
+}
+
+const RELOADED_FOR_KEY = "kokon.reloadedFor";
+
+/** Browser: the app on the server computer updated while this page was open (or cached), so it
+ * runs the old UI against the new service: load the new one, once per version (logic.ts
+ * `pageOutdated`). The desktop app updates its UI and service together. */
+function reloadIfOutdated(serviceVersion: string) {
+  let reloadedFor: string | null = null;
+  try {
+    reloadedFor = sessionStorage.getItem(RELOADED_FOR_KEY);
+  } catch {
+    /* storage unavailable: the write below fails too, and then no reload */
+  }
+  if (!pageOutdated(__KOKON_VERSION__, serviceVersion, reloadedFor)) return;
+  try {
+    sessionStorage.setItem(RELOADED_FOR_KEY, serviceVersion);
+  } catch {
+    // Without storage a reload could loop: stay on this page.
+    return;
+  }
+  location.reload();
 }
 
 const TEXT_GEN_KEY = "kokon.textGeneration";

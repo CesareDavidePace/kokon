@@ -868,3 +868,11 @@ export const STAR_PROMPT_AFTER = 5;
 export function starPromptDue(made: number, busy: boolean): boolean {
   return made >= STAR_PROMPT_AFTER && !busy;
 }
+
+/** Browser on another device: whether to reload because the page was built for another Kokon
+ * than the service now runs (the app on the server computer updated). `reloadedFor`: the service
+ * version this tab already reloaded for, so a page that still differs afterwards (an old copy
+ * in a cache) does not reload again and again. */
+export function pageOutdated(pageVersion: string, serviceVersion: string | undefined, reloadedFor: string | null): boolean {
+  return !!pageVersion && !!serviceVersion && pageVersion !== serviceVersion && reloadedFor !== serviceVersion;
+}

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   activeLoras, activeOverrides, buildRequest, composing, editing, reviewRequest, wantsPromptReview, toggleLora, MAX_LORAS, jobPercent, compareBase, composerFromRecord, enhancerApplies, diffPixels, emptyComposer, expansionPixels, expansionPreset, jobLabel, jobSecondsLeft, lutInfo, moveRef, needsPrompt, normalizeQuality, persistentAdvanced, pipelineSummary,
   planPipeline, remainingSeconds, sizeForWidth, timeAgo, upscaleRequest, upscaleTargets, versionLabels, type JobClock, type Ref,
-  neighbourAfterRemoval, previewIndex, starPromptDue, STAR_PROMPT_AFTER, formatBytes, formatDuration, installItemShort, installItemText, installProgress, installStep, installTimeLeft, timelineLinks, undoTarget, aspectLabel, parseRatio, sizeForRatio, expandToRatio, expandToSize, arcLayout,
+  neighbourAfterRemoval, pageOutdated, previewIndex, starPromptDue, STAR_PROMPT_AFTER, formatBytes, formatDuration, installItemShort, installItemText, installProgress, installStep, installTimeLeft, timelineLinks, undoTarget, aspectLabel, parseRatio, sizeForRatio, expandToRatio, expandToSize, arcLayout,
 } from "./logic";
 import type { GenerationRecord, InstallItem, JobView, LoraItem, Plan } from "./types";
 
@@ -547,5 +547,17 @@ describe("star prompt", () => {
     expect(starPromptDue(STAR_PROMPT_AFTER, true)).toBe(false);
     expect(starPromptDue(STAR_PROMPT_AFTER, false)).toBe(true);
     expect(starPromptDue(STAR_PROMPT_AFTER + 3, false)).toBe(true);
+  });
+});
+
+describe("page version", () => {
+  it("reloads once when the service runs another version", () => {
+    expect(pageOutdated("0.11.0", "0.11.0", null)).toBe(false);
+    expect(pageOutdated("0.11.0", "0.11.1", null)).toBe(true);
+    expect(pageOutdated("0.11.0", "0.11.1", "0.11.1")).toBe(false);
+    // a later update gets its own reload
+    expect(pageOutdated("0.11.1", "0.11.2", "0.11.1")).toBe(true);
+    expect(pageOutdated("0.11.0", undefined, null)).toBe(false);
+    expect(pageOutdated("", "0.11.0", null)).toBe(false);
   });
 });

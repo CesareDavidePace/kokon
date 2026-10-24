@@ -28,7 +28,8 @@ macOS). Allow it on **private** networks only.
 It works while Kokon is open on that computer. To keep it running without the window, use a headless
 server or Docker (below).
 
-**Changing the password** signs every browser out. **Remove** turns access off and deletes the
+A browser stays signed in when Kokon restarts or updates; after an update the page reloads itself
+with the new version. **Changing the password** signs every browser out. **Remove** turns access off and deletes the
 password. Forgot it? Set a new one in the same place.
 
 ### On a server without a screen (Linux)

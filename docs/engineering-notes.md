@@ -300,6 +300,27 @@ token budget with the output as in edits (`cap_for_sources`), each at most the r
 (Standard 1 MP) and never larger than the output. In the app, **New image** with images added sends
 compose; **Edit image** keeps today's edit/combine.
 
+## The browser UI on phones (0.11)
+
+Measured on an iPhone 15 (iOS 27, Safari and the home-screen app) and in Playwright at 390x844, dpr 3:
+
+- **Previews.** In a browser the stage, full screen, comparisons and the paint editor show
+  `/gallery|inputs/{id}/preview` (at most 1280 px, JPEG) while it is as sharp as the full image there
+  (`logic.ts` `stageFitsPreview`, `viewerWantsFull`); the full file loads once the zoom needs more pixels.
+  A 30-version project of 2048 px PNGs opened with 0.84 MB instead of 15.1 MB.
+- **No image-sized layers.** WebKit backs a composited layer at its untransformed size x the device scale
+  (`GraphicsLayerCA::updateRootRelativeScale` is disabled), so a 4096 px image laid out at its own size and
+  shrunk by a 3D transform cost ~150 MB per layer at dpr 3, and an edit's full screen (four such layers
+  while the image developed in) crashed Safari (WebContent at 744-799 MB in the iPhone's JetsamEvent log).
+  In a browser `ZoomPan` lays the content out at its drawn size with a 2D translate (`flat`); the desktop
+  app keeps the scaled layer.
+- **Status bar.** iOS 26+ ignores `theme-color`: the bar takes the colour of an opaque fixed element at the
+  top of the page, read at load; a home-screen app keeps the manifest's `theme_color` for good (so the
+  manifest has none). `StatusTint.tsx` is a 6 px strip at the top of the body (a 1 px one was not taken),
+  created anew at every colour change, which makes iOS read it again; black while full screen is open.
+- **Take Photo.** The file input stays in the page until it answers: iOS drops a detached one while the
+  Camera is open. Safari names camera shots `image.jpg`, which is how `PhotoReview.tsx` tells them apart.
+
 ## HDR
 
 The source's ISO 21496-1 gain map is reused and faded out where the edit changed brightness by

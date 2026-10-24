@@ -92,8 +92,16 @@ your home network, then open the same address as at home.
 
 ## What is different in a browser
 
-- **Adding photos:** the + button, dropping files on the page or pasting. They are uploaded to Kokon.
-- **Saving:** the download button saves the image on the device you are using.
+- **The same projects everywhere:** every device sees the same list of projects, kept by the computer
+  running Kokon. A version made on the phone shows up in that project on the computer.
+- **On a phone** the interface has a layout of its own: your projects as the home screen, a project's
+  versions swiped sideways, the image's actions in one row, and a screen of its own for writing the prompt.
+- **Adding photos:** the + button, dropping files on the page or pasting; on a phone, pick from the photo
+  library or take a photo (a photo just taken is shown first, with a **Flip** button for selfies). They
+  are uploaded to Kokon.
+- **Saving:** the download button saves the image on the device you are using. On an iPhone over plain
+  HTTP it shows the image full screen: press and hold it, then **Save to Photos** (with HTTPS, the share
+  sheet opens instead).
 - **Copying an image** needs HTTPS (or the computer itself at `localhost`); on plain HTTP the button
   is hidden.
 - Not available: show in folder, open the logs, LoRA and `.cube` files from disk, choosing model files

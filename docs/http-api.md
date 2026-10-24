@@ -1,7 +1,10 @@
 # Local HTTP API
 
-Kokon's service listens on `127.0.0.1` only. The desktop app, the MCP server and your own scripts
-all use it. The routes below are the ones registered in
+Kokon's service listens on `127.0.0.1`. The desktop app, the MCP server and your own scripts
+all use it. When access from other devices is on, a second address (port `39152` by default, every
+network interface) serves the browser UI to them, signed in with the password; the token does not work
+there, and a browser can't use routes that touch files by path or change folders, model files or network
+settings ([remote-access.md](remote-access.md)). The routes below are the ones registered in
 [`crates/qls-service/src/api.rs`](../crates/qls-service/src/api.rs); request bodies are JSON unless
 a row says otherwise.
 
@@ -114,6 +117,20 @@ can be read and changed; send it back as `prompt` with `"enhanced_from"` set to 
 | `limit`, `offset` | Paging |
 | `sort` | `recent` (default) or `oldest` |
 
+## Projects
+
+The project list every device shares (kept in `projects.json` in the data folder). A version is a
+result (`"kind": "gen"`, `genId`) or an imported image (`"kind": "input"`, `inputId`).
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/projects` | Every project, most recently changed first: `{"projects": [...]}`, each as `/projects/{id}` gives it |
+| GET | `/projects/{id}` | One project: its `meta`, its versions (`items`), the `selected` one |
+| GET | `/projects/{id}/records` | The records of all its versions in one answer: `{"generations": {...}, "inputs": {...}}` by id; versions deleted from the gallery are left out |
+| PUT | `/projects/{id}` | Save a device's copy: `{"project": {...}, "known": [keys]}` (`known`: the versions that device had seen, so a version added elsewhere meanwhile is kept). Answers with the merged project |
+| DELETE | `/projects/{id}` | Remove the project from the list (its images stay in the gallery) |
+| POST | `/projects/import` | Merge a list of projects in, once: what each app kept on its own before 0.11 |
+
 ## Models, upscalers, LoRAs and LUTs
 
 | Method | Path | Purpose |
@@ -147,3 +164,7 @@ and they may change between versions.
 | POST | `/backend/start`, `/backend/stop`, `/backend/restart` | Control the inference server |
 | POST | `/session/heartbeat`, `/session/release` | A client registers or drops its lease on the service |
 | POST | `/shutdown` | Stop the service |
+| GET, POST | `/remote` | Access from other devices: its state and addresses; turn it on or off, `{"enabled": true, "port": 39152}` (needs a password) |
+| POST, DELETE | `/remote/password` | Set or change the password (`{"password": "..."}`, every browser signs in again); remove it, which also turns access off |
+| GET | `/auth/session` | A browser: whether it is signed in and whether a password exists |
+| POST | `/auth/login`, `/auth/logout` | A browser signs in with the password (a session cookie) or out |

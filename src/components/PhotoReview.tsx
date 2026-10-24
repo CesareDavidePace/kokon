@@ -7,6 +7,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { haptic } from "../lib/haptics";
 import { isNarrow } from "../lib/platform";
+import { useBlackStatusBar } from "../lib/theme";
 
 interface Pending {
   file: File;
@@ -77,6 +78,11 @@ export function PhotoReview() {
     setBusy(false);
   }, [p]);
   if (!p) return null;
+  return <Review p={p} flip={flip} setFlip={setFlip} busy={busy} setBusy={setBusy} />;
+}
+
+function Review({ p, flip, setFlip, busy, setBusy }: { p: Pending; flip: boolean; setFlip: (f: (v: boolean) => boolean) => void; busy: boolean; setBusy: (b: boolean) => void }) {
+  useBlackStatusBar();
   const use = async () => {
     setBusy(true);
     try {

@@ -681,6 +681,10 @@ pre.diag { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font
 .swipe-nav-page.enter-left { animation: page-left 0.46s var(--ease) both; }
 .viewer-compare-bar { position: absolute; left: 0; right: 0; bottom: 14px; display: flex; justify-content: center; }
 .viewer-compare-bar .compare-bar { margin: 0; padding: 4px; border-radius: 12px; background: rgba(20, 20, 20, 0.85); }
+/* the viewer is black in both themes: the switch too (the theme's light segments glared) */
+.viewer-compare-bar .seg { background: transparent; }
+.viewer-compare-bar .seg button { color: rgba(255, 255, 255, 0.7); }
+.viewer-compare-bar .seg button.on { color: #fff; background: rgba(255, 255, 255, 0.2); box-shadow: none; }
 /* full screen is viewed from further away: larger view switch and zoom bar */
 .viewer-compare-bar .seg button { height: 34px; padding: 0 16px; font-size: 13px; }
 .viewer .zoom-btn { height: 36px; min-width: 36px; }

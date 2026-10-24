@@ -2,6 +2,7 @@
 // versions and tapped for full screen, and what you can do with it sits in one row under it.
 // Stage.tsx uses these in place of its desktop bar.
 
+import { useBlackStatusBar } from "../lib/theme";
 import { Brush, Copy, Download, Ellipsis, Expand, Heart, ImagePlus, Info, RefreshCw, SlidersHorizontal, TextCursorInput, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -181,6 +182,7 @@ async function saveImage(url: string, name: string, hold: () => void) {
 /** The image to save, full screen and at full size: holding it brings the system's menu, whose
  * Save to Photos puts it in Photos. */
 function HoldToSave({ src, thumb, onClose }: { src: string; thumb?: string; onClose: () => void }) {
+  useBlackStatusBar();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);

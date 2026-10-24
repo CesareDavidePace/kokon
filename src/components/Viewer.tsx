@@ -8,6 +8,7 @@ import { urls } from "../lib/api";
 import { haptic } from "../lib/haptics";
 import { native } from "../lib/native";
 import { inBrowser } from "../lib/platform";
+import { useBlackStatusBar } from "../lib/theme";
 import { ZoomPan } from "./ZoomPan";
 
 export const isTyping = (t: EventTarget | null) => t instanceof HTMLElement && (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName));
@@ -185,6 +186,7 @@ export function navKey(e: KeyboardEvent, nav: ViewerNav | undefined): boolean {
 
 function FullscreenShell({ children, hint, onClose, nav }: { children: ReactNode; hint?: string; onClose: () => void; nav?: ViewerNav }) {
   const [active, wake] = useMouseActive();
+  useBlackStatusBar();
   // Real full screen for the window while open; restored on close unless it already was.
   useEffect(() => {
     let wasFull = false;

@@ -1,6 +1,8 @@
 // Light / dark appearance. public/theme.js resolves the choice into data-theme on <html> before
 // the first paint; this module stores the choice and keeps the native title bar in step.
+import { useEffect } from "react";
 import { native } from "./native";
+import { inBrowser } from "./platform";
 
 export type ThemeChoice = "system" | "light" | "dark";
 
@@ -19,6 +21,33 @@ export function themeChoice(): ThemeChoice {
 /** Native window theme (title bar); null follows the OS. Outside Tauri there is no window. */
 export function syncWindowTheme(t: ThemeChoice = themeChoice()) {
   native.setTheme(t === "system" ? null : t).catch(() => {});
+}
+
+/** A phone's status bar (the theme-color tags, public/theme.js) in `color` while a black screen
+ * is open (full screen, the photo views); null gives it back to the theme. Tags are replaced,
+ * not edited, as theme.js does (iOS seems to read a new tag but not a changed one). */
+export function setStatusBar(color: string | null) {
+  if (color === null) {
+    window.dispatchEvent(new Event("qls-theme"));
+    return;
+  }
+  document.querySelectorAll('meta[name="theme-color"]').forEach((m) => {
+    const fresh = document.createElement("meta");
+    fresh.name = "theme-color";
+    fresh.content = color;
+    const media = m.getAttribute("media");
+    if (media) fresh.setAttribute("media", media);
+    m.replaceWith(fresh);
+  });
+}
+
+/** `setStatusBar("#000")` while mounted (a browser only). */
+export function useBlackStatusBar() {
+  useEffect(() => {
+    if (!inBrowser) return;
+    setStatusBar("#000");
+    return () => setStatusBar(null);
+  }, []);
 }
 
 export function setThemeChoice(t: ThemeChoice) {

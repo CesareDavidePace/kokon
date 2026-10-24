@@ -1,7 +1,7 @@
 import { Brush, Check, Contrast, Eraser, Hand, Redo2, Trash2, Undo2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, urls } from "../lib/api";
-import { shortcut } from "../lib/platform";
+import { inBrowser, shortcut } from "../lib/platform";
 import { focusPrompt, getState, setState, toastError, updateComposer, useStore } from "../lib/store";
 import { IconButton } from "./ui";
 import { isTyping } from "./Viewer";
@@ -39,7 +39,11 @@ export function InpaintEditor() {
   const scale = Math.min(1, MAX_MASK_SIDE / Math.max(srcW, srcH));
   const mw = Math.max(1, Math.round(srcW * scale));
   const mh = Math.max(1, Math.round(srcH * scale));
-  const src = ref0 ? (ref0.source.startsWith("gen:") ? urls.gen(ref0.source.slice(4)) : urls.input(ref0.source.slice(6))) : "";
+  const src = ref0 ? urls.source(ref0.source) : "";
+  // In a browser the picture is drawn flat (ZoomPan `flat`: no image-sized layer, which cost an
+  // iPhone ~300 MB on a 4K image) and is the preview until the zoom needs the full image; the
+  // mask keeps its own resolution either way, and strokes map through the canvas's on-screen box.
+  const preview = ref0 && inBrowser ? urls.sourcePreview(ref0.source) : undefined;
 
   const isPanningActive = spacePressed || tool === "pan";
   const erase = tool === "eraser";
@@ -311,21 +315,25 @@ export function InpaintEditor() {
           enableToggleZoom={false}
           enablePan={isPanningActive}
           className="inpaint-zoom-viewport"
-          minimapSrc={src}
+          minimapSrc={ref0 && inBrowser ? urls.sourceThumb(ref0.source) : src}
+          flat={inBrowser}
         >
-          {({ transform, isPanning }) => (
+          {({ transform, isPanning, flat, wantsFull }) => {
+            // Content px per screen px: the box is laid out at its drawn size when flat.
+            const k = flat ? 1 : transform.scale;
+            return (
             <div
               className="mask-wrap"
               style={{
-                width: srcW,
-                height: srcH,
+                width: flat ? "100%" : srcW,
+                height: flat ? "100%" : srcH,
                 cursor: isPanningActive ? (isPanning ? "grabbing" : "grab") : "none",
               }}
               onContextMenu={(e) => e.preventDefault()}
             >
               <img
                 ref={imgRef}
-                src={src}
+                src={preview && !wantsFull ? preview : src}
                 alt=""
                 draggable={false}
                 style={{ width: "100%", height: "100%", display: "block" }}
@@ -342,7 +350,7 @@ export function InpaintEditor() {
                   cursor: isPanningActive ? (isPanning ? "grabbing" : "grab") : "none",
                 }}
                 onPointerDown={onDown}
-                onPointerMove={(e) => onMove(e, transform.scale)}
+                onPointerMove={(e) => onMove(e, k)}
                 onPointerUp={onUp}
                 onPointerCancel={onUp}
                 onPointerLeave={() => setCursor(null)}
@@ -353,13 +361,14 @@ export function InpaintEditor() {
                   style={{
                     left: cursor.x,
                     top: cursor.y,
-                    width: brush / transform.scale,
-                    height: brush / transform.scale,
+                    width: brush / k,
+                    height: brush / k,
                   }}
                 />
               )}
             </div>
-          )}
+            );
+          }}
         </ZoomPan>
       </div>
 

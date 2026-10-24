@@ -1,5 +1,7 @@
 ## Kokon 0.11.0
 
+https://github.com/user-attachments/assets/ccf8da7c-175d-4d1b-9976-91eaa7bddd09
+
 Use Kokon from your phone, tablet or another computer, in a browser. The images are still made on the computer with the graphics card and saved in its gallery.
 
 - **Other devices** ([#15](https://github.com/GabrieleLozupone/kokon/issues/15)): open **Settings → Other devices**, choose a password and open the address it shows on any device on the same network. Each browser asks for the password once. It is off until you turn it on, and nothing listens on the network before a password exists.

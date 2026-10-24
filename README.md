@@ -81,6 +81,8 @@ https://github.com/user-attachments/assets/8851c580-99b9-432a-82be-b6d42fa9a749
 Your computer with the graphics card makes the images; your phone, tablet or laptop uses Kokon in a browser.
 Nothing goes through a cloud, and there is no account.
 
+https://github.com/user-attachments/assets/ccf8da7c-175d-4d1b-9976-91eaa7bddd09
+
 - **Other devices:** open **Settings → Other devices**, set a password and scan the QR code with your phone.
   Add Kokon to the home screen and it opens like an app. Off until you turn it on; 5 wrong passwords make
   that device wait.

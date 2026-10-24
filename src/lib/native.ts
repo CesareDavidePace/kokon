@@ -55,15 +55,23 @@ export const native = {
     if (!r) return [];
     return Array.isArray(r) ? r : [r];
   },
-  /** Browser: the images picked on this device, to upload. */
+  /** Browser: the images picked on this device, to upload. The input stays in the page until it
+   * answers: iOS Safari drops a detached one while the Camera is open (Take Photo never came
+   * back; the photo library, quicker, did). */
   pickImageFiles: (): Promise<File[]> =>
     new Promise((resolve) => {
       const input = document.createElement("input");
       input.type = "file";
       input.multiple = true;
       input.accept = "image/*,.heic,.heif";
-      input.onchange = () => resolve(Array.from(input.files ?? []));
-      input.oncancel = () => resolve([]);
+      input.hidden = true;
+      const done = (files: File[]) => {
+        input.remove();
+        resolve(files);
+      };
+      input.onchange = () => done(Array.from(input.files ?? []));
+      input.oncancel = () => done([]);
+      document.body.appendChild(input);
       input.click();
     }),
   pickFile: async (extensions: string[], defaultPath?: string, kind = "Model"): Promise<string | null> => {

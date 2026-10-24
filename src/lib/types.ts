@@ -436,4 +436,5 @@ export interface HardwareReport {
 export type ServiceEvent =
   | { type: "job"; job: JobView }
   | { type: "server"; state: ServerState; owned: boolean; error: AppErrorBody | null }
-  | { type: "gallery"; id: string; change: "added" | "updated" | "deleted" };
+  | { type: "gallery"; id: string; change: "added" | "updated" | "deleted" }
+  | { type: "projects"; id: string; rev: number; deleted: boolean };

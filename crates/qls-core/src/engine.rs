@@ -110,6 +110,8 @@ pub enum Event {
     Job { job: Box<JobView> },
     Server { state: ServerState, owned: bool, error: Option<AppError> },
     Gallery { id: String, change: &'static str },
+    /// A project changed (`rev`) or was removed: the other devices reload it.
+    Projects { id: String, rev: u64, deleted: bool },
 }
 
 pub struct Engine {
@@ -119,6 +121,8 @@ pub struct Engine {
     /// Private mode: records in memory, files under `private_dir`; wiped by `clear_private`,
     /// at start and at exit. Never listed in the gallery.
     pub private_store: Arc<Store>,
+    /// The project list every device shares (`projects.rs`).
+    pub projects: crate::projects::ProjectStore,
     /// Measured speed of this machine, for time estimates.
     speed: crate::speed::SpeedBook,
     data_dir: PathBuf,
@@ -239,6 +243,7 @@ impl Engine {
             server: ServerManager::new(data_dir.to_path_buf()),
             store,
             private_store,
+            projects: if cfg!(test) { crate::projects::ProjectStore::in_memory() } else { crate::projects::ProjectStore::open(data_dir) },
             speed: if cfg!(test) { crate::speed::SpeedBook::in_memory() } else { crate::speed::SpeedBook::open(data_dir) },
             data_dir: data_dir.to_path_buf(),
             private_dir,
@@ -443,6 +448,26 @@ impl Engine {
         if self.store.get_input(id).is_err() && self.private_store.get_input(id).is_ok() { &self.private_store } else { &self.store }
     }
 
+    /// The records of project `id`'s versions (see [`crate::projects::Records`]), from either
+    /// store; `None` for an unknown project.
+    pub fn project_records(&self, id: &str) -> Option<crate::projects::Records> {
+        let p = self.projects.get(id)?;
+        let mut out = crate::projects::Records::default();
+        for i in &p.items {
+            if let Some(g) = &i.gen_id
+                && let Ok(r) = self.gen_store(g).get_generation(g)
+            {
+                out.generations.insert(g.clone(), r);
+            }
+            if let Some(r) = &i.input_id
+                && let Ok(rec) = self.input_store(r).get_input(r)
+            {
+                out.inputs.insert(r.clone(), rec);
+            }
+        }
+        Some(out)
+    }
+
     /// Where a generation's image file may be deleted from: the output folder, or the
     /// private folder for private results.
     pub fn output_root(&self, id: &str) -> PathBuf {
@@ -548,6 +573,12 @@ impl Engine {
         let v = crate::diagnostics::backend_version(&self.config().server_exe());
         *self.backend_version.lock().unwrap() = v.clone();
         v
+    }
+
+    pub fn emit_projects(&self, changes: Vec<crate::projects::Change>) {
+        for c in changes {
+            let _ = self.events.send(Event::Projects { id: c.id, rev: c.rev, deleted: c.deleted });
+        }
     }
 
     fn emit_job(&self, id: &str) {
@@ -1240,12 +1271,20 @@ impl Engine {
             }
             records.push(rec);
         }
+        let gen_ids: Vec<String> = records.iter().map(|r| r.id.clone()).collect();
         self.update(id, |j| {
             j.view.status = JobStatus::Done;
             j.view.results = records;
             j.view.finished_at = Some(now_rfc3339());
             j.view.stage = None;
         });
+        // The project waiting for it gets its images even with no app open to add them.
+        if !request.private {
+            match self.projects.job_done(id, &gen_ids, now_ms()) {
+                Ok(changes) => self.emit_projects(changes),
+                Err(e) => tracing::warn!("job {id}: project list not updated: {e}"),
+            }
+        }
         Ok(())
     }
 
@@ -1698,6 +1737,11 @@ pub fn encode_output(img: &image::RgbaImage, format: OutputFormat, rec: &Generat
         OutputFormat::Jpeg => imaging::encode_jpeg(img, 95),
         OutputFormat::Webp => imaging::encode_webp_lossless(img),
     }
+}
+
+/// Milliseconds since 1970, as the UI's `Date.now()`.
+pub fn now_ms() -> f64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as f64).unwrap_or(0.0)
 }
 
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> AppResult<()> {
@@ -2228,6 +2272,48 @@ mod tests {
         assert!(avoid_reference_seeds(MAX_SEED, 1, &[MAX_SEED]).is_some_and(|(_, s)| s != MAX_SEED && (0..=MAX_SEED).contains(&s)));
         assert_eq!(reused_seed_note(4001, 1234567, 1), "Seed 4001 made the source image; reusing it breaks edits, used 1234567 instead.");
         assert!(reused_seed_note(4001, 5, 2).contains("made a reference image"));
+    }
+
+    #[test]
+    fn project_records_come_in_one_answer() {
+        let dir = tempfile::tempdir().unwrap();
+        // SAFETY: test-only env override, single-threaded setup.
+        unsafe { std::env::set_var("QLS_CONFIG_DIR", dir.path().join("cfg")) };
+        let mut cfg = AppConfig::default();
+        cfg.sdcpp_dir = dir.path().join("sdcpp");
+        cfg.normalize();
+        let e = Engine::new(cfg, dir.path()).unwrap();
+        let png = imaging::encode_png(&image::RgbaImage::from_pixel(8, 8, image::Rgba([1, 2, 3, 255])), &[], None, true).unwrap();
+        let input = e.store.put_input(&png, Some("a.png"), None).unwrap();
+        e.store.insert_generation(&test_record("g1", 1, "g1.png")).unwrap();
+        // Made in private mode: in the other store.
+        e.private_store.insert_generation(&test_record("p1", 2, "p1.png")).unwrap();
+        let item = |key: &str, kind: &str, gen_id: Option<&str>, input_id: Option<&str>| crate::projects::Item {
+            key: key.into(),
+            kind: kind.into(),
+            gen_id: gen_id.map(Into::into),
+            input_id: input_id.map(Into::into),
+            job_id: None,
+            extra: Default::default(),
+        };
+        let items = vec![
+            item("i", "input", None, Some(&input.id)),
+            item("a", "gen", Some("g1"), None),
+            item("b", "gen", Some("p1"), None),
+            item("gone", "gen", Some("deleted"), None),
+            item("j", "job", None, None),
+        ];
+        let meta = crate::projects::Meta { id: "p".into(), title: "t".into(), named: None, updated_at: 1.0, cover: None, count: 0 };
+        let project = crate::projects::Project { meta, items, selected: None, loras: None, rev: 0, extra: Default::default() };
+        e.projects.put("p", project, &Default::default()).unwrap();
+        let r = e.project_records("p").unwrap();
+        let mut gens: Vec<_> = r.generations.keys().cloned().collect();
+        gens.sort();
+        assert_eq!(gens, ["g1", "p1"], "a deleted version is left out");
+        assert_eq!(r.generations["p1"].seed, 2);
+        assert_eq!(r.inputs.len(), 1);
+        assert_eq!(r.inputs[&input.id].original_name.as_deref(), Some("a.png"));
+        assert!(e.project_records("nope").is_none());
     }
 
     #[test]

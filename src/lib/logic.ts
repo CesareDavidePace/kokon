@@ -825,6 +825,33 @@ export function compareBase(g: GenerationRecord): CompareBase | null {
   return { inputId: r.input_id, rect: { x: 0, y: 0, w: 1, h: 1 } };
 }
 
+/** Long side of the screen-sized copy kokon-service makes of an image for a browser's stage
+ * (`PREVIEW_SIDE` in crates/qls-core/src/store.rs). */
+export const PREVIEW_SIDE = 1280;
+
+/** The stage may show the preview instead of the full image: drawn at `w`×`h` CSS px, the image
+ * needs no more device pixels than the preview has (an iPhone: 390 CSS px × 3 = 1170). */
+export function stageFitsPreview(w: number, h: number, dpr: number): boolean {
+  return w > 0 && h > 0 && Math.max(w, h) * (dpr > 0 ? dpr : 1) <= PREVIEW_SIDE;
+}
+
+/** Versions to drop after loading a project's records in one answer: the ones the service knew
+ * (their key was in its copy, `known`) but sent no record for, i.e. deleted from the gallery.
+ * A version it did not know yet (added here, not saved) is looked up on its own instead. */
+export function goneVersions(
+  items: { key: string; kind: string; genId?: string; inputId?: string }[],
+  records: { generations: Record<string, unknown>; inputs: Record<string, unknown> },
+  known: string[],
+): Set<string> {
+  const knew = new Set(known);
+  const gone = new Set<string>();
+  for (const i of items) {
+    const has = i.kind === "gen" && i.genId ? i.genId in records.generations : i.kind === "input" && i.inputId ? i.inputId in records.inputs : true;
+    if (!has && knew.has(i.key)) gone.add(i.key);
+  }
+  return gone;
+}
+
 /** Per-pixel change between two equally sized RGBA buffers: the dimmed result in grey with
  * changed pixels in red (stronger = bigger change). Pixels the "before" does not cover
  * (alpha 0, e.g. expanded areas) count as changed. Returns the changed share of the image. */

@@ -5,7 +5,7 @@ import { api, ApiError, configure, setSignedOutHandler } from "./lib/api";
 import { native } from "./lib/native";
 import { inBrowser, isNarrow } from "./lib/platform";
 import {
-  addExampleProjects, closeStarPrompt, dismissToast, getState, initStarPrompt, redoVersion, refreshLoras, refreshStatus, selectItem, setState, startEvents, startTour, submitComposer, toastError, toastInfo, undoVersion, useStore,
+  addExampleProjects, closeStarPrompt, loadProjects, dismissToast, getState, initStarPrompt, redoVersion, refreshLoras, refreshStatus, selectItem, setState, startEvents, startTour, submitComposer, toastError, toastInfo, undoVersion, useStore,
 } from "./lib/store";
 import { Composer, importPaths, uploadFiles } from "./components/Composer";
 import { Login } from "./components/Login";
@@ -146,6 +146,8 @@ export default function App() {
           setSignedOutHandler(() => location.reload());
           startBrowserHeartbeat();
         }
+        // The project list (shared by every device) before anything adds to it.
+        await loadProjects().catch(() => {});
         startEvents();
         const cfg = await api.config();
         const st = await refreshStatus();

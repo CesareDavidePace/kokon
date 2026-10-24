@@ -2,6 +2,7 @@
 //! engine adapts between the two). On loopback it takes the token (desktop app, MCP, scripts)
 //! or a signed-in browser; on the network listener only a signed-in browser (see `remote`).
 
+use std::collections::HashSet;
 use std::convert::Infallible;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -28,6 +29,7 @@ use qls_core::{
     modelfile::{self, FileInfo, Role, Slot},
     paths,
     planner::{GenerationRequest, InpaintAction, Mode, OutpaintSpec, Quality, UpscaleMethod, UpscaleSpec},
+    projects::Project,
     store::{GenerationRecord, ListQuery},
 };
 use serde::Deserialize;
@@ -115,6 +117,10 @@ pub fn router(state: Arc<AppState>, lan: bool) -> Router {
         .route("/luts/{name}/preview", get(luts_preview))
         .route("/luts/{name}/apply", post(luts_apply))
         .route("/examples", post(install_examples))
+        .route("/projects", get(projects_list))
+        .route("/projects/import", post(projects_import))
+        .route("/projects/{id}", get(projects_get).put(projects_put).delete(projects_delete))
+        .route("/projects/{id}/records", get(projects_records))
         .route("/session/heartbeat", post(heartbeat))
         .route("/session/release", post(release))
         .route("/shutdown", post(shutdown))
@@ -1155,6 +1161,61 @@ async fn gallery_export(State(s): St, AxPath(id): AxPath<String>, Json(b): Json<
 }
 
 /// Adds the bundled example projects (first launch, or Settings) and lists them.
+async fn projects_list(State(s): St) -> Json<Value> {
+    Json(json!({ "projects": s.engine.projects.list() }))
+}
+
+async fn projects_get(State(s): St, AxPath(id): AxPath<String>) -> ApiResult<Json<Value>> {
+    let p = s.engine.projects.get(&id).ok_or_else(|| AppError::new(ErrorCode::NotFound, "No such project."))?;
+    Ok(Json(serde_json::to_value(p).unwrap()))
+}
+
+/// Every version's record in one answer (a browser opening the project).
+async fn projects_records(State(s): St, AxPath(id): AxPath<String>) -> ApiResult<Json<Value>> {
+    let engine = s.engine.clone();
+    let r = tokio::task::spawn_blocking(move || engine.project_records(&id)).await.map_err(AppError::internal)?;
+    let r = r.ok_or_else(|| AppError::new(ErrorCode::NotFound, "No such project."))?;
+    Ok(Json(serde_json::to_value(r).unwrap()))
+}
+
+#[derive(Deserialize)]
+struct ProjectPut {
+    project: Project,
+    /// The versions this device knew (see `projects.rs`).
+    #[serde(default)]
+    known: HashSet<String>,
+}
+
+/// Saves a device's copy of a project; answers with the merged one.
+async fn projects_put(State(s): St, AxPath(id): AxPath<String>, Json(b): Json<ProjectPut>) -> ApiResult<Json<Value>> {
+    let engine = s.engine.clone();
+    let (p, change) = tokio::task::spawn_blocking(move || engine.projects.put(&id, b.project, &b.known)).await.map_err(AppError::internal)??;
+    s.engine.emit_projects(vec![change]);
+    Ok(Json(serde_json::to_value(p).unwrap()))
+}
+
+async fn projects_delete(State(s): St, AxPath(id): AxPath<String>) -> ApiResult<Json<Value>> {
+    let engine = s.engine.clone();
+    let key = id.clone();
+    let change = tokio::task::spawn_blocking(move || engine.projects.delete(&key, qls_core::engine::now_ms())).await.map_err(AppError::internal)??;
+    s.engine.emit_projects(vec![change]);
+    Ok(Json(json!({ "deleted": id })))
+}
+
+#[derive(Deserialize)]
+struct ProjectImport {
+    projects: Vec<Project>,
+}
+
+/// A device's project list from before 0.11 (its browser storage), merged in once.
+async fn projects_import(State(s): St, Json(b): Json<ProjectImport>) -> ApiResult<Json<Value>> {
+    let engine = s.engine.clone();
+    let changes = tokio::task::spawn_blocking(move || engine.projects.import(b.projects)).await.map_err(AppError::internal)??;
+    let n = changes.len();
+    s.engine.emit_projects(changes);
+    Ok(Json(json!({ "changed": n, "projects": s.engine.projects.list() })))
+}
+
 async fn install_examples(State(s): St) -> ApiResult<Json<Value>> {
     let engine = s.engine.clone();
     let projects = tokio::task::spawn_blocking(move || engine.install_examples()).await.map_err(AppError::internal)??;

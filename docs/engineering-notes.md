@@ -29,6 +29,7 @@ Kokon.exe (Tauri 2 + React)      kokon-mcp.exe (MCP, stdio)      scripts
 | `speed.rs` | Per-machine speed calibration of time estimates |
 | `diagnostics.rs` | GPU detection (nvidia-smi, DXGI, sysctl on macOS), readiness checks |
 | `store.rs` | SQLite gallery + content-addressed inputs |
+| `projects.rs` | The project list every device shares (`projects.json`): merged saves, tombstones, finished jobs |
 | `paths.rs` | Path validation (no UNC/device/ADS/traversal, never overwrite) |
 | `catalog.rs`, `installer.rs` | Pinned downloads (URLs, sizes, SHA-256), hardware presets, parallel resumable downloader |
 | `config.rs` | Settings and model profiles: the official files (derived from folder + preset) and the user's own files, each recording its model and source |

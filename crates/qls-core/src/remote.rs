@@ -262,19 +262,20 @@ impl Sessions {
 pub fn browser_allowed(method: &str, path: &str) -> bool {
     let seg: Vec<&str> = path.trim_matches('/').split('/').collect();
     match (method, seg.as_slice()) {
-        ("GET", ["status" | "setup" | "models" | "upscalers" | "config" | "diagnostics" | "logs" | "jobs" | "events" | "gallery" | "loras" | "luts"]) => true,
+        ("GET", ["status" | "setup" | "models" | "upscalers" | "config" | "diagnostics" | "logs" | "jobs" | "events" | "gallery" | "loras" | "luts" | "projects"]) => true,
         ("GET", ["setup", "hardware" | "install" | "legacy-upscalers"]) => true,
         ("GET", ["enhancer", "defaults"]) => true,
         ("GET", ["jobs", _] | ["jobs", _, "wait"]) => true,
         ("GET", ["inputs", _] | ["inputs", _, "image" | "thumb"]) => true,
         ("GET", ["gallery", _] | ["gallery", _, "image" | "thumb" | "original"]) => true,
         ("GET", ["luts", _, "preview"]) => true,
+        ("GET" | "PUT" | "DELETE", ["projects", _]) => true,
         ("PUT", ["config"]) => true,
         ("POST", ["setup", "install" | "gpu"] | ["setup", "install", "cancel"]) => true,
         ("POST", ["models", "use" | "vae"]) => true,
         ("POST", ["upscalers", _, "download"]) => true,
         ("POST", ["backend", "start" | "stop" | "restart"]) => true,
-        ("POST", ["plan" | "jobs" | "inputs" | "examples"]) => true,
+        ("POST", ["plan" | "jobs" | "inputs" | "examples"] | ["projects", "import"]) => true,
         ("POST", ["jobs", _, "cancel"]) => true,
         ("POST", ["private", "clear"]) => true,
         ("POST", ["luts", _, "apply"]) => true,
@@ -454,6 +455,9 @@ mod tests {
             ("PUT", "/config"),
             ("POST", "/session/heartbeat"),
             ("DELETE", "/gallery/abc"),
+            ("GET", "/projects"),
+            ("PUT", "/projects/abc"),
+            ("POST", "/projects/import"),
         ] {
             assert!(browser_allowed(m, p), "{m} {p}");
         }

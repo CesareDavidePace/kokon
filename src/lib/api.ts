@@ -4,6 +4,7 @@
 // every change carries the CSRF header the service asks for.
 
 import { inBrowser } from "./platform";
+import type { ProjectData } from "./store";
 import type {
   GpuBackend,
   AppConfig, AppErrorBody, GenerationRecord, GenerationRequest, HardwareReport, InputRecord, InstallStatus, JobView, LoraItem, LutEntry, ModelFileInfo, ModelScan, ModelSlot, ModelsStatus, Plan,
@@ -164,6 +165,17 @@ export const api = {
   applyLut: (name: string, source: string, intensity: number, isPrivate: boolean) =>
     call<GenerationRecord>(`/luts/${encodeURIComponent(name)}/apply`, { method: "POST", body: json({ source, intensity, private: isPrivate }) }),
   exportGeneration: (id: string, path: string, original = false) => call<{ path: string }>(`/gallery/${id}/export`, { method: "POST", body: json({ path, overwrite: true, original }) }),
+  /** The project list every device shares (crates/qls-core/src/projects.rs). */
+  projects: () => call<{ projects: ProjectData[] }>("/projects"),
+  project: (id: string) => call<ProjectData>(`/projects/${encodeURIComponent(id)}`),
+  /** The records of every version of a project, in one answer; deleted versions are left out. */
+  projectRecords: (id: string) =>
+    call<{ generations: Record<string, GenerationRecord>; inputs: Record<string, InputRecord> }>(`/projects/${encodeURIComponent(id)}/records`),
+  /** `known`: the version keys of the copy last heard from the service; answers with the merged project. */
+  saveProject: (id: string, project: ProjectData, known: string[]) => call<ProjectData>(`/projects/${encodeURIComponent(id)}`, { method: "PUT", body: json({ project, known }) }),
+  deleteProject: (id: string) => call<{ deleted: string }>(`/projects/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  /** This app's list from before 0.11 (browser storage), merged in once. */
+  importProjects: (projects: ProjectData[]) => call<{ changed: number }>("/projects/import", { method: "POST", body: json({ projects }) }),
   /** Browser sign-in (see crates/qls-service/src/remote.rs). */
   session: () => call<{ signed_in: boolean; password_set: boolean }>("/auth/session"),
   login: (password: string) => call<{ signed_in: boolean }>("/auth/login", { method: "POST", body: json({ password }) }),

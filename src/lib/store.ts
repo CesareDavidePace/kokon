@@ -9,7 +9,7 @@ import { inBrowser, isNarrow } from "./platform";
 import { useSyncExternalStore } from "react";
 import { markFresh } from "../components/Cocoon";
 import { api, ApiError, setPrivateInputs, subscribe } from "./api";
-import { activeLoras, buildRequest, composing, emptyComposer, needsPrompt, newKey, pageOutdated, persistentAdvanced, refFromGen, refFromInput, reviewRequest, starPromptDue, timelineLinks, undoTarget, versionLabels, wantsPromptReview, type CompareMode, type Composer, type Ref } from "./logic";
+import { activeLoras, buildRequest, composing, emptyComposer, goneVersions, needsPrompt, newKey, pageOutdated, persistentAdvanced, refFromGen, refFromInput, reviewRequest, starPromptDue, timelineLinks, undoTarget, versionLabels, wantsPromptReview, type CompareMode, type Composer, type Ref } from "./logic";
 import type { AppErrorBody, GenerationRecord, GenerationRequest, InputRecord, JobView, LoraItem, ServerState, StatusResponse } from "./types";
 
 export type Overlay = null | "gallery" | "settings" | "inpaint" | "expand" | "welcome" | "whats-new" | "prompt-tips" | "shortcuts";
@@ -134,38 +134,129 @@ interface StoredItem {
   request?: GenerationRequest;
 }
 
-interface ProjectData {
+export interface ProjectData {
   meta: ProjectMeta;
   items: StoredItem[];
   selected: string | null;
   /** LoRAs switched on in the project (absent = the ones on by default). */
   loras?: string[];
+  /** The service's revision of it (see crates/qls-core/src/projects.rs). */
+  rev?: number;
 }
 
-const projects: Record<string, ProjectData> = (() => {
-  try {
-    const p = JSON.parse(localStorage.getItem(PROJECTS_KEY) || "{}");
-    return p && typeof p === "object" ? p : {};
-  } catch {
-    return {};
-  }
-})();
+// The project list lives in kokon-service, shared by every device (0.11). Before, each app
+// kept it in its own browser storage: `loadProjects` sends that copy once, then keeps it
+// as a backup under BACKUP_KEY.
+const projects: Record<string, ProjectData> = {};
+const BACKUP_KEY = "qls.projects.v1.backup";
 
 const genCache = new Map<string, GenerationRecord>();
 const inputCache = new Map<string, InputRecord>();
 
+/** Per project, the version keys of the last copy heard from the service: a save sends them,
+ * so versions added elsewhere since are kept and the ones removed here are removed there. */
+const serverKeys = new Map<string, string[]>();
+/** Projects changed here and not saved yet; `edits` counts changes, so a save's answer is not
+ * applied over a newer change made while it was on its way. */
+const dirty = new Set<string>();
+const edits = new Map<string, number>();
 let saveTimer: number | undefined;
-function persistProjects() {
+
+/** What other devices need to hear about (the selection alone is this device's own). */
+const content = (p: ProjectData | undefined) => (p ? JSON.stringify([p.items.map((i) => i.key), p.meta.title, p.meta.named, p.loras]) : "");
+
+function persistProjects(ids: string[]) {
+  for (const id of ids) {
+    dirty.add(id);
+    edits.set(id, (edits.get(id) ?? 0) + 1);
+  }
   window.clearTimeout(saveTimer);
-  saveTimer = window.setTimeout(() => {
-    const keep: Record<string, ProjectData> = {};
-    for (const [id, p] of Object.entries(projects)) if (p.items.length || p.meta.named) keep[id] = p;
+  saveTimer = window.setTimeout(flushProjects, 300);
+}
+
+async function flushProjects() {
+  for (const id of [...dirty]) {
+    const p = projects[id];
+    dirty.delete(id);
+    if (!p || !(p.items.length || p.meta.named)) continue;
+    const seq = edits.get(id);
     try {
-      localStorage.setItem(PROJECTS_KEY, JSON.stringify(keep));
-    } catch {
-      /* storage unavailable */
+      const merged = await api.saveProject(id, p, serverKeys.get(id) ?? []);
+      if (edits.get(id) === seq) await applyProject(merged);
+      else serverKeys.set(id, merged.items.map((i) => i.key));
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) dropProject(id);
+      // Not reachable: saved again once the connection is back (startEvents).
+      else dirty.add(id);
     }
-  }, 300);
+  }
+}
+
+/** A copy from the service: into the list, and into the open project when its versions differ. */
+async function applyProject(p: ProjectData) {
+  const id = p.meta.id;
+  serverKeys.set(id, p.items.map((i) => i.key));
+  if (dirty.has(id)) return;
+  const old = projects[id];
+  projects[id] = { ...p, selected: old?.selected && p.items.some((i) => i.key === old.selected) ? old.selected : p.selected };
+  if (id !== state.projectId || state.privateMode) {
+    setState({ projects: projectList() });
+    return;
+  }
+  const keys = state.session.map((i) => i.key);
+  if (keys.length === p.items.length && keys.every((k, i) => k === p.items[i].key)) {
+    setState({ projects: projectList() });
+    return;
+  }
+  const seq = edits.get(id);
+  const session = await hydrate(p.items, id);
+  // Changed here meanwhile, or another project opened: that change is saved and merged instead.
+  if (edits.get(id) !== seq || state.projectId !== id) return;
+  const selected = session.some((i) => i.key === state.selected) ? state.selected : (session.at(-1)?.key ?? null);
+  setState({ session, selected });
+}
+
+/** Removed on another device: out of the list; if it is open, a new project starts. */
+function dropProject(id: string) {
+  delete projects[id];
+  serverKeys.delete(id);
+  dirty.delete(id);
+  if (id === state.projectId) setState((s) => ({ projectId: newKey(), session: [], selected: null, redo: [], composer: emptyComposer(s.composer), projects: projectList() }));
+  else setState({ projects: projectList() });
+}
+
+/** Loads the list from the service; the first time, with this app's own list from before 0.11. */
+export async function loadProjects() {
+  try {
+    const raw = localStorage.getItem(PROJECTS_KEY);
+    const local = raw ? (JSON.parse(raw) as Record<string, ProjectData>) : null;
+    if (local && typeof local === "object") {
+      await api.importProjects(Object.values(local));
+      localStorage.setItem(BACKUP_KEY, raw!);
+      localStorage.removeItem(PROJECTS_KEY);
+    }
+  } catch {
+    /* sent again next start (it stays in storage until the service has it) */
+  }
+  const { projects: list } = await api.projects();
+  const ids = new Set(list.map((p) => p.meta.id));
+  for (const id of Object.keys(projects)) if (!ids.has(id) && !dirty.has(id)) delete projects[id];
+  for (const p of list) await applyProject(p);
+  setState({ projects: projectList() });
+}
+
+/** News from the service: a project changed (on this or another device) or was removed. */
+async function onProjectEvent(id: string, rev: number, deleted: boolean) {
+  if (deleted) {
+    if (projects[id] || serverKeys.has(id)) dropProject(id);
+    return;
+  }
+  if ((projects[id]?.rev ?? 0) >= rev) return;
+  try {
+    await applyProject(await api.project(id));
+  } catch {
+    /* removed meanwhile: its own event follows */
+  }
 }
 
 function projectList(): ProjectMeta[] {
@@ -238,15 +329,33 @@ function syncProject(prev: State) {
     items,
     selected: state.selected,
     loras: state.composer.loras ?? undefined,
+    rev: old?.rev,
   };
+  // Saved (and heard by the other devices) only when something they show changed.
+  if (content(projects[id]) !== content(old)) persistProjects([id]);
+  else if (old) projects[id].meta.updatedAt = old.meta.updatedAt;
   state = { ...state, projects: projectList() };
-  persistProjects();
 }
 
-/** Loads the records of a stored project. Versions deleted from the gallery are skipped. */
-async function hydrate(items: StoredItem[]): Promise<SessionItem[]> {
+/** Loads the records of a stored project. Versions deleted from the gallery are skipped.
+ * All of them come in one request (one per version is slow on a phone); against a service
+ * without it, or for versions it did not know yet, one request per version. */
+async function hydrate(items: StoredItem[], projectId?: string): Promise<SessionItem[]> {
+  let gone = new Set<string>();
+  const missing = items.some((it) => (it.kind === "gen" && it.genId && !genCache.has(it.genId)) || (it.kind === "input" && it.inputId && !inputCache.has(it.inputId)));
+  if (projectId && missing) {
+    try {
+      const r = await api.projectRecords(projectId);
+      for (const g of Object.values(r.generations)) genCache.set(g.id, g);
+      for (const i of Object.values(r.inputs)) inputCache.set(i.id, i);
+      gone = goneVersions(items, r, serverKeys.get(projectId) ?? []);
+    } catch {
+      /* an older kokon-service: one request per version below */
+    }
+  }
   const out = await Promise.all(
     items.map(async (it): Promise<SessionItem | null> => {
+      if (gone.has(it.key)) return null;
       try {
         if (it.kind === "gen" && it.genId) {
           const g = genCache.get(it.genId) ?? (await api.generation(it.genId));
@@ -451,6 +560,7 @@ export function startEvents() {
         if (loaded) refreshStatus();
       }
       else if (ev.type === "gallery") setState((s) => ({ galleryVersion: s.galleryVersion + 1 }));
+      else if (ev.type === "projects") onProjectEvent(ev.id, ev.rev, ev.deleted);
     },
     (ok) => {
       setState({ connected: ok });
@@ -458,6 +568,8 @@ export function startEvents() {
         // Catch up on anything missed while disconnected.
         api.jobs().then((js) => js.forEach(onJob)).catch(() => {});
         refreshStatus();
+        // Changes made elsewhere meanwhile, then this app's own that could not be saved.
+        loadProjects().then(flushProjects, () => {});
       }
     },
   );
@@ -485,7 +597,9 @@ function onJob(job: JobView) {
   setState((s) => {
     const jobs = { ...s.jobs, [job.id]: job };
     if (job.status !== "done") return { jobs };
-    const results = job.results.map((g): SessionItem => ({ key: newKey(), kind: "gen", gen: g, jobId: job.id }));
+    // Keys from the image ids, the same the service gives them (projects.rs `job_done`), so a
+    // result added by both, or by two devices, is one version.
+    const results = job.results.map((g): SessionItem => ({ key: `r-${g.id}`, kind: "gen", gen: g, jobId: job.id }));
     // Replace the pending version with one version per result.
     const idx = s.session.findIndex((i) => i.jobId === job.id && i.kind === "job");
     if (idx >= 0) {
@@ -512,8 +626,8 @@ function onJob(job: JobView) {
       const wasSelected = p.selected === p.items[k].key;
       p.items = [...p.items.slice(0, k), ...stored, ...p.items.slice(k + 1)];
       if (wasSelected && stored[0]) p.selected = stored[0].key;
+      // Shown at once; the service made the same change and saves it (no save from here).
       p.meta = { ...p.meta, cover: lastCover(p.items), count: countOf(p.items), updatedAt: Date.now() };
-      persistProjects();
       return { jobs, projects: projectList() };
     }
     // A job from another client (e.g. MCP): track it but do not add it to a project.
@@ -642,7 +756,7 @@ export function setProjectLoras(ids: string[]) {
   const p = projects[state.projectId];
   if (p && !state.privateMode) {
     p.loras = ids;
-    persistProjects();
+    persistProjects([p.meta.id]);
   }
 }
 
@@ -666,19 +780,22 @@ export async function addExampleProjects(): Promise<string | null> {
   const { projects: examples } = await api.installExamples();
   const now = Date.now();
   let first: string | null = null;
+  const added: string[] = [];
   examples.forEach((ex, i) => {
     const have = Object.values(projects).find((p) => p.items.some((it) => it.genId === ex.generations[0]));
     if (have) {
       first ??= have.meta.id;
       return;
     }
-    const id = newKey();
-    const items: StoredItem[] = ex.generations.map((g) => ({ key: newKey(), kind: "gen", genId: g }));
+    // Ids from the images: two devices adding them at once make the same projects.
+    const id = `ex-${ex.generations[0]}`;
+    const items: StoredItem[] = ex.generations.map((g) => ({ key: `ex-${g}`, kind: "gen", genId: g }));
     const updatedAt = now - 60_000 - i * 1000;
     projects[id] = { meta: { id, title: ex.title, named: true, updatedAt, cover: lastCover(items), count: items.length }, items, selected: items[items.length - 1].key };
     first ??= id;
+    added.push(id);
   });
-  persistProjects();
+  persistProjects(added);
   setState({ projects: projectList() });
   return first;
 }
@@ -714,7 +831,7 @@ export function renameProject(id: string, name: string) {
   const auto = id === state.projectId ? titleOf(state.session) : null;
   p.meta = title ? { ...p.meta, title, named: true } : { ...p.meta, title: auto ?? p.meta.title ?? "Untitled", named: false };
   projects[id] = p;
-  persistProjects();
+  persistProjects([id]);
   setState({ projects: projectList() });
 }
 
@@ -725,8 +842,11 @@ export function deleteProject(id: string) {
 
 /** Removes projects from the list (their images stay in All images); the open one closes. */
 export function deleteProjects(ids: string[]) {
-  for (const id of ids) delete projects[id];
-  persistProjects();
+  for (const id of ids) {
+    delete projects[id];
+    dirty.delete(id);
+    if (serverKeys.delete(id)) api.deleteProject(id).catch(toastError);
+  }
   if (ids.includes(state.projectId)) setState((s) => ({ projectId: newKey(), session: [], selected: null, composer: emptyComposer(s.composer), projects: projectList() }));
   else setState({ projects: projectList() });
 }
@@ -774,12 +894,14 @@ export async function openGeneration(g: GenerationRecord) {
 /** A generation was deleted: drop it from every project. */
 export function forgetGeneration(id: string) {
   genCache.delete(id);
+  const changed: string[] = [];
   for (const p of Object.values(projects)) {
     if (!p.items.some((i) => i.genId === id)) continue;
     p.items = p.items.filter((i) => i.genId !== id);
     p.meta = { ...p.meta, cover: lastCover(p.items), count: countOf(p.items) };
+    changed.push(p.meta.id);
   }
-  persistProjects();
+  persistProjects(changed);
   setState((s) => {
     const session = s.session.filter((i) => i.gen?.id !== id);
     const refs = s.composer.refs.filter((r) => r.source !== `gen:${id}`);

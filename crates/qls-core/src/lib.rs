@@ -18,6 +18,7 @@ pub mod paths;
 pub mod pipeline;
 pub mod planner;
 pub mod process;
+pub mod projects;
 pub mod remote;
 pub mod sdcpp;
 pub mod speed;

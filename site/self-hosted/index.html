@@ -88,15 +88,15 @@
   <div class="wrap narrow">
     <nav class="crumbs" aria-label="Breadcrumb"><a href="../">Kokon</a> <span>/</span> Guide</nav>
     <h1>Use Kokon from your phone, or run it as a server</h1>
-    <p class="lede-left">Your computer with the graphics card makes the images. Your phone, tablet or laptop uses Kokon in a browser, on the same network or, through a VPN, from anywhere. Kokon 0.11 or newer. Updated October 23, 2026.</p>
+    <p class="lede-left">Your computer with the graphics card makes the images. Your phone, tablet or laptop uses Kokon in a browser, on the same network or, through a VPN, from anywhere. Kokon 0.11 or newer. Updated October 24, 2026.</p>
 
     <figure>
       <div class="scene-box phones-box" id="phones-box" style="margin-top:0">
-        <div class="scene phones" aria-label="Kokon on two iPhones: the gallery, and a project with an edit">
+        <div class="scene phones" aria-label="Kokon on two iPhones: the projects, and a project with an edit">
           <div class="device device-iphone-14-pro dv-phone" style="left:0;top:0;transform:scale(0.66);transform-origin:top left">
             <div class="device-frame"><div class="device-screen">
               <div class="status"><span>9:41</span><span class="icons"><svg viewBox="0 0 18 12"><use href="#sb-signal"/></svg><svg viewBox="0 0 16 12"><use href="#sb-wifi"/></svg><svg viewBox="0 0 27 13"><use href="#sb-battery"/></svg></span></div>
-              <img src="../assets/img/remote-phone-gallery.webp" width="786" height="1530" alt="Kokon's gallery on an iPhone, two columns of images made on the home computer" loading="eager">
+              <img src="../assets/img/remote-phone-library.webp" width="786" height="1530" alt="Kokon on an iPhone: the projects made on the home computer, as large cards with their pictures, and a New image button" loading="eager">
             </div></div>
             <div class="device-stripe"></div><div class="device-header"></div><div class="device-sensors"></div><div class="device-btns"></div><div class="device-power"></div><div class="device-home"></div>
           </div>
@@ -113,7 +113,7 @@
     </figure>
 
     <h2 id="how-it-works">How it works</h2>
-    <p>Kokon runs a small service on the computer with the graphics card. In 0.11 that service can also serve Kokon's interface to other devices: open its address in a browser, sign in with a password, and you get the same app as on the desktop. Photos you pick on the phone are uploaded to the computer, the computer makes the image, and the result lands in <strong>its</strong> gallery. You can download any result to the device you are holding.</p>
+    <p>Kokon runs a small service on the computer with the graphics card. In 0.11 that service can also serve Kokon's interface to other devices: open its address in a browser, sign in with a password, and you get Kokon, with a layout of its own on a phone: your projects first, a swipe between versions, a screen of its own for writing the prompt. Photos you pick on the phone are uploaded to the computer, the computer makes the image, and the result lands in <strong>its</strong> gallery. You can download any result to the device you are holding.</p>
     <p>There is no cloud and no Kokon account. The phone talks to your computer directly, over your own network.</p>
 
     <h2 id="on-your-home-network">On your home network</h2>
@@ -164,8 +164,8 @@ docker logs -f kokon                          # what the service is doing</code>
 
     <h2 id="in-a-browser">What is different in a browser</h2>
     <ul>
-      <li><strong>Adding photos:</strong> the + button, dropping files on the page, or pasting.</li>
-      <li><strong>Saving:</strong> the download button saves the image on the device you are using.</li>
+      <li><strong>Adding photos:</strong> Edit a photo in a new project (on a phone, from its photos or camera), the image button next to the prompt, dropping files on the page, or pasting.</li>
+      <li><strong>Saving:</strong> Save puts the image on the device you are using. On an iPhone it shows the picture: press and hold it, then tap Save to Photos.</li>
       <li><strong>On the computer only:</strong> showing files in a folder, the logs, LoRA and colour LUT files from disk, choosing model files, and updates.</li>
     </ul>
 

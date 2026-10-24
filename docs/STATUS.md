@@ -18,7 +18,11 @@ branch `server-0.11`, being tested before the release:
 - Projects shared by every device: the list is kept by `kokon-service` (`projects.json`), not in each app;
   versions made on a phone show up in the same project on the computer. Each app's list from before
   0.11 is merged in once, at the first start.
-- A phone layout for the browser UI: a simpler top bar, a full-screen menu, no zoom into text fields.
+- A phone layout of its own for the browser UI: a library of projects as the home screen, a project's versions
+  swiped sideways with the timeline under them, the image's actions in one row, a screen of its own for writing the
+  prompt above the keyboard, menus as sheets from the bottom, the status bar in the theme's colour. Images
+  develop into view (a blurred thumbnail sharpening into the picture) instead of showing a checkerboard while they
+  load, also in the desktop app.
 - Browsers stay signed in when `kokon-service` restarts (an app update, a reboot): `remote-sessions.json` in the
   data folder keeps only a SHA-256 of each session. A new password ends them all, also one set while Kokon was off;
   a signed-out page goes to the sign-in at once.

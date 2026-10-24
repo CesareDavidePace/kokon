@@ -32,6 +32,8 @@ Use Kokon from your phone, tablet or another computer, in a browser. The images 
 
 Full guide: [docs/remote-access.md](https://github.com/GabrieleLozupone/kokon/blob/master/docs/remote-access.md).
 
+On macOS, if the first launch only says **The application "Kokon" can't be opened**, with just an OK button and no *Open Anyway* in System Settings, run `xattr -dr com.apple.quarantine /Applications/Kokon.app` in Terminal, then open Kokon. Details in the [README](https://github.com/GabrieleLozupone/kokon#macos-says-kokon-cannot-be-opened).
+
 ### Installing on Linux
 
 ```bash
@@ -50,7 +52,7 @@ NVIDIA cards need the proprietary driver (the CUDA runtime comes with Kokon). AM
 
 | File | SHA-256 |
 |---|---|
-| `Kokon_0.11.0_x64-setup.exe` (Windows) | `TODO` |
-| `Kokon_0.11.0_aarch64.dmg` (Mac, macOS 15+) | `TODO` |
-| `Kokon_0.11.0_amd64.deb` (Ubuntu, Debian, Mint) | `TODO` |
-| `Kokon-0.11.0-1.x86_64.rpm` (Fedora) | `TODO` |
+| `Kokon_0.11.0_x64-setup.exe` (Windows) | `bdce51ae8a6035fb6324ef9ffc36cfe2bb52b1bf9637a90471b6332cd6fe6385` |
+| `Kokon_0.11.0_aarch64.dmg` (Mac, macOS 15+) | `5e401c43795de798b20c47bf816d6672617ac75599c5b0acb1e40f1875c69188` |
+| `Kokon_0.11.0_amd64.deb` (Ubuntu, Debian, Mint) | `3b3ae88639a12bd17518025ead114e3d52696895f75fbc922f6a042fc3fd33db` |
+| `Kokon-0.11.0-1.x86_64.rpm` (Fedora) | `9f37114b3804dc4e1544fba06cd1aa9e1db470ee284c62e99aa6c395e196e69b` |

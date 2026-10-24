@@ -10,6 +10,24 @@ Use Kokon from your phone, tablet or another computer, in a browser. The images 
 - **Headless Linux**: `kokon-service --set-password`, then `kokon-service --persistent --remote`.
 - The MCP server finds the service on Linux too.
 
+**On a phone** Kokon has a layout of its own in the browser:
+
+- Your projects as the home screen, a project's versions swiped sideways with the timeline under them, the image's actions in one row, a screen of its own for writing the prompt, and menus as sheets from the bottom. Add it to the phone's home screen (on iPhone, Share → **Add to Home Screen**) to open it like an app.
+- **The same projects on every device**: `kokon-service` keeps the list of projects, so a version made on the phone shows up in the same project on the computer. Each app's own list from before 0.11 is merged in once, at the first start.
+- Fast over Wi-Fi and mobile data: a project opens with one request, and the screen shows a screen-sized copy of each image (at most 1280 px). Zoom, download and copy still use the full image.
+- Full screen and the paint editor draw large images at screen size, so a 4K upscale no longer runs Safari out of memory on an iPhone; pinch or double-tap still shows the real pixels.
+- Swipe between images in full screen and in All images.
+- **Take Photo** uploads the picture, with a Flip button first (Safari's camera doesn't mirror selfies the way the Camera app does).
+- Images develop into view (a blurred thumbnail sharpening into the picture) instead of popping in over a checkerboard, also in the desktop app.
+- The status bar follows the theme, and turns black in full screen.
+- Browsers stay signed in when the computer running Kokon restarts or updates, and a page reloads itself once when that computer has updated to another version. Choosing a new password signs every browser out.
+
+**Also in this release**
+
+- **Your own model files**: a warning, in setup and at startup, when the image model is a known base Qwen-Image 2.1 file instead of Turbo (Kokon runs Turbo's 8 steps; the base model needs many more). Setup also says that FP8 files run much slower than the GGUF on AMD and Intel cards with Vulkan ([#38](https://github.com/GabrieleLozupone/kokon/issues/38)).
+- **MCP**: an output folder listed in `QLS_MCP_ALLOWED_DIRS` now works (the service refused it), and the error for a folder outside the allowed ones names the variable ([#39](https://github.com/GabrieleLozupone/kokon/issues/39)).
+- Closing the desktop app ends the service even when a browser tab is open; only a server started with `--persistent` or `--remote` keeps running. Ctrl+C and `docker stop` shut it down cleanly.
+
 **Updating from 0.10.2**: only the app updates; the engine and the models stay as they are. Your images and settings are kept, and access from other devices stays off until you turn it on.
 
 Full guide: [docs/remote-access.md](https://github.com/GabrieleLozupone/kokon/blob/master/docs/remote-access.md).
@@ -26,6 +44,7 @@ NVIDIA cards need the proprietary driver (the CUDA runtime comes with Kokon). AM
 ### Thanks
 
 - Everyone who asked for a browser interface and Docker in [#15](https://github.com/GabrieleLozupone/kokon/issues/15): @frostworx, @giveen, @Markus-, @openSourcerer9000, @pastukhvladyslav, @strid3r21 and @swingtempo.
+- @XeonG, for reporting the MCP output folders (#39).
 
 ### Downloads
 

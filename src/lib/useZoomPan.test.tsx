@@ -755,8 +755,15 @@ describe("InpaintEditor & ZoomPan Integration", () => {
     expect(viewport).not.toBeNull();
     const maskWrap = container.querySelector(".mask-wrap") as HTMLElement;
     expect(maskWrap).not.toBeNull();
-    expect(maskWrap.style.width).toBe("1600px");
-    expect(maskWrap.style.height).toBe("900px");
+    // A browser draws it flat (ZoomPan `flat`): the content box has the image's shape at its
+    // drawn size and the mask box fills it; the mask keeps the image's own resolution.
+    const content = container.querySelector(".inpaint-zoom-viewport .zoom-pan-content") as HTMLElement;
+    expect(parseFloat(content.style.width) / parseFloat(content.style.height)).toBeCloseTo(1600 / 900, 5);
+    expect(content.style.transform).not.toContain("scale");
+    expect(maskWrap.style.width).toBe("100%");
+    expect(maskWrap.style.height).toBe("100%");
+    const canvas = maskWrap.querySelector("canvas") as HTMLCanvasElement;
+    expect([canvas.width, canvas.height]).toEqual([1600, 900]);
   });
 
   it("toggles pan mode via Spacebar hold and Hand tool button", () => {

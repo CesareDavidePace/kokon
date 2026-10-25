@@ -80,7 +80,7 @@ extension Checks {
 
         func report(_ name: String, _ got: UnsafePointer<Float>, _ want: [Float]) {
             let r = compare(got, want)
-            print(String(format: "  %-12@ rel %.2e   max |Δ| %.3g%@", name as NSString, r.relative, r.maxAbs, r.finite ? "" : "   NON-FINITE"))
+            print(String(format: "  %-22@ rel %.2e   max |Δ| %.3g%@", name as NSString, r.relative, r.maxAbs, r.finite ? "" : "   NON-FINITE"))
         }
         let rope = sequence.ropeTable()
         rope.withUnsafeBufferPointer { report("rope", $0.baseAddress!, try! reference(directory, "rope")) }
@@ -94,11 +94,14 @@ extension Checks {
             precondition(want.count == count, "\(name): \(count) floats, reference \(want.count)")
             report(name, pointer, want)
         }
-        // Timing without the stage waits.
-        let started = DispatchTime.now().uptimeNanoseconds
-        _ = try dit.forward(encoder: encoder, target: latent, sigma: sigma)
-        print(String(format: "evaluation: %.3f s (modulation on the CPU %.3f s)",
-                     Double(DispatchTime.now().uptimeNanoseconds - started) * 1e-9, dit.timings["modulation"] ?? 0))
+        // Without the stage waits (and with the prefix cache, when on): timed, and its velocity checked too.
+        for run in 1...2 {
+            let started = DispatchTime.now().uptimeNanoseconds
+            let out = try dit.forward(encoder: encoder, target: latent, sigma: sigma)
+            let seconds = Double(DispatchTime.now().uptimeNanoseconds - started) * 1e-9
+            out.withUnsafeBufferPointer { report("model_out, unprobed \(run)", $0.baseAddress!, try! reference(directory, "model_out")) }
+            print(String(format: "evaluation: %.3f s (modulation on the CPU %.3f s)", seconds, dit.timings["modulation"] ?? 0))
+        }
     }
 }
 
@@ -133,6 +136,7 @@ extension Checks {
                 c.resetTimings()
             }
         }
+        guard ProcessInfo.processInfo.environment["KOKON_PROFILE"] != "0" else { return }
         dit.profiling = true
         _ = try dit.forward(encoder: encoder, target: latent, sigma: 0.5)
         print("profile (each operation alone, GPU seconds):")

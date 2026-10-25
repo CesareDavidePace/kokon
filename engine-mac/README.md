@@ -202,6 +202,12 @@ rows of 4 128, and the products drop from 4 160 padded rows to 4 096); for an ed
 as long as the target, about half of each step. A pass of the prefix alone, before the first evaluation, took
 1.86 s (products of 64 rows run far below the GPU's rate), so the first evaluation carries the prefix instead.
 
+**The row kernels write the products' fp16 input** (`KOKON_FUSED_CAST=0` for the comparison): `layernorm_modulate`
+(before q/k/v and gate/proj) and `swiglu` (before the MLP's out) write the GPU's and the AMX's rows straight to fp16
+and fp32 only for the Neural Engine's rows, so the separate `pack_half` pass, which read the fp32 rows back, is gone.
+The same values to the bit (check-dit at 896²: velocity 6.74e-4 either way). 1024², 3 alternated pairs of 4
+evaluations (M2 Pro, 2026-10-25): 7.67 → 7.58 s per evaluation, the GPU alone between operations 0.71 → 0.64 s.
+
 **1024² image after this pass (M2 Pro, `generate`, 2026-10-25): 67.3–68.0 s** (text encoder 2.0 s, step 1 8.35 s,
 steps 2–8 7.3–7.7 s, VAE 5.0–5.3 s with its first run at the size; 79.9 s at the start of the fp16 work, 76.0 with
 fp16 attention). `MTLBinaryArchive` was not added: the engine's kernels compile from source in 0.1 s at start (macOS

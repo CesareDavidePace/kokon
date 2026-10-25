@@ -62,7 +62,10 @@ final class Coexecutor {
     /// for `cblas_sgemm`. The velocity at 896² against diffusers: 7.2e-4 (fp32 A 5.7e-4, fp32 weights 5.1e-4; the
     /// Neural Engine's rows are fp16 in every case).
     let halfActivations = ProcessInfo.processInfo.environment["KOKON_ACTIVATIONS"] != "fp32"
-    private lazy var aHalf: MTLBuffer? = try? context.scratch(rows * QwenDiT.hidden * 2, label: "A fp16")
+    /// The longest split product's rows: the first evaluation of a conditioning carries the prefix's rows too, and
+    /// without the Neural Engine they are all cast.
+    let maxRows: Int
+    private lazy var aHalf: MTLBuffer? = try? context.scratch(maxRows * QwenDiT.hidden * 2, label: "A fp16")
     /// Seconds each worker spent computing (not waiting), and failures (a failure leaves rows unwritten).
     var amxSeconds = 0.0, aneSeconds = 0.0
     var failures: [String] = []
@@ -75,11 +78,12 @@ final class Coexecutor {
     /// Starting shares measured on the M2 Pro 16 GB, 1024² + 32 text rows (`time-dit`, 2026-10-25): 2 048 rows on the
     /// Neural Engine and 1/16 on the AMX (AMX 512 rows 12.8 s per evaluation, 256 rows 11.3 s, none 11.8 s; GPU alone
     /// 16.2 s). The balancing loop moves them from the first evaluation on.
-    init(context: MetalContext, rows: Int, ane: Bool = true, amx: Bool = true, aneAttention: Bool = false,
+    init(context: MetalContext, rows: Int, maxRows: Int? = nil, ane: Bool = true, amx: Bool = true, aneAttention: Bool = false,
          halfWeights: Bool = false) throws {
         self.context = context
         self.halfWeights = halfWeights
         self.rows = rows
+        self.maxRows = max(rows, maxRows ?? rows)
         self.aneEnabled = ane
         self.amxEnabled = amx
         aneRows = ane ? min(2048, max(0, (rows - 512) / 256 * 256)) : 0
@@ -137,6 +141,15 @@ final class Coexecutor {
     }
 
     struct Shape { var k, n, k0, kPart, n0, nPart, row0, rows, kParts: UInt32 }
+
+    /// Where the kernel that writes a split product's input writes its fp16 copy, and how many rows of it: the
+    /// GPU's and the AMX's (all but the Neural Engine's last ones, whatever the AMX's share). The product then takes
+    /// it as cast (`castReady`), so no `pack_half` runs between the two. nil: the product casts for itself, or
+    /// reads fp32. `m` padded.
+    func halfInput(m: Int, k: Int, n: Int) -> (buffer: MTLBuffer, rows: Int)? {
+        guard halfActivations, applies(m: m, k: k, n: n), m <= maxRows, let aHalf else { return nil }
+        return (aHalf, m - split(m: m, k: k, n: n).ane)
+    }
 
     /// Encodes the split product of the weight named `weight`. `gpuRows` encodes the GPU's own rows `[0, g)` into the
     /// command buffer.

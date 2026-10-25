@@ -100,7 +100,7 @@ public final class QwenDiT {
         // With the cache the split products are the target's rows; without it, the whole sequence's.
         let splitRows = QwenDiT.padded(prefixCache != nil ? sequence.target : sequence.count)
         if environment["KOKON_COEXEC"] != "0", splitRows >= 1024 {
-            coexecutor = try Coexecutor(context: context, rows: splitRows,
+            coexecutor = try Coexecutor(context: context, rows: splitRows, maxRows: QwenDiT.padded(sequence.count),
                                         ane: environment["KOKON_ANE"] != "0", amx: environment["KOKON_AMX"] != "0",
                                         aneAttention: environment["KOKON_ANE_ATTENTION"] == "1", halfWeights: halfWeights)
         } else {
@@ -211,6 +211,7 @@ public final class QwenDiT {
 
         // The cached path when there is a cache and no probe (the probes compare every row of every stage).
         let cached = prefixCache != nil && probe == nil
+        probing = probe != nil
         var commands = try begin()
         // A new conditioning: the whole sequence once, the prefix's K and V saved on the way. A pass of the prefix
         // alone took 1.86 s at 1024² (products of 64 rows run far below the GPU's rate); riding along the first
@@ -304,7 +305,8 @@ public final class QwenDiT {
         let (first, count) = (rows.lowerBound, rows.count)
         let block = "transformer_blocks.\(layer)."
         let band = 5 * d   // the target's modulation row follows the prefix's
-        try layerNorm(x, into: normed, rows: rows, prefixMod: 0, targetMod: band, commands: commands)
+        try layerNorm(x, into: normed, rows: rows, prefixMod: 0, targetMod: band,
+                      half: halfOutput(count: count, k: d, n: d), commands: commands)
         try linear(block + "attn.to_q.weight", a: normed, aRow: first, c: q, m: count, cRow: first, next: block + "attn.to_k.weight", commands: commands)
         try linear(block + "attn.to_k.weight", a: normed, aRow: first, c: k, m: count, cRow: first, next: block + "attn.to_v.weight", commands: commands)
         try mark("norm1", normed)
@@ -326,11 +328,12 @@ public final class QwenDiT {
         try mark("attn_out", o)
         try residual(gate: d, rows: rows, commands: commands)
         try mark("res1", x)
-        try layerNorm(x, into: normed, rows: rows, prefixMod: 2 * d, targetMod: band + 2 * d, commands: commands)
+        try layerNorm(x, into: normed, rows: rows, prefixMod: 2 * d, targetMod: band + 2 * d,
+                      half: halfOutput(count: count, k: d, n: QwenDiT.hidden), commands: commands)
         try mark("norm2", normed)
         try linear(block + "img_mlp.gate_layer.weight", a: normed, aRow: first, c: h1, m: count, cRow: first, next: block + "img_mlp.proj.weight", commands: commands)
         try linear(block + "img_mlp.proj.weight", a: normed, aRow: first, c: h2, m: count, cRow: first, next: block + "img_mlp.out.weight", commands: commands)
-        try elementwise("swiglu", [(h1, first * QwenDiT.hidden), (h2, first * QwenDiT.hidden)], count: count * QwenDiT.hidden, commands: commands)
+        try swiglu(first: first, count: count, half: halfOutput(count: count, k: QwenDiT.hidden, n: d), commands: commands)
         try linear(block + "img_mlp.out.weight", a: h1, aRow: first, c: o, m: count, cRow: first,
                    next: layer + 1 < QwenDiT.layers ? "transformer_blocks.\(layer + 1).attn.to_q.weight" : nil, commands: commands)
         try mark("mlp", o)
@@ -468,22 +471,64 @@ public final class QwenDiT {
     }
 
     struct RowParams { var columns: UInt32; var targetStart: UInt32; var eps: Float }
+    struct HalfOut { var rows, halfRows, fullFrom: UInt32 }
+    struct NormParams { var columns, targetStart: UInt32; var eps: Float; var half: HalfOut }
+    struct SwigluParams { var columns: UInt32; var half: HalfOut }
+
+    /// **The row kernels write the next split product's fp16 input** (`layernorm_modulate` before q/k/v and gate/proj,
+    /// `swiglu` before the MLP's out): the GPU's and the AMX's rows straight to fp16, fp32 only for the Neural Engine's
+    /// rows, instead of fp32 everywhere and a `pack_half` pass that reads it back. The same values to the bit
+    /// (`half(v)` of the same fp32 v). `KOKON_FUSED_CAST=0`: the separate cast, for comparison.
+    let fusedCast = ProcessInfo.processInfo.environment["KOKON_FUSED_CAST"] != "0"
+    /// Set while a probe reads the stages: every row is written in fp32 too.
+    private var probing = false
+
+    /// Where a row kernel of `count` real rows writes the fp16 input of the split product `k × n` that follows.
+    func halfOutput(count: Int, k: Int, n: Int) -> (buffer: MTLBuffer, out: HalfOut)? {
+        guard fusedCast, !profiling, let coexecutor, let h = coexecutor.halfInput(m: QwenDiT.padded(count), k: k, n: n) else { return nil }
+        return (h.buffer, HalfOut(rows: UInt32(count), halfRows: UInt32(h.rows), fullFrom: probing ? 0 : UInt32(h.rows)))
+    }
+
+    /// No fp16 copy: every row in fp32.
+    static func fullOnly(_ rows: Int) -> HalfOut { HalfOut(rows: UInt32(rows), halfRows: 0, fullFrom: 0) }
     struct HeadParams { var heads: UInt32; var rows: UInt32; var eps: Float }
     struct ResidualParams { var columns: UInt32; var targetStart: UInt32; var count: UInt32 }
 
-    /// `out = LN(x) · mod[band]`, `prefixMod` / `targetMod` floats into the modulation slice.
+    /// `out = LN(x) · mod[band]`, `prefixMod` / `targetMod` floats into the modulation slice; `half`: the next
+    /// product's fp16 input too (`halfOutput`).
     func layerNorm(_ input: Arena.Slice, into out: Arena.Slice, rows: Range<Int>, prefixMod: Int, targetMod: Int,
-                   commands: MTLCommandBuffer) throws {
+                   half: (buffer: MTLBuffer, out: HalfOut)? = nil, commands: MTLCommandBuffer) throws {
         let at = rows.lowerBound * QwenDiT.dim * 4
+        let h = half?.out ?? QwenDiT.fullOnly(rows.count)
         try compute("layernorm_modulate", commands: commands) { e in
             e.setBuffer(arena.buffer, offset: input.offset + at, index: 0)
             e.setBuffer(arena.buffer, offset: out.offset + at, index: 1)
             e.setBuffer(arena.buffer, offset: modulation.offset + prefixMod * 4, index: 2)
             e.setBuffer(arena.buffer, offset: modulation.offset + targetMod * 4, index: 3)
-            var params = RowParams(columns: UInt32(QwenDiT.dim), targetStart: UInt32(max(0, sequence.prefix - rows.lowerBound)), eps: QwenDiT.eps)
-            e.setBytes(&params, length: MemoryLayout<RowParams>.stride, index: 4)
-            e.dispatchThreadgroups(MTLSize(width: rows.count, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+            var params = NormParams(columns: UInt32(QwenDiT.dim), targetStart: UInt32(max(0, sequence.prefix - rows.lowerBound)),
+                                    eps: QwenDiT.eps, half: h)
+            e.setBytes(&params, length: MemoryLayout<NormParams>.stride, index: 4)
+            e.setBuffer(half?.buffer ?? arena.buffer, offset: half == nil ? out.offset + at : 0, index: 5)
+            e.dispatchThreadgroups(MTLSize(width: max(rows.count, Int(h.halfRows)), height: 1, depth: 1),
+                                   threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
         }
+        if half != nil { castInput = (out.offset, rows.lowerBound, QwenDiT.dim) }
+    }
+
+    /// `h1 = SiLU(h1) ⊙ h2` on rows `[first, first + count)`; `half`: the MLP out's fp16 input too.
+    func swiglu(first: Int, count: Int, half: (buffer: MTLBuffer, out: HalfOut)?, commands: MTLCommandBuffer) throws {
+        let w = QwenDiT.hidden
+        let h = half?.out ?? QwenDiT.fullOnly(count)
+        try compute("swiglu", commands: commands) { e in
+            e.setBuffer(arena.buffer, offset: h1.offset + first * w * 4, index: 0)
+            e.setBuffer(arena.buffer, offset: h2.offset + first * w * 4, index: 1)
+            var params = SwigluParams(columns: UInt32(w), half: h)
+            e.setBytes(&params, length: MemoryLayout<SwigluParams>.stride, index: 2)
+            e.setBuffer(half?.buffer ?? arena.buffer, offset: half == nil ? h1.offset : 0, index: 3)
+            e.dispatchThreads(MTLSize(width: max(count, Int(h.halfRows)) * w, height: 1, depth: 1),
+                              threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+        }
+        if half != nil { castInput = (h1.offset, first, w) }
     }
 
     func rmsNorm(_ input: Arena.Slice, into out: Arena.Slice, rows: Int, weight: Arena.Slice, commands: MTLCommandBuffer) throws {

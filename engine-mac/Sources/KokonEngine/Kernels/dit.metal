@@ -26,13 +26,35 @@ static inline float row_sum(float v, threadgroup float *shared, uint tid) {
     return total;
 }
 
+// The fp16 copy of a row kernel's output that the next split product reads (`Coexecution.swift`): rows below
+// `halfRows` go to `outHalf` (the GPU's and the AMX's rows, as `pack_half` would cast them), fp32 is written from
+// `fullFrom` on (the Neural Engine's rows, which its packing scales from fp32; 0 when every row is read in fp32).
+// Rows from `rows` (the real ones) to `halfRows` are the product's padding: zeros in the copy.
+struct HalfOut {
+    uint rows;
+    uint halfRows;
+    uint fullFrom;
+};
+
+struct NormParams {
+    uint columns;
+    uint targetStart;
+    float eps;
+    HalfOut half_out;
+};
+
 // out = LayerNorm(x) (no affine) * onePlusScale[band]: img_norm1/2 + _modulate, norm_out.
-// One threadgroup per row.
+// One threadgroup per row (max(rows, halfRows) of them).
 kernel void layernorm_modulate(device const float *x [[buffer(0)]], device float *out [[buffer(1)]],
                                device const float *prefixMod [[buffer(2)]], device const float *targetMod [[buffer(3)]],
-                               constant RowParams &p [[buffer(4)]],
+                               constant NormParams &p [[buffer(4)]], device half *outHalf [[buffer(5)]],
                                uint row [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]]) {
     threadgroup float shared[ROW_THREADS / 32];
+    device half *h = outHalf + (ulong)row * p.columns;
+    if (row >= p.half_out.rows) {   // the whole threadgroup: no barrier is skipped by part of it
+        for (uint j = tid; j < p.columns; j += ROW_THREADS) h[j] = 0;
+        return;
+    }
     device const float *r = x + (ulong)row * p.columns;
     float s = 0;
     for (uint j = tid; j < p.columns; j += ROW_THREADS) s += r[j];
@@ -42,7 +64,12 @@ kernel void layernorm_modulate(device const float *x [[buffer(0)]], device float
     float inv = rsqrt(row_sum(q, shared, tid) / float(p.columns) + p.eps);
     device const float *m = row < p.targetStart ? prefixMod : targetMod;
     device float *o = out + (ulong)row * p.columns;
-    for (uint j = tid; j < p.columns; j += ROW_THREADS) o[j] = ((r[j] - mean) * inv) * m[j];
+    bool toHalf = row < p.half_out.halfRows, toFull = row >= p.half_out.fullFrom;
+    for (uint j = tid; j < p.columns; j += ROW_THREADS) {
+        float v = ((r[j] - mean) * inv) * m[j];
+        if (toFull) o[j] = v;
+        if (toHalf) h[j] = half(v);
+    }
 }
 
 // QwenImage21ZeroCenterRMSNorm: x * rsqrt(mean(x²) + eps) * (w + 1), `onePlusWeight` precomputed.
@@ -104,12 +131,25 @@ kernel void gated_residual(device float *x [[buffer(0)]], device const float *o 
     x[i] = x[i] + g * o[i];
 }
 
-// QwenImage21SwiGLUFeedForward: gate = SiLU(gate) * proj, in place in `gate`.
+// QwenImage21SwiGLUFeedForward: gate = SiLU(gate) * proj, in place in `gate`; with a fp16 copy as in
+// layernorm_modulate (`columns` floats a row, one thread per value of max(rows, halfRows) rows).
+struct SwigluParams {
+    uint columns;
+    HalfOut half_out;
+};
+
 kernel void swiglu(device float *gate [[buffer(0)]], device const float *proj [[buffer(1)]],
-                   constant uint &count [[buffer(2)]], uint i [[thread_position_in_grid]]) {
-    if (i >= count) return;
+                   constant SwigluParams &p [[buffer(2)]], device half *outHalf [[buffer(3)]],
+                   uint i [[thread_position_in_grid]]) {
+    uint row = i / p.columns;
+    if (row >= p.half_out.rows) {
+        if (row < p.half_out.halfRows) outHalf[i] = 0;
+        return;
+    }
     float g = gate[i];
-    gate[i] = (g / (1.0f + exp(-g))) * proj[i];
+    float v = (g / (1.0f + exp(-g))) * proj[i];
+    if (row >= p.half_out.fullFrom) gate[i] = v;
+    if (row < p.half_out.halfRows) outHalf[i] = half(v);
 }
 
 // nn.GELU(approximate="tanh"), in place.

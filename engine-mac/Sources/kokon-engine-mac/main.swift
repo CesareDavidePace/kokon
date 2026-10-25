@@ -8,6 +8,7 @@ kokon-engine-mac: Kokon's Apple Silicon engine (in development)
   check-dequant <file.gguf> [name...]      GPU unpacking against the CPU reference
   check-dit <dit.gguf> <reference dir>     one DiT evaluation against tools/reference_dit.py
   time-dit <dit.gguf> [grid] [text] [runs] DiT evaluations on random inputs (grid 64 = 1024²)
+  check-vae <vae.safetensors> <reference dir> [grid]   the VAE decoder against tools/reference_vae.py
   probe                                    this Mac's matrix throughput: GPU, AMX, Neural Engine, together
 """
 
@@ -48,6 +49,9 @@ do {
                            runs: numbers.dropFirst(2).first ?? 3)
     case "check-ane":
         try Checks.aneSurfaces()
+    case "check-vae":
+        guard arguments.count >= 3 else { fail(usage) }
+        try Checks.vae(path: arguments[1], reference: arguments[2], timeGrid: arguments.count > 3 ? Int(arguments[3]) : nil)
     case "probe":
         try Probe.run()
     default:

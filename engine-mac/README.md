@@ -25,6 +25,9 @@ swift test                                   # no model needed
 | `Probe.swift` | GPU (MPS), AMX (Accelerate) and Neural Engine (Core ML) on Qwen's product shapes, alone and together |
 | `QwenSequence.swift` | the joint text/image sequence, block-causal segments and RoPE positions |
 | `QwenDiT.swift`, `Kernels/dit.metal`, `Attention.swift`, `Arena.swift` | the DiT: modulation on the CPU, everything per token on the GPU |
+| `Coexecution.swift`, `Kernels/ane.metal` | the AMX and the Neural Engine beside the GPU on the DiT's products |
+| `Kernels/attention.metal` | fused block-causal attention |
+| `QwenVAE.swift`, `Safetensors.swift` | the VAE decoder as one MPSGraph, from Kokon's VAE file (Wan 2.2 names) |
 
 Tests check the CPU and GPU unpacking against gguf-py's values (`tools/make_quant_fixtures.py` writes the
 fixture), and the sequence layout against diffusers' rules worked out by hand.
@@ -71,6 +74,9 @@ most tools do, deviates by roughly 1e-2.
 **Attention** is a fused (flash) kernel of our own (`Kernels/attention.metal`, fp32, online softmax, block-causal
 mask): 4.5 s per 1024² evaluation against MPSGraph's 4.1 s, but without MPSGraph's score matrix (2.2 GB at 1 MP,
 ~34 GB at 4 MP). `KOKON_ATTENTION=graph` keeps MPSGraph for comparison. The other units are idle during it: next.
+
+**VAE decoder** (`check-vae`, against `tools/reference_vae.py`, diffusers fp32): within 1.1e-5; 1024² in 3.1 s
+(plus ~6 s to build its graph the first time).
 
 Credits: the Neural Engine program technique and the GPU + AMX + Neural Engine split come from
 [Siliconed](https://github.com/gwenn-ha-dev/Siliconed) (Apache-2.0), written again here.

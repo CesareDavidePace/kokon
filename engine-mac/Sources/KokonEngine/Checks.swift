@@ -179,3 +179,30 @@ extension Checks {
         print(String(format: "Neural Engine on GPU-written surfaces: max |Δ| %.4g of max |y| %.4g (fp16 output)", worst, scale))
     }
 }
+
+extension Checks {
+    /// The VAE decoder against `tools/reference_vae.py`, then its time at `grid` (64 = 1024²).
+    public static func vae(path: String, reference directory: String, timeGrid: Int?) throws {
+        let meta = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: directory)
+            .appendingPathComponent("meta.json"))) as! [String: Any]
+        let grid = meta["grid"] as! Int
+        let context = try MetalContext()
+        let vae = try QwenVAE(path: path, context: context)
+        let latent = try reference(directory, "latent"), want = try reference(directory, "image")
+        var started = DispatchTime.now().uptimeNanoseconds
+        let got = try vae.decode(latent, height: grid, width: grid)
+        let first = Double(DispatchTime.now().uptimeNanoseconds - started) * 1e-9
+        let r = got.withUnsafeBufferPointer { compare($0.baseAddress!, want) }
+        print(String(format: "VAE %d² → %d²: rel %.2e, max |Δ| %.3g%@ (%.2f s with the graph build)", grid, grid * 16,
+                     r.relative, r.maxAbs, r.finite ? "" : " NON-FINITE", first))
+        if let t = timeGrid {
+            let random = (0..<(64 * t * t)).map { Float(($0 * 7919) % 1000) / 500 - 1 }
+            for run in 0..<2 {
+                started = DispatchTime.now().uptimeNanoseconds
+                _ = try vae.decode(random, height: t, width: t)
+                print(String(format: "decode %d² (run %d): %.2f s", t * 16, run + 1,
+                             Double(DispatchTime.now().uptimeNanoseconds - started) * 1e-9))
+            }
+        }
+    }
+}

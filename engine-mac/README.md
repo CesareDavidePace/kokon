@@ -200,8 +200,10 @@ that macOS 27's run-time compiler refuses (libnnc ships prebuilt metallibs for i
 **VAE decoder** (`check-vae`, against `tools/reference_vae.py`, diffusers fp32): within 1.1e-5; 1024² in 2.75 s. Its
 graph builds and compiles in 0.3 s, but its first run at a size costs ~3.7 s more, GPU time (~1 s of CPU): it cannot
 hide under the DiT, so the pipeline keeps its VAE between images and a long-lived engine pays it once per size.
-fp16 convolutions (norms and attention kept fp32) were wrong (2.7e-1, an overflow) and 5.7× slower (MPSGraph tries to
-move them to the Neural Engine): the VAE stays fp32.
+fp16 up blocks (norms and the mid block kept fp32) are wrong (2.7e-1) and 3–11× slower only when MPSGraph may place
+them on the Neural Engine (optimization level 1, its default); at level 0 they stay on the GPU and are right but
+gain little: all five 2.43 s against 2.77 at 1024², for 2.7e-3 of diffusers instead of 1.1e-5 (up to ~19 levels off).
+The VAE stays fp32 (2026-10-25).
 
 Credits: the Neural Engine program technique and the GPU + AMX + Neural Engine split come from
 [Siliconed](https://github.com/gwenn-ha-dev/Siliconed) (Apache-2.0), written again here.

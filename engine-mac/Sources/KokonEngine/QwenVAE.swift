@@ -38,8 +38,10 @@ public final class QwenVAE {
     /// One compiled graph per latent size, compiled to the end (`waitForCompilationCompletion`): 2.7 s at 1024² (M2
     /// Pro), mostly the shader compiler, which otherwise ran inside the first decode (6.4 s against 2.75 s; with it
     /// up front the first decode is 4.15 s). Beside the DiT it slows the steps far more than it saves: the pipeline
-    /// keeps its VAE between images, and an idle engine can prepare ahead. fp16 convolutions (norms and attention in
-    /// fp32) were wrong (2.7e-1: an overflow) and 5.7× slower, MPSGraph trying to move them to the Neural Engine: the
+    /// keeps its VAE between images, and an idle engine can prepare ahead. fp16 up blocks (norms and the mid block in
+    /// fp32) are wrong (2.7e-1) and 3–11× slower only at optimization level 1, where MPSGraph places them on the Neural
+    /// Engine; at level 0 they stay on the GPU and are right, but save little: all five in fp16 2.43 s against 2.77 at
+    /// 1024², the first two 2.65, for 2.2–2.7e-3 of diffusers instead of 1.1e-5 (M2 Pro, `check-vae`, 2026-10-25). The
     /// VAE stays fp32.
     private var executables: [String: MPSGraphExecutable] = [:]
     private let lock = NSLock()

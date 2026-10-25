@@ -14,18 +14,24 @@ kokon-engine-mac: Kokon's Apple Silicon engine (in development)
   check-tokenizer <encoder.gguf> <fixture.json>       the tokenizer against tools/reference_tokenizer.py
   check-text <encoder.gguf> <reference dir> [mmproj.gguf]   the text encoder against tools/reference_text_encoder.py
   check-vision <mmproj.gguf> <reference dir>          the vision tower against tools/reference_vision.py, then its time
-  check-generate <encoder.gguf> <dit.gguf> <vae.safetensors> <reference dir> [text reference dir]
-                                           text to image against tools/reference_generate.py, from its noise
-                                           (and from the text reference's conditioning when given)
-  check-textgen <encoder.gguf> <dir> [tokens]       text generation (Prompt+), greedy, against tools/reference_text_generation.py
+  check-generate <encoder.gguf> <dit.gguf> <vae.safetensors> <reference dir> [text reference dir] [mmproj.gguf]
+                                           text to image or an edit against tools/reference_generate.py, from its noise
+                                           (and from the text reference's conditioning when given; an edit needs the
+                                           text reference, and with the mmproj runs the engine's whole edit)
+  check-textgen <encoder.gguf> <dir> [tokens] [image.png mmproj.gguf]
+                                           text generation (Prompt+), greedy, against tools/reference_text_generation.py
   time-matvec <encoder.gguf>                        the decode's products on the encoder's weights: ms and GB/s
   check-steps <dit.gguf> <generate reference dir> <text reference dir>
                                            each step alone against tools/reference_generate.py (its latents in)
   check-noise <philox.bin>                 the seed's noise against sd.cpp's generator (tools/philox_reference.cpp)
   generate <encoder.gguf> <dit.gguf> <vae.safetensors> "<prompt>" [--size WxH] [--seed N] [--out file.png]
-                                           text to image, Turbo's 8 steps (default 1024x1024, seed 42, out.png)
-  serve --diffusion-model <dit.gguf> --vae <vae.safetensors> --llm <encoder.gguf> [--listen-ip 127.0.0.1] [--listen-port 1234]
-                                           the engine as a server speaking sd-server's /sdcpp/v1 API (text to image)
+        [--ref image.png ... --mmproj mmproj.gguf]
+                                           text to image, Turbo's 8 steps (default 1024x1024, seed 42, out.png); an edit
+                                           with --ref (sides multiples of 32; the size defaults to the last reference's)
+  serve --diffusion-model <dit.gguf> --vae <vae.safetensors> --llm <encoder.gguf> [--llm_vision <mmproj.gguf>]
+        [--listen-ip 127.0.0.1] [--listen-port 1234]
+                                           the engine as a server speaking sd-server's /sdcpp/v1 API (text to image;
+                                           edits with --llm_vision)
   bench [--quick] [--out report.md] [--encoder P --dit P --vae P]
                                            a few minutes: this Mac's paths, speed at 1024², accuracy against the fp32 path;
                                            prints a report to paste in a GitHub issue (Kokon's model files by default)
@@ -72,7 +78,8 @@ do {
                            runs: numbers.dropFirst(2).first ?? 3)
     case "check-textgen":
         guard arguments.count >= 3 else { fail(usage) }
-        try Checks.textGeneration(path: arguments[1], directory: arguments[2], tokens: arguments.count > 3 ? Int(arguments[3]) ?? 48 : 48)
+        try Checks.textGeneration(path: arguments[1], directory: arguments[2], tokens: arguments.count > 3 ? Int(arguments[3]) ?? 48 : 48,
+                                  image: arguments.count > 5 ? arguments[4] : nil, mmproj: arguments.count > 5 ? arguments[5] : nil)
     case "time-matvec":
         guard arguments.count == 2 else { fail(usage) }
         try Checks.timeMatvec(path: arguments[1])
@@ -99,12 +106,13 @@ do {
         guard arguments.count == 3 else { fail(usage) }
         try Checks.vision(path: arguments[1], reference: arguments[2])
     case "check-generate":
-        guard arguments.count == 5 || arguments.count == 6 else { fail(usage) }
+        guard (5...7).contains(arguments.count) else { fail(usage) }
         try Checks.generate(encoder: arguments[1], dit: arguments[2], vae: arguments[3], reference: arguments[4],
-                            text: arguments.count == 6 ? arguments[5] : nil)
+                            text: arguments.count >= 6 ? arguments[5] : nil, mmproj: arguments.count == 7 ? arguments[6] : nil)
     case "generate":
         guard arguments.count >= 5 else { fail(usage) }
-        var (width, height, seed, out) = (1024, 1024, UInt64(42), "out.png")
+        var (width, height, seed, out) = (0, 0, UInt64(42), "out.png")
+        var (references, mmproj) = ([QwenPipeline.Reference](), String?.none)
         var options = arguments.dropFirst(5).makeIterator()
         while let option = options.next() {
             guard let value = options.next() else { fail(usage) }
@@ -115,13 +123,21 @@ do {
                 (width, height) = (parts[0], parts[1])
             case "--seed": seed = UInt64(value) ?? seed
             case "--out": out = value
+            case "--ref":
+                let image = try QwenPipeline.decodeImage(Data(contentsOf: URL(fileURLWithPath: value)))
+                references.append(.init(rgba: image.rgba, width: image.width, height: image.height))
+            case "--mmproj": mmproj = value
             default: fail(usage)
             }
         }
+        if width == 0 { (width, height) = references.last.map { ($0.width, $0.height) } ?? (1024, 1024) }
         let size = QwenPipeline.workingSize(width: width, height: height)
         if size != (width, height) { print("size \(width)×\(height) → \(size.width)×\(size.height) (multiples of 32)") }
         let pipeline = try QwenPipeline(encoder: arguments[1], dit: arguments[2], vae: arguments[3])
-        let image = try pipeline.textToImage(prompt: arguments[4], width: size.width, height: size.height, seed: seed)
+        pipeline.visionPath = mmproj
+        let image = try pipeline.generate(prompt: arguments[4], references: references, width: size.width, height: size.height, seed: seed)
+        let m = MemoryUsage.now()
+        print(String(format: "peak footprint %.2f GB", m.footprintPeak))
         try QwenPipeline.writePNG(QwenPipeline.pixels(image, width: size.width, height: size.height),
                                   width: size.width, height: size.height, to: out)
         print("wrote \(out) (\(size.width)×\(size.height), seed \(seed))")
@@ -132,7 +148,7 @@ do {
         guard arguments.count == 2 else { fail(usage) }
         try Checks.noise(dump: arguments[1])
     case "serve":
-        var (ip, port, dit, vae, llm) = ("127.0.0.1", UInt16(1234), "", "", "")
+        var (ip, port, dit, vae, llm, vision) = ("127.0.0.1", UInt16(1234), "", "", "", String?.none)
         var options = arguments.dropFirst().makeIterator()
         while let option = options.next() {
             guard let value = options.next() else { fail("\(option) needs a value\n\n" + usage) }
@@ -142,14 +158,14 @@ do {
             case "--diffusion-model": dit = value
             case "--vae": vae = value
             case "--llm": llm = value
-            case "--llm_vision": break   // edits, later
+            case "--llm_vision": vision = value
             default: fail("unknown option \(option)\n\n" + usage)
             }
         }
         guard !dit.isEmpty, !vae.isEmpty, !llm.isEmpty else { fail("serve needs --diffusion-model, --vae and --llm\n\n" + usage) }
         setvbuf(stdout, nil, _IOLBF, 0)   // qls-core follows the log file stdout goes to
         print("kokon-engine-mac (experimental), Qwen-Image 2.1 Turbo")
-        let engine = try EngineServer(paths: .init(diffusionModel: dit, vae: vae, textEncoder: llm))
+        let engine = try EngineServer(paths: .init(diffusionModel: dit, vae: vae, textEncoder: llm, vision: vision))
         let server = try HTTPServer(host: ip, port: port) { engine.handle($0) }
         print("[INFO   ] engine-mac - listening on: http://\(ip):\(server.port)")
         server.run()

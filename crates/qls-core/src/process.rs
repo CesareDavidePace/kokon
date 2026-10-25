@@ -126,7 +126,7 @@ pub fn build_server_args(cfg: &AppConfig, profile: &ModelProfile) -> Vec<String>
 /// none of sd-server's placement or backend flags apply; the vision projector is for edits, not supported yet.
 pub fn build_mac_engine_args(cfg: &AppConfig, profile: &ModelProfile) -> Vec<String> {
     let p = |p: &Path| p.to_string_lossy().into_owned();
-    vec![
+    let mut a: Vec<String> = vec![
         "serve".into(),
         "--listen-ip".into(),
         "127.0.0.1".into(),
@@ -138,7 +138,13 @@ pub fn build_mac_engine_args(cfg: &AppConfig, profile: &ModelProfile) -> Vec<Str
         p(&profile.vae),
         "--llm".into(),
         p(&profile.text_encoder),
-    ]
+    ];
+    // The vision tower: edits need it, as sd-server's.
+    if let Some(v) = &profile.vision_projector {
+        a.push("--llm_vision".into());
+        a.push(p(v));
+    }
+    a
 }
 
 /// A process this module may reuse or stop: sd-server, or Kokon's Mac engine.
@@ -990,8 +996,13 @@ mod tests {
         let a = build_server_args(&cfg, cfg.profile());
         let p = |p: &Path| p.to_string_lossy().into_owned();
         let profile = cfg.profile();
-        assert_eq!(a, ["serve", "--listen-ip", "127.0.0.1", "--listen-port", &cfg.server_port.to_string(), "--diffusion-model",
-            &p(&profile.diffusion_model), "--vae", &p(&profile.vae), "--llm", &p(&profile.text_encoder)]);
+        let mut want: Vec<String> = ["serve", "--listen-ip", "127.0.0.1", "--listen-port", &cfg.server_port.to_string(), "--diffusion-model",
+            &p(&profile.diffusion_model), "--vae", &p(&profile.vae), "--llm", &p(&profile.text_encoder)].map(String::from).to_vec();
+        if let Some(v) = &profile.vision_projector {
+            want.extend(["--llm_vision".to_string(), p(v)]);   // edits
+        }
+        assert_eq!(a, want);
+        assert!(profile.vision_projector.is_some(), "the default profile has the mmproj, so the engine can edit");
         assert_ne!(a, sdcpp, "a different launch: switching restarts the server");
         // Only on the Metal backend: elsewhere sd.cpp stays the engine.
         cfg.gpu_backend = crate::config::GpuBackend::Cuda;

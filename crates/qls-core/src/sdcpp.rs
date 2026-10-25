@@ -219,12 +219,15 @@ impl Capabilities {
     pub fn is_mac_engine(&self) -> bool {
         self.engine == crate::config::MAC_ENGINE_EXE
     }
-    /// What in `req` Kokon's Mac engine cannot do yet (it runs text to image only), in the user's words; None when it
-    /// can, and always for sd-server.
+    /// What in `req` Kokon's Mac engine cannot do yet, in the user's words; None when it can, and always for
+    /// sd-server. It edits with reference images when it has the vision projector (`ref_images` in its features), but
+    /// has no init image or mask yet (brushed edits, extending an image).
     pub fn mac_engine_unsupported(&self, req: &ImgGenRequest) -> Option<&'static str> {
         if !self.is_mac_engine() {
             None
-        } else if !req.ref_images.is_empty() || req.init_image.is_some() || req.mask_image.is_some() {
+        } else if req.init_image.is_some() || req.mask_image.is_some() {
+            Some("edits of a brushed area or extending images")
+        } else if !req.ref_images.is_empty() && !self.img_feature("ref_images") {
             Some("edits")
         } else if req.hires.as_ref().is_some_and(|h| h.enabled) {
             Some("second passes")
@@ -910,9 +913,14 @@ mod tests {
         let t2i = ImgGenRequest { prompt: "a fox".into(), width: 1024, height: 1024, ..Default::default() };
         assert_eq!(caps.mac_engine_unsupported(&t2i), None);
         let edit = ImgGenRequest { ref_images: vec!["png".into()], ..t2i.clone() };
-        assert_eq!(caps.mac_engine_unsupported(&edit), Some("edits"));
+        assert_eq!(caps.mac_engine_unsupported(&edit), Some("edits"), "no vision projector");
         let inpaint = ImgGenRequest { mask_image: Some("png".into()), ..t2i.clone() };
-        assert_eq!(caps.mac_engine_unsupported(&inpaint), Some("edits"));
+        assert_eq!(caps.mac_engine_unsupported(&inpaint), Some("edits of a brushed area or extending images"));
+        // Started with --llm_vision: edits with references run, a mask still does not.
+        let vision: Capabilities = serde_json::from_str(r#"{"engine":"kokon-engine-mac","supported_modes":["img_gen"],
+            "features_by_mode":{"img_gen":{"ref_images":true}}}"#).unwrap();
+        assert_eq!(vision.mac_engine_unsupported(&edit), None);
+        assert!(vision.mac_engine_unsupported(&inpaint).is_some());
         let hires = ImgGenRequest { hires: Some(HiresParams { enabled: true, ..Default::default() }), ..t2i.clone() };
         assert_eq!(caps.mac_engine_unsupported(&hires), Some("second passes"));
         // sd-server: no engine field, nothing refused here.

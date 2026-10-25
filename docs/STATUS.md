@@ -24,10 +24,11 @@ Windows, macOS (Apple Silicon, 15+) and Linux (`.deb`, `.rpm`). Installed copies
 - **LoRA is beta** and tested on Windows only; reports from macOS and Linux are welcome
   ([#33](https://github.com/GabrieleLozupone/kokon/issues/33) has a product-shot test).
 - **Macs are slow** compared with NVIDIA cards (about 4 minutes for 1 MP on an M2 Pro 16 GB). Kokon's own Mac
-  engine is in development on the `macos-optimization` branch (`engine-mac/`, not released): text to image and
-  Prompt+ (a prompt written in about 7–9 s), about 64–67 s for 1 MP on the same Mac through the app's API (peak memory 5 GB),
-  tested from the app, as an experimental switch in Settings → Performance (off by default). Edits, LoRAs and the
-  upscaler still need the standard engine.
+  engine is in development on the `macos-optimization` branch (`engine-mac/`, not released): text to image,
+  Prompt+ (a prompt written in about 7–9 s) and edits with reference images (Prompt+ looking at them too), about 64–67 s
+  for 1 MP text to image and ~150 s for a 1 MP edit on the same Mac (peak memory 5 GB), as an experimental switch in
+  Settings → Performance (off by default). Brushed edits, extending an image, LoRAs and the upscaler still need the
+  standard engine.
 - The Windows installer is not code-signed: SmartScreen or Smart App Control may block it (README FAQ: Unblock).
 - HEIC photos can't be opened on Linux yet.
 

@@ -2,9 +2,11 @@
 """Text to image through a running `kokon-engine-mac serve` (or sd-server) as qls-core sends it: capabilities,
 img_gen, polling jobs/{id}, optionally a cancel; with `--enhance`, Prompt+ first (text_gen with Kokon's built-in
 system prompt, read from crates/qls-core/src/enhancer.rs, and its sampling). Prints the time of each image and writes
-the PNGs.
+the PNGs. `--ref image.png` (repeatable): an edit, the references sent as Standard detail sends them
+(`resize_before_vae=false`; sides multiples of 32), and Prompt+ then looks at them with the edit system prompt.
 
     python3 -I tools/api_check.py --port 1234 --images 2 --out /tmp/api [--size 1024x1024] [--cancel-after 10] [--enhance]
+        [--ref image.png]
 """
 import argparse, base64, json, os, re, time, urllib.request, urllib.error
 
@@ -32,9 +34,12 @@ def main():
     p.add_argument("--out", default=".")
     p.add_argument("--cancel-after", type=float, default=0, help="cancel the last image after this many seconds")
     p.add_argument("--enhance", action="store_true", help="Prompt+ writes each image's prompt first")
+    p.add_argument("--ref", action="append", default=[], help="a reference image: an edit")
     a = p.parse_args()
     enhancer = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../crates/qls-core/src/enhancer.rs")
-    system = re.search(r'pub const T2I_SYSTEM_PROMPT: &str = r#"(.*?)"#;', open(enhancer).read(), re.S).group(1) if a.enhance else ""
+    which = "EDIT_SYSTEM_PROMPT" if a.ref else "T2I_SYSTEM_PROMPT"
+    system = re.search(rf'pub const {which}: &str = r#"(.*?)"#;', open(enhancer).read(), re.S).group(1) if a.enhance else ""
+    refs = [base64.b64encode(open(path, "rb").read()).decode() for path in a.ref]
     width, height = (int(v) for v in a.size.split("x"))
     status, caps = call(a.port, "GET", "/sdcpp/v1/capabilities", timeout=10)
     print(f"capabilities {status}: engine {caps.get('engine', 'sd-server')}, model {caps.get('model', {}).get('name')}")
@@ -44,7 +49,7 @@ def main():
         prompt = a.prompt
         if a.enhance:
             status, done = call(a.port, "POST", "/sdcpp/v1/text_gen", {
-                "prompt": a.prompt, "system_prompt": system, "max_tokens": 1024, "stream": False,
+                "prompt": a.prompt, "system_prompt": system, "images": refs, "max_tokens": 1024, "stream": False,
                 "sampling": {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "presence_penalty": 1.5, "seed": a.seed + i}}, timeout=300)
             if status != 200:
                 print(f"text_gen {status}: {done}")
@@ -55,6 +60,8 @@ def main():
                 "batch_count": 1, "sample_params": {"sample_method": "euler", "sample_steps": 8,
                                                     "custom_sigmas": TURBO_SIGMAS, "guidance": {"txt_cfg": 1.0}},
                 "output_format": "png", "embed_image_metadata": False}
+        if refs:
+            body.update(ref_images=refs, ref_image_args="resize_before_vae=false", image_preprocess=["target=ref,mode=none"])
         status, accepted = call(a.port, "POST", "/sdcpp/v1/img_gen", body)
         if status != 202:
             print(f"img_gen {status}: {accepted}")

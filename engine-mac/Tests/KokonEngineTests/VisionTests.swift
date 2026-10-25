@@ -38,3 +38,82 @@ final class VisionTests: XCTestCase {
         XCTAssert(zip(row, row.dropFirst()).allSatisfy { $0 <= $1 })
     }
 }
+
+/// The server's edit requests, without a model: references decoded, sd.cpp's resize rule, what is refused.
+final class EditRequestTests: XCTestCase {
+    func png(_ width: Int, _ height: Int) throws -> String {
+        let rgba = (0..<(width * height * 4)).map { UInt8(truncatingIfNeeded: $0 * 7) }
+        return try QwenPipeline.pngData(rgba, width: width, height: height).base64EncodedString()
+    }
+
+    func body(_ extra: [String: Any]) throws -> Data {
+        var json: [String: Any] = ["prompt": "make it blue", "width": 512, "height": 384, "seed": 3]
+        json.merge(extra) { $1 }
+        return try JSONSerialization.data(withJSONObject: json)
+    }
+
+    func testReferencesAreDecodedAndKeptAtTheirSizeWithoutResize() throws {
+        let image = try png(320, 224)
+        let (r, reason) = EngineServer.ImageRequest.parse(try body(["ref_images": ["data:image/png;base64," + image],
+                                                                    "ref_image_args": "resize_before_vae=false"]))
+        XCTAssertNil(reason)
+        XCTAssertEqual(r?.references.count, 1)
+        XCTAssertEqual(r.map { [$0.references[0].width, $0.references[0].height] }, [320, 224])
+        XCTAssertEqual(r?.references[0].rgba[4 * 5 + 1], UInt8(truncatingIfNeeded: (4 * 5 + 1) * 7))   // straight RGBA as sent
+    }
+
+    func testResizeBeforeVAEScalesToTheOutputsArea() throws {
+        // 512 × 384 output, a 320 × 224 reference: √(196 608 · 320 / 224) = 530 → 544; 530 · 224 / 320 = 371 → 384.
+        let (r, reason) = EngineServer.ImageRequest.parse(try body(["ref_images": [try png(320, 224)]]))
+        XCTAssertNil(reason)
+        XCTAssertEqual(r.map { [$0.references[0].width, $0.references[0].height] }, [544, 384])
+    }
+
+    func testRefusals() throws {
+        XCTAssertNotNil(EngineServer.ImageRequest.parse(try body(["ref_images": [try png(320, 224)]]), vision: false).1)
+        XCTAssertNotNil(EngineServer.ImageRequest.parse(try body(["ref_images": [try png(320, 224)], "mask_image": "x"])).1)
+        XCTAssertNotNil(EngineServer.ImageRequest.parse(try body(["ref_images": [try png(336, 224)],
+                                                                  "ref_image_args": "resize_before_vae=false"])).1)   // 336 % 32
+        XCTAssertNotNil(EngineServer.ImageRequest.parse(try body(["ref_images": ["not an image"]])).1)
+    }
+}
+
+/// The text encoder's side of images, without a model: Qwen3-VL's 3D positions and the templates.
+final class ImagePromptTests: XCTestCase {
+    /// get_rope_index, worked out by hand: 2 text tokens, a 2 × 3 grid of slots, 2 text tokens.
+    func testPositionsOfAnImageAndTheTextAfterIt() throws {
+        let pad = 9
+        let ids = [1, 2] + [Int](repeating: pad, count: 6) + [3, 4]
+        let p = try QwenTextEncoder.positions(ids: ids, imagePad: pad, grids: [(rows: 2, columns: 3)])
+        let want: [[Int32]] = [[0, 0, 0], [1, 1, 1],
+                               [2, 2, 2], [2, 2, 3], [2, 2, 4], [2, 3, 2], [2, 3, 3], [2, 3, 4],
+                               [5, 5, 5], [6, 6, 6]]   // after the image: 2 + max(2, 3)
+        XCTAssertEqual(p.map { [$0[0], $0[1], $0[2]] }, want)
+        XCTAssertThrowsError(try QwenTextEncoder.positions(ids: ids, imagePad: pad, grids: [(rows: 2, columns: 2)]))
+        XCTAssertEqual(try QwenTextEncoder.positions(ids: [1, 2, 3], imagePad: -1, grids: []).map { $0[1] }, [0, 1, 2])
+    }
+
+    /// The M-RoPE table: text rows equal the 1D table; an image row turns frequency 1 with its row, 2 with its column.
+    func testMRopeInterleavesTheAxes() {
+        let text = QwenTextEncoder.ropeTable(rows: 3)
+        XCTAssertEqual(QwenTextEncoder.ropeTable(positions: (0..<3).map { SIMD3(repeating: Int32($0)) }), text)
+        let image = QwenTextEncoder.ropeTable(positions: [SIMD3(4, 7, 9)])
+        let omega = (0..<64).map { 1 / powf(5_000_000, Float(2 * $0) / 128) }
+        for (i, axis) in [(0, 4), (1, 7), (2, 9), (3, 4), (60, 4), (61, 4), (62, 4), (63, 4)] {
+            XCTAssertEqual(image[2 * i], cosf(Float(axis) * omega[i]), accuracy: 1e-7, "frequency \(i)")
+        }
+    }
+
+    func testTemplates() {
+        XCTAssertEqual(QwenTextEncoder.imageToImage("make it blue", images: 2),
+                       "<|im_start|>system\nComprehend and analyze the provided prompt.<|im_end|>\n<|im_start|>user\n"
+                       + "<image1><|vision_start|><|image_pad|><|vision_end|> <image2><|vision_start|><|image_pad|><|vision_end|>"
+                       + "make it blue<|im_end|>\n<|im_start|>assistant\n")
+        // sd.cpp's text generation: one image unlabelled, several labelled.
+        XCTAssertEqual(QwenTextGenerator.template(system: "", prompt: "p", images: 1),
+                       "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>p<|im_end|>\n<|im_start|>assistant\n")
+        XCTAssertEqual(QwenTextGenerator.template(system: "s", prompt: "p", images: 2),
+                       "<|im_start|>system\ns<|im_end|>\n<|im_start|>user\n<image1><|vision_start|><|image_pad|><|vision_end|>"
+                       + " <image2><|vision_start|><|image_pad|><|vision_end|>p<|im_end|>\n<|im_start|>assistant\n")
+    }
+}

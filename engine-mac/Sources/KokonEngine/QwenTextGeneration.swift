@@ -22,8 +22,8 @@ public final class QwenTextGenerator {
         public var finish = Finish.stop
         public var seed: Int64 = 0
         public var promptTokens = 0, generatedTokens = 0
-        /// Seconds: tokenizing and buffers, prefill (to the first token), decode (first token to last).
-        public var prepare = 0.0, prefill = 0.0, decode = 0.0
+        /// Seconds: tokenizing and buffers, prefill (to the first token), decode (first token to last), the vision tower.
+        public var prepare = 0.0, prefill = 0.0, decode = 0.0, image = 0.0
         /// Every token sampled, the stop token included.
         public var tokens: [Int] = []
     }
@@ -37,15 +37,22 @@ public final class QwenTextGenerator {
         context = encoder.context
     }
 
-    /// sd.cpp's chat template for text generation without images: the system turn when `system` is not empty.
-    public static func template(system: String, prompt: String) -> String {
-        (system.isEmpty ? "" : "<|im_start|>system\n\(system)<|im_end|>\n") + "<|im_start|>user\n\(prompt)<|im_end|>\n<|im_start|>assistant\n"
+    /// sd.cpp's chat template for text generation (src/pipeline/text.cpp): the system turn when `system` is not empty;
+    /// each image before the prompt as `<|vision_start|><|image_pad|><|vision_end|>`, labelled `<image1>`, ` <image2>`…
+    /// when there are several.
+    public static func template(system: String, prompt: String, images: Int = 0) -> String {
+        let markers = (0..<images).map { i in
+            (images > 1 ? (i == 0 ? "" : " ") + "<image\(i + 1)>" : "") + "<|vision_start|><|image_pad|><|vision_end|>"
+        }.joined()
+        return (system.isEmpty ? "" : "<|im_start|>system\n\(system)<|im_end|>\n") + "<|im_start|>user\n\(markers)\(prompt)<|im_end|>\n<|im_start|>assistant\n"
     }
 
     /// Writes the assistant's reply to `prompt`. `onPiece` gets the text as it is written (whole UTF-8 characters);
-    /// returning false stops it (`cancelled`). `logits`: each step's logits, for the checks.
-    public func generate(system: String, prompt: String, maxTokens: Int, sampling: TextSampler.Parameters, seed: Int64,
-                         onPiece: (String) -> Bool = { _ in true },
+    /// returning false stops it (`cancelled`). `logits`: each step's logits, for the checks. `images`: the vision
+    /// tower's outputs of the images shown before the prompt; their slots take 3D positions (`QwenTextEncoder.positions`),
+    /// so the reply's positions run ahead of its cache slots by a fixed offset.
+    public func generate(system: String, prompt: String, images: [QwenVisionTower.Output] = [], maxTokens: Int,
+                         sampling: TextSampler.Parameters, seed: Int64, onPiece: (String) -> Bool = { _ in true },
                          logits: ((Int, UnsafePointer<Float>) -> Void)? = nil) throws -> Result {
         var result = Result()
         let started = DispatchTime.now().uptimeNanoseconds
@@ -55,7 +62,11 @@ public final class QwenTextGenerator {
             throw GGUFFile.Failure.unsupported("the tokenizer has no <|im_end|> or <|endoftext|>")
         }
         let stops: Set<Int> = [imEnd, endOfText]
-        let ids = tokenizer.encode(QwenTextGenerator.template(system: system, prompt: prompt))
+        let ids = encoder.expand(tokenizer.encode(QwenTextGenerator.template(system: system, prompt: prompt, images: images.count)),
+                                 images: images)
+        let positions = try QwenTextEncoder.positions(ids: ids, imagePad: images.isEmpty ? -1 : encoder.imagePad,
+                                                      grids: images.map { ($0.height / 32, $0.width / 32) })
+        let offset = Int(positions.last.map { $0[0] + 1 } ?? 0) - ids.count   // 0 for text: position = slot
         let capacity = ids.count + maxTokens
         guard capacity <= QwenTextGenerator.maxContext else {
             throw GGUFFile.Failure.unsupported("prompt (\(ids.count) tokens) + max_tokens (\(maxTokens)) exceeds the \(QwenTextGenerator.maxContext)-token limit")
@@ -64,12 +75,12 @@ public final class QwenTextGenerator {
         result.seed = seed >= 0 ? seed : Int64.random(in: 0...0x7fff_ffff)
         var sampler = TextSampler(sampling, seed: UInt64(bitPattern: result.seed))
         let cache = try KVCache(context: context, layers: QwenTextEncoder.layers, kvHeads: QwenTextEncoder.kvHeads, capacity: capacity)
-        let step = try Decoder(generator: self, cache: cache)
+        let step = try Decoder(generator: self, cache: cache, positionOffset: offset)
         result.prepare = since(started)
 
         // Prefill: the prompt's K and V into the cache, the last row's hidden state to the head.
         var t = DispatchTime.now().uptimeNanoseconds
-        let hidden = try encoder.forward(ids: ids, cache: cache)
+        let hidden = try encoder.forward(ids: ids, cache: cache, images: images)
         var next = try step.head(hidden: Array(hidden[((ids.count - 1) * QwenTextEncoder.dim)...]))
         var stream = TokenStreamDecoder(tokenizer: tokenizer)
         while true {
@@ -112,7 +123,8 @@ public final class QwenTextGenerator {
         /// The GPU's seconds for the last token.
         var lastGPU = 0.0
 
-        init(generator: QwenTextGenerator, cache: KVCache) throws {
+        /// `positionOffset`: a slot's RoPE position minus the slot (images before the prompt).
+        init(generator: QwenTextGenerator, cache: KVCache, positionOffset: Int = 0) throws {
             self.generator = generator
             self.cache = cache
             context = generator.context
@@ -136,7 +148,7 @@ public final class QwenTextGenerator {
                 }
             }
             (n + QwenTextEncoder.layers * (2 * d + 256)).update(from: try Dequant.array(file, "output_norm.weight"), count: d)
-            let table = QwenTextEncoder.ropeTable(rows: cache.capacity)
+            let table = QwenTextEncoder.ropeTable(positions: (0..<cache.capacity).map { SIMD3(repeating: Int32($0 + positionOffset)) })
             rope = try context.scratch(table.count * 4, label: "decode rope")
             rope.contents().copyMemory(from: table, byteCount: table.count * 4)
             logits = try context.scratch(QwenTextGenerator.vocabulary * 4, label: "logits")

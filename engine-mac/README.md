@@ -14,9 +14,9 @@ swift test                                   # no model needed
 .build/release/kokon-engine-mac inspect <file.gguf>
 .build/release/kokon-engine-mac check-dequant <file.gguf> [tensor...]
 .build/release/kokon-engine-mac generate <encoder.gguf> <dit.gguf> <vae.safetensors> "a red fox in the snow" \
-    [--size 1024x1024] [--seed 42] [--out out.png]
+    [--size 1024x1024] [--seed 42] [--out out.png] [--ref in.png --mmproj <mmproj.gguf>]
 .build/release/kokon-engine-mac serve --diffusion-model <dit.gguf> --vae <vae.safetensors> --llm <encoder.gguf> \
-    [--listen-port 1234]                     # sd-server's /sdcpp/v1 API, text to image and Prompt+
+    [--llm_vision <mmproj.gguf>] [--listen-port 1234]   # sd-server's /sdcpp/v1 API: text to image, edits, Prompt+
 .build/release/kokon-engine-mac bench        # a few minutes: speed and accuracy of this Mac's paths, a report
 .build/release/kokon-engine-mac check-na     # the Metal 4 matrix product against MPS
 .build/release/kokon-engine-mac check-ane8   # the int8 Neural Engine programs against the fp16 one
@@ -260,9 +260,10 @@ Engine's programs, are not pipelines an archive holds. Only an M2 Pro has been m
 
 `kokon-engine-mac serve` answers sd-server's `/sdcpp/v1` API (capabilities, img_gen, jobs/{id}, cancel), so
 qls-core, the app, remote access and MCP use it as they use sd-server; it prints the log lines qls-core's
-`ProgressParser` reads. Text to image only for now: reference images, masks, LoRAs and second passes are refused
-with 400 (qls-core says so before submitting), upscaling falls back to Lanczos. Prompt+ works on text-to-image prompts
-(`text_gen`, below); with images (edits, Compose) it needs the vision tower. A running image
+`ProgressParser` reads. Text to image, and edits with reference images when started with `--llm_vision` (qls-core passes
+the mmproj; below); an init image or a mask (brushed edits, extending an image), LoRAs and second passes are refused with
+400 (qls-core says so before submitting), upscaling falls back to Lanczos. Prompt+ works on every prompt (`text_gen`,
+below), looking at the images of an edit with the vision tower. A running image
 cancels within a DiT layer (sd-server answers 409 and qls-core restarts it). A new prompt length rebuilds the DiT's
 working memory in ~0.5 s.
 
@@ -304,6 +305,59 @@ encoder is not kept between images (below 32 GB), the one Prompt+ opened is hand
 the API at 1024², alternated (`tools/api_check.py --enhance`): the image's text encoder 0.88 s after Prompt+ against
 2.1–2.65 s for a plain image, peak footprint 5.1 GB either way; Prompt+ adds 8.7–9.0 s to an image (75.4–77.2 s against
 65.6–71.3).
+
+## Edits (reference images)
+
+As `QwenImage21Pipeline` with `image`: each reference goes through the vision tower into the text encoder's slots (the
+ti2i template, deepstack, 3D positions; above) and through the VAE encoder (`_encode_vae_image`) into the DiT's prefix:
+its latent tokens sit in the encoder's slots of that image (2 × 2 tokens a slot, `QwenSequence`), are modulated from
+t = 0 like the text, and see only what precedes them plus themselves (block-causal), the target last. sd-server's
+`ref_images` as Kokon sends them: Standard detail (`resize_before_vae=false`) encodes each reference at its own size;
+otherwise sd.cpp's rule, resized to the output's area at its aspect, sides rounded to 32, nearest neighbour; the vision
+tower sees what the VAE encodes (sd.cpp's `vlm_use_vae_input`). Sides must be multiples of 32.
+
+Against diffusers (`reference_generate.py` on a `reference_text_encoder.py --image` directory: the street cat at
+384 × 256, "Turn the cat into a small red fox, keep the street and the light", output 384 × 256, fp32, M2 Pro,
+2026-10-25), `check-generate <encoder> <dit> <vae> <dir> <text dir> [mmproj]`:
+
+| | final latent | image | 8-bit values off |
+|---|---|---|---|
+| the reference's conditioning and latents, fp32 path | 1.7e-6 | 4.0e-6 | 68 of 393 216, by 1 |
+| the engine's vision tower, text encoder, VAE encoder, fp32 path | 2.3e-6 | 4.8e-6 | 89, by 1 |
+| the same, default path (fp16 products and attention) | 1.8e-4 | 3.6e-4 | 5 083, by at most 2 |
+
+**The prefix K/V cache holds the references' rows too**, in fp16 when the attention reads fp16 (the default): the same
+values to the bit for the GPU's heads. A 1 MP reference is ~4 100 prefix rows, 2.1 GB of cache. M2 Pro 16 GB, edits with
+the reference at the output's size, alternated:
+
+| reference and output | cache | steps 2–8 | image | page-ins an image |
+|---|---|---|---|---|
+| 768 × 448 | off | 4.9–5.0 s | 46.2 s | 12.1 GB |
+| 768 × 448 | 0.72 GB | 3.5 s | 38.1 s | 13.3 GB |
+| 1344 × 768 | off | 16.6–17.1 s | 147.7–150.1 s | 20.9 GB |
+| 1344 × 768 | 2.13 GB | 14.8–20.4 s | 144.2–158.7 s | 40.4 GB |
+
+On 16 GB the 2.1 GB cache evicts the DiT's file pages, read again every step, and gains nothing; the cache is on up to
+1 GB below 32 GB of memory and to an eighth of it from 32 GB (not measured there; `KOKON_PREFIX_CACHE_MB` to choose). A 1 MP
+edit: vision tower 2.5 s, text encoder 3.7 s (1 037 tokens), VAE encoder 0.8 s, 8 steps of ~17 s, VAE 4.6 s; peak footprint
+5.0 GB. Through the server (`tools/api_check.py --ref … --enhance`, 768 × 448): Prompt+ looking at the reference 5.5–6.8 s
+(vision 0.6 s, 742 prompt tokens), the edit 36.4–37.3 s, peak footprint 3.6 GB.
+
+**Prompt+ with images**: sd.cpp's template (`<|vision_start|><|image_pad|><|vision_end|>` before the prompt, `<imageN>`
+labels when several, each side rounded to 32), the prefill with the images' rows, positions and deepstack, then the
+decode at positions offset from the cache slots (an image's slots advance the position by max(rows, columns), not by
+their count). `check-textgen <encoder> <dir> 48 <image> <mmproj>` against `reference_text_generation.py --mmproj` (the
+cat, Kokon's edit system prompt, "make the cat a small red fox"): the first token's logits within 2.5e-6, every step
+within 6.8e-4 (the fp16 cache), the greedy choice the same at 23 of 23.
+
+```bash
+~/kokon-bench/venv-oracle/bin/python -I tools/reference_text_encoder.py <encoder.gguf> <processor> <text_encoder> ~/kokon-bench/ref/text/cat-edit --prompt "..." --image cat-384x256.png --mmproj <mmproj.gguf> --sanity
+~/kokon-bench/venv-oracle/bin/python -I tools/reference_generate.py <dit.gguf> <vae> ~/kokon-bench/ref/text/cat-edit <repo dir> ~/kokon-bench/ref/edit-cat-384 --size 384x256   # ~6 min
+.build/release/kokon-engine-mac check-generate <encoder.gguf> <dit.gguf> <vae> ~/kokon-bench/ref/edit-cat-384 ~/kokon-bench/ref/text/cat-edit [<mmproj.gguf>]
+.build/release/kokon-engine-mac generate <encoder.gguf> <dit.gguf> <vae> "make the cat a fox" --ref in.png --mmproj <mmproj.gguf>
+```
+
+Not yet: an init image with a mask (brushed edits, extending an image: sd.cpp blends the masked latent each step).
 
 ## Per-chip paths
 

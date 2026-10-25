@@ -159,3 +159,9 @@ kernel void gelu_tanh(device float *x [[buffer(0)]], constant uint &count [[buff
     float v = x[i];
     x[i] = 0.5f * v * (1.0f + precise::tanh(0.7978845608028654f * (v + 0.044715f * v * v * v)));
 }
+
+// fp16 -> fp32: the prefix K/V cache read back (QwenDiT.copyPrefix; `pack_half` writes it).
+kernel void widen_half(device const half *src [[buffer(0)]], device float *dst [[buffer(1)]],
+                       constant uint &count [[buffer(2)]], uint i [[thread_position_in_grid]]) {
+    if (i < count) dst[i] = float(src[i]);
+}

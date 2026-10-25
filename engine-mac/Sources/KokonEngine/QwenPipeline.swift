@@ -77,6 +77,14 @@ public final class QwenPipeline {
         (width / 32 * 32, height / 32 * 32)
     }
 
+    /// An edit's condition image: interleaved 8-bit RGBA (straight alpha) at the size it is encoded at (sides multiples
+    /// of 32: the vision tower's grid).
+    public struct Reference {
+        public let rgba: [UInt8]
+        public let width, height: Int
+        public init(rgba: [UInt8], width: Int, height: Int) { (self.rgba, self.width, self.height) = (rgba, width, height) }
+    }
+
     /// Text to image at `width` × `height` (multiples of 32). `noise`: a latent `[64, h, w]` to start from instead of
     /// the seed's; `conditioning`: the encoder's output `[T, 4096]` to use instead of encoding `prompt` (the checks);
     /// `step`: called after each step with its index and the packed latent `[h·w, 64]`.
@@ -84,8 +92,28 @@ public final class QwenPipeline {
     public func textToImage(prompt: String, width: Int, height: Int, seed: UInt64, noise: [Float]? = nil,
                             conditioning given: [Float]? = nil, sigmas: [Float] = QwenPipeline.turboSigmas,
                             step: ((Int, [Float]) -> Void)? = nil) throws -> [Float] {
+        try generate(prompt: prompt, width: width, height: height, seed: seed, noise: noise,
+                     conditioning: given.map { ($0, [Bool](repeating: false, count: $0.count / QwenDiT.dim)) },
+                     sigmas: sigmas, step: step)
+    }
+
+    /// **The vision tower's file** (mmproj, `--llm_vision`): edits need it.
+    public var visionPath: String?
+
+    /// Text to image, or **an edit** with `references` (`QwenImage21Pipeline.__call__` with `image`): each reference goes
+    /// through the vision tower into the text encoder's slots and through the VAE encoder into the DiT's prefix, in
+    /// the slots the encoder marks (`img_shapes`: the references, then the target). sd.cpp's `vlm_use_vae_input`: the
+    /// tower sees the image the VAE encodes. `conditioning`: the encoder's rows and which are image slots, instead of
+    /// encoding (the checks); `referenceLatents`: the references' packed tokens instead of the VAE encoder's.
+    public func generate(prompt: String, references: [Reference] = [], width: Int, height: Int, seed: UInt64,
+                         noise: [Float]? = nil, conditioning given: (rows: [Float], slots: [Bool])? = nil,
+                         referenceLatents givenLatents: [Float]? = nil, sigmas: [Float] = QwenPipeline.turboSigmas,
+                         step: ((Int, [Float]) -> Void)? = nil) throws -> [Float] {
         guard width % 32 == 0, height % 32 == 0, width >= 64, height >= 64 else {
             throw QwenSequence.Failure.layout("\(width)×\(height): each side must be a multiple of 32, at least 64")
+        }
+        for r in references where r.width % 32 != 0 || r.height % 32 != 0 || r.rgba.count != 4 * r.width * r.height {
+            throw QwenSequence.Failure.layout("a reference of \(r.width)×\(r.height): sides must be multiples of 32")
         }
         let started = DispatchTime.now().uptimeNanoseconds
         timings = [:]
@@ -93,39 +121,77 @@ public final class QwenPipeline {
         let (h, w) = (height / 16, width / 16)
         let channels = QwenDiT.channels
 
-        // 1. The prompt. The encoder and its 5 GB mapping are gone when this scope ends.
+        // 1. The references through the vision tower (its 1.1 GB file unmapped after).
         var t = DispatchTime.now().uptimeNanoseconds
-        let (conditioning, rows): ([Float], Int) = try {
-            if let given { return (given, given.count / QwenDiT.dim) }
+        var images: [QwenVisionTower.Output] = []
+        if !references.isEmpty && given == nil {
+            guard let visionPath else {
+                throw GGUFFile.Failure.unsupported("edits need the vision projector (mmproj): start the engine with --llm_vision")
+            }
+            let tower = try QwenVisionTower(file: try GGUFFile(path: visionPath), context: context)
+            defer { tower.release() }
+            for r in references {
+                let input = QwenVisionTower.pixels(rgba: r.rgba, width: r.width, height: r.height)
+                images.append(try tower.encode(rgb: input.rgb, width: input.width, height: input.height))
+            }
+            timings["vision"] = since(t)
+            log(String(format: "vision tower: %d image(s), %d slots in %.2f s", images.count, images.reduce(0) { $0 + $1.slots },
+                       timings["vision"]!))
+        }
+
+        // 2. The prompt. The encoder and its 5 GB mapping are gone when this scope ends.
+        t = DispatchTime.now().uptimeNanoseconds
+        let (conditioning, rows, slots): ([Float], Int, [Bool]) = try {
+            if let given { return (given.rows, given.rows.count / QwenDiT.dim, given.slots) }
             if keepModels && keepEncoder {
                 if encoder == nil {
                     let file = try GGUFFile(path: encoderPath)
                     (encoderFile, encoder) = (file, try QwenTextEncoder(file: file, context: context))
                 }
                 defer { encoder!.release() }
-                let c = try encoder!.conditioning(prompt: prompt)
-                return (c.rows, c.count)
+                let c = try encoder!.conditioning(prompt: prompt, images: images)
+                return (c.rows, c.count, c.imageSlots)
             }
             let encoder = try handedOver ?? QwenTextEncoder(file: try GGUFFile(path: encoderPath), context: context)
             handedOver = nil
             defer { encoder.release() }
-            let c = try encoder.conditioning(prompt: prompt)
-            return (c.rows, c.count)
+            let c = try encoder.conditioning(prompt: prompt, images: images)
+            return (c.rows, c.count, c.imageSlots)
         }()
         timings["encode"] = since(t)
         log(String(format: "text encoder: %d tokens in %.2f s", rows, timings["encode"]!))
         events?(.encoded(tokens: rows, seconds: timings["encode"]!))
 
-        // 2. Noise, packed: token y·w + x holds the 64 channels of cell (y, x).
+        // 3. The references' latents (`_encode_vae_image`), packed and in order.
+        t = DispatchTime.now().uptimeNanoseconds
+        var referenceTokens: [Float] = givenLatents ?? []
+        if givenLatents == nil, !references.isEmpty {
+            if vae == nil { vae = try QwenVAE(path: vaePath, context: context) }
+            for r in references {
+                // VaeImageProcessor.preprocess: x / 255, then 2x − 1; planar RGBA.
+                let plane = r.width * r.height
+                var input = [Float](repeating: 0, count: 4 * plane)
+                for p in 0..<plane { for c in 0..<4 { input[c * plane + p] = Float(r.rgba[p * 4 + c]) / 255 * 2 - 1 } }
+                let latent = try vae!.encode(input, height: r.height, width: r.width)
+                referenceTokens += QwenPipeline.pack(latent, height: r.height / 16, width: r.width / 16)
+            }
+            if !keepVAE { vae = nil }
+            timings["vae encode"] = since(t)
+            log(String(format: "VAE encoder: %d reference(s) in %.2f s", references.count, timings["vae encode"]!))
+        }
+
+        // 4. Noise, packed: token y·w + x holds the 64 channels of cell (y, x).
         let start = noise ?? Noise.philox(seed: seed, count: channels * h * w)   // sd.cpp's, value for value
         guard start.count == channels * h * w else {
             throw QwenSequence.Failure.layout("noise of \(start.count) values for a \(channels)×\(h)×\(w) latent")
         }
         var x = QwenPipeline.pack(start, height: h, width: w)
 
-        // 3. The steps.
+        // 5. The steps.
         t = DispatchTime.now().uptimeNanoseconds
-        let sequence = try QwenSequence.textToImage(text: rows, target: .init(height: h, width: w))
+        let target = QwenSequence.Grid(height: h, width: w)
+        let grids = references.map { QwenSequence.Grid(height: $0.height / 16, width: $0.width / 16) }
+        let sequence = try QwenSequence(slots: slots + [Bool](repeating: true, count: target.tokens / 4), images: grids + [target])
         try {
             let file = try ditFile ?? GGUFFile(path: ditPath)
             defer { context.release(file) }
@@ -144,10 +210,12 @@ public final class QwenPipeline {
             defer { dit.cancelled = { false } }
             try dit.prepareModulation([0] + sigmas.dropLast())
             timings["dit load"] = since(t)
+            log(String(format: "DiT: %d rows, prefix %d, prefix K/V cache %@", sequence.count, sequence.prefix,
+                       dit.prefixCache.map { String(format: "%.2f GB (%@)", Double($0.length) / 1e9, dit.prefixHalf ? "fp16" : "fp32") } ?? "off"))
             for i in 0..<(sigmas.count - 1) {
                 if cancelled() { throw QwenDiT.Cancelled() }
                 let stepStart = DispatchTime.now().uptimeNanoseconds
-                let velocity = try dit.forward(encoder: conditioning, target: x, sigma: sigmas[i])
+                let velocity = try dit.forward(encoder: conditioning, references: referenceTokens, target: x, sigma: sigmas[i])
                 let dt = sigmas[i + 1] - sigmas[i]
                 for j in x.indices { x[j] += dt * velocity[j] }
                 timings["step \(i + 1)"] = since(stepStart)
@@ -158,7 +226,7 @@ public final class QwenPipeline {
             shares = dit.coexecutor?.shares
         }()
 
-        // 4. The image.
+        // 6. The image.
         if !keepDiT { dit = nil }   // its working memory goes before the VAE's
         t = DispatchTime.now().uptimeNanoseconds
         events?(.decoding)
@@ -173,9 +241,24 @@ public final class QwenPipeline {
 
     /// **Prompt+**: the text encoder's LLM writes the assistant's reply to `prompt` (`QwenTextGenerator`), on the same
     /// file and with the same keeping rules as the image's encoder.
-    public func generateText(system: String, prompt: String, maxTokens: Int, sampling: TextSampler.Parameters, seed: Int64,
+    /// `images`: shown before the prompt (an edit's references), through the vision tower first (`visionPath`).
+    public func generateText(system: String, prompt: String, images: [Reference] = [], maxTokens: Int,
+                             sampling: TextSampler.Parameters, seed: Int64,
                              onPiece: (String) -> Bool) throws -> QwenTextGenerator.Result {
         let started = DispatchTime.now().uptimeNanoseconds
+        var outputs: [QwenVisionTower.Output] = []
+        if !images.isEmpty {
+            guard let visionPath else {
+                throw GGUFFile.Failure.unsupported("images need the vision projector (mmproj): start the engine with --llm_vision")
+            }
+            let tower = try QwenVisionTower(file: try GGUFFile(path: visionPath), context: context)
+            defer { tower.release() }
+            for r in images {
+                let input = QwenVisionTower.pixels(rgba: r.rgba, width: r.width, height: r.height)
+                outputs.append(try tower.encode(rgb: input.rgb, width: input.width, height: input.height))
+            }
+        }
+        let imageSeconds = Double(DispatchTime.now().uptimeNanoseconds - started) * 1e-9
         let encoder: QwenTextEncoder
         if keepModels && keepEncoder {
             if self.encoder == nil {
@@ -188,10 +271,12 @@ public final class QwenPipeline {
             handedOver = encoder   // for the image that follows
         }
         defer { encoder.release() }
-        var result = try QwenTextGenerator(encoder: encoder).generate(system: system, prompt: prompt, maxTokens: maxTokens,
-                                                                      sampling: sampling, seed: seed, onPiece: onPiece)
+        var result = try QwenTextGenerator(encoder: encoder).generate(system: system, prompt: prompt, images: outputs,
+                                                                      maxTokens: maxTokens, sampling: sampling, seed: seed,
+                                                                      onPiece: onPiece)
         // With opening the file and reading its tokenizer.
-        result.prepare = Double(DispatchTime.now().uptimeNanoseconds - started) * 1e-9 - result.prefill - result.decode
+        result.image = imageSeconds
+        result.prepare = Double(DispatchTime.now().uptimeNanoseconds - started) * 1e-9 - result.prefill - result.decode - imageSeconds
         return result
     }
 

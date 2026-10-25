@@ -9,8 +9,13 @@ the pieces the other references check, in fp32 on the CPU:
 Saves the noise, every step's velocity and latent, the decoded image and the final pixels for
 `kokon-engine-mac check-generate`. 256² takes ~5 min (8 DiT evaluations, each layer's weights unpacked by gguf-py).
 
+**An edit** when the text reference has images (`reference_text_encoder.py --image`): each image as the pipeline hands it
+to the VAE (RGBA, `VaeImageProcessor.preprocess` at its own size, which `resize_before_vae=false` keeps), encoded
+(`_encode_vae_image`: the mode, (z − mean) / std), packed, and prepended to the target's tokens at every step; the
+text reference's `image_pad_mask` places their slots. Saved as `reference<i>`.
+
     python -I engine-mac/tools/reference_generate.py <dit.gguf> <vae.safetensors> <text reference dir> <repo dir> <out>
-        [--grid 16] [--seed 1] [--dtype float64]
+        [--grid 16 | --size WxH] [--seed 1] [--dtype float64]
 
 `--dtype float64`: the DiT and the latents in fp64 (the scheduler still rounds the latent to fp32 each step), the
 VAE in fp32. Needed on unsloth's DiT, where torch's fp32 drifts to 7e-5 of fp64 in one evaluation.
@@ -24,6 +29,7 @@ import sys
 
 import numpy as np
 import torch
+from PIL import Image
 from diffusers import FlowMatchEulerDiscreteScheduler
 from diffusers.image_processor import VaeImageProcessor
 from diffusers.pipelines.qwenimage21.pipeline_qwenimage21 import calculate_shift
@@ -31,6 +37,7 @@ from diffusers.pipelines.qwenimage21.pipeline_qwenimage21 import calculate_shift
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # the sibling references
 from reference_dit import ReferenceDiT, enable_float64  # noqa: E402
 from reference_vae import load_vae  # noqa: E402
+from reference_vae_encoder import load_full_vae  # noqa: E402
 
 
 def main():
@@ -41,6 +48,7 @@ def main():
     parser.add_argument("repo")
     parser.add_argument("out")
     parser.add_argument("--grid", type=int, default=16, help="latent grid side (16 = a 256² image)")
+    parser.add_argument("--size", help="WxH of the image instead (multiples of 32)")
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--dtype", default="float32", choices=["float32", "float64"])
     args = parser.parse_args()
@@ -57,6 +65,25 @@ def main():
     conditioning = torch.from_numpy(np.fromfile(os.path.join(args.text, "conditioning.f32"), dtype=np.float32))
     conditioning = conditioning.view(1, -1, 4096).to(dtype)
     h = w = args.grid
+    if args.size:
+        w, h = (int(v) // 16 for v in args.size.split("x"))
+
+    # The edit's condition images (prepare_latents with `images`).
+    refs, slots, sizes = [], None, text_meta.get("images") or []
+    if sizes:
+        slots = [bool(v) for v in text_meta["image_pad_mask"]]
+        encoder_vae = load_full_vae(args.vae)
+        processor = VaeImageProcessor(vae_scale_factor=16, vae_latent_channels=64)
+        mean = torch.tensor(encoder_vae.config.latents_mean).view(1, 64, 1, 1, 1)
+        std = torch.tensor(encoder_vae.config.latents_std).view(1, 64, 1, 1, 1)
+        for i, (rw, rh) in enumerate(sizes):
+            image = Image.open(os.path.join(args.text, f"image{i + 1}.png")).convert("RGBA")
+            pixels = processor.preprocess(image, width=rw, height=rh).unsqueeze(2)
+            latent = (encoder_vae.encode(pixels).latent_dist.mode() - mean) / std
+            packed = latent[0, :, 0].reshape(64, -1).transpose(0, 1)[None]
+            save(f"reference{i}", packed[0])
+            refs.append((packed.to(dtype), rh // 16, rw // 16))
+        del encoder_vae
 
     # prepare_latents + _pack_latents
     noise = torch.randn((1, 1, 64, h, w), generator=torch.Generator().manual_seed(args.seed), dtype=torch.float32)
@@ -75,7 +102,8 @@ def main():
 
     dit = ReferenceDiT(args.dit, dtype=dtype)
     for i, t in enumerate(scheduler.timesteps):
-        velocity = dit.forward(conditioning, latents, h, w, t.expand(1).to(dtype) / 1000, progress=False)
+        velocity = dit.forward(conditioning, latents, h, w, t.expand(1).to(dtype) / 1000, progress=False,
+                               refs=refs, slots=slots)
         save(f"velocity{i}", velocity[0])
         latents = scheduler.step(velocity, t, latents, return_dict=False)[0]
         save(f"latent{i}", latents[0])
@@ -94,7 +122,8 @@ def main():
 
     meta = {"prompt": text_meta["prompt"], "grid": [h, w], "seed": args.seed, "mode": pil.mode,
             "sigmas": scheduler.sigmas.tolist(), "timesteps": (scheduler.timesteps / 1000).tolist(),
-            "dit": os.path.basename(args.dit), "dtype": args.dtype, "vae": os.path.basename(args.vae)}
+            "dit": os.path.basename(args.dit), "dtype": args.dtype, "vae": os.path.basename(args.vae),
+            "references": sizes}
     with open(os.path.join(args.out, "meta.json"), "w") as f:
         json.dump(meta, f, indent=1)
     print(f"image {pil.size} {pil.mode}")

@@ -64,8 +64,8 @@ class Weights:
         module.load_state_dict(state, strict=True)
 
 
-def layer0_stages(block, x, modulation, rotary_emb, target_token_mask, save):
-    """QwenImage21TransformerBlock.forward and its processor, unrolled, saving each stage (t2i: one text segment)."""
+def layer0_stages(block, x, modulation, rotary_emb, target_token_mask, segments, save):
+    """QwenImage21TransformerBlock.forward and its processor, unrolled, saving each stage."""
     from diffusers.models.transformers.transformer_qwenimage21 import apply_rotary_emb_qwen
     mod1, mod2 = modulation.chunk(2, dim=-1)
     normed, gate1 = block._modulate(block.img_norm1(x), mod1, target_token_mask)
@@ -79,8 +79,7 @@ def layer0_stages(block, x, modulation, rotary_emb, target_token_mask, save):
     save("l0_q", q[0].flatten(1))
     save("l0_k", k[0].flatten(1))
     save("l0_v", v[0].flatten(1))
-    out = attn(hidden_states=normed, rotary_emb=rotary_emb,
-               segments=[(0, int((~target_token_mask).sum()), True)])
+    out = attn(hidden_states=normed, rotary_emb=rotary_emb, segments=segments)
     save("l0_attn_out", out[0])
     x = x + gate1.tanh() * out
     save("l0_res1", x[0])
@@ -90,7 +89,7 @@ def layer0_stages(block, x, modulation, rotary_emb, target_token_mask, save):
 
 
 class ReferenceDiT:
-    """QwenImage21Transformer2DModel.forward, batch 1, no cache, text-to-image, one block module swapped per layer."""
+    """QwenImage21Transformer2DModel.forward, batch 1, no cache, one block module swapped per layer."""
 
     def __init__(self, path, layers=32, dtype=torch.float32):
         self.w = w = Weights(path, dtype)
@@ -115,13 +114,16 @@ class ReferenceDiT:
 
     all_layers = False
 
-    def forward(self, encoder, latent, h, w_, timestep, save=None, progress=True):
+    def forward(self, encoder, latent, h, w_, timestep, save=None, progress=True, refs=(), slots=None):
         """`encoder` [1, T, d], `latent` [1, h * w, 64], `timestep` a [1] tensor (σ); returns the target's velocity
-        [1, h * w, 64]. `save(name, tensor)` receives every stage when given."""
+        [1, h * w, 64]. `save(name, tensor)` receives every stage when given. An edit: `refs` the condition images'
+        packed latents with their grids [(latent [1, h_i * w_i, 64], h_i, w_i)], `slots` which encoder rows are their
+        slots (the text encoder's `image_pad_mask`)."""
         d, text, tokens = 4096, encoder.shape[1], h * w_
-        img_shapes = [(1, h, w_)]
-        img_mask = torch.tensor([[False] * text + [True] * (tokens // 4)])
-        hidden_states = self.img_in(latent)
+        img_shapes = [(1, rh, rw) for _, rh, rw in refs] + [(1, h, w_)]
+        slots = list(slots) if slots is not None else [False] * text
+        img_mask = torch.tensor([slots + [True] * (tokens // 4)])
+        hidden_states = self.img_in(torch.cat([r for r, _, _ in refs] + [latent], dim=1))
         encoder_hidden_states = self.txt_in(encoder)
         repeats = torch.where(img_mask, 4, 1)[0]
         image_pad_mask = torch.repeat_interleave(img_mask[0], repeats)
@@ -146,7 +148,7 @@ class ReferenceDiT:
         for layer in range(self.layers):
             self.w.load(self.block, f"transformer_blocks.{layer}.")
             if layer == 0 and save:
-                layer0_stages(self.block, joint, modulation, rotary_emb, target_token_mask, save)
+                layer0_stages(self.block, joint, modulation, rotary_emb, target_token_mask, segments, save)
             joint = self.block(hidden_states=joint, modulation=modulation, rotary_emb=rotary_emb, attention_mask=None,
                                target_token_mask=target_token_mask, segments=segments)
             if save and (self.all_layers or layer in (0, 1) or layer == self.layers - 1):

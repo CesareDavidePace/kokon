@@ -68,9 +68,14 @@ public final class QwenTextEncoder {
     /// the processor does before tokenizing).
     public func tokens(prompt: String, images: [QwenVisionTower.Output] = []) -> [Int] {
         guard !images.isEmpty else { return tokenizer.encode(QwenTextEncoder.textToImage(prompt)) }
+        return expand(tokenizer.encode(QwenTextEncoder.imageToImage(prompt, images: images.count)), images: images)
+    }
+
+    /// Each `<|image_pad|>` of `ids` repeated to its image's slots, in order.
+    public func expand(_ ids: [Int], images: [QwenVisionTower.Output]) -> [Int] {
         let pad = imagePad
         var out: [Int] = [], next = 0
-        for id in tokenizer.encode(QwenTextEncoder.imageToImage(prompt, images: images.count)) {
+        for id in ids {
             if id == pad, next < images.count {
                 out += [Int](repeating: pad, count: images[next].slots)
                 next += 1

@@ -105,19 +105,45 @@ extension Checks {
     /// the 8-bit pixels.
     /// `text`: a `reference_text_encoder.py` directory whose conditioning replaces the engine's encoder, to measure
     /// the DiT and the sampler alone.
-    public static func generate(encoder: String, dit: String, vae: String, reference directory: String, text: String? = nil) throws {
+    /// **An edit** (the reference has `references`): `text` is needed (its images). Without `mmproj` the text reference's
+    /// conditioning and the generate reference's latents of the images go in (the DiT, the sampler and the decode alone);
+    /// with it, the engine's whole edit: vision tower, text encoder, VAE encoder on the images.
+    public static func generate(encoder: String, dit: String, vae: String, reference directory: String, text: String? = nil,
+                                mmproj: String? = nil) throws {
         let meta = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: directory)
             .appendingPathComponent("meta.json"))) as! [String: Any]
         let prompt = meta["prompt"] as! String, grid = meta["grid"] as! [Int]
         let (h, w) = (grid[0], grid[1])
         let pipeline = try QwenPipeline(encoder: encoder, dit: dit, vae: vae)
+        pipeline.visionPath = mmproj
         func report(_ name: String, _ got: UnsafePointer<Float>, _ want: [Float]) {
             let r = compare(got, want)
             print(String(format: "  %-12@ rel %.2e   max |Δ| %.3g%@", name as NSString, r.relative, r.maxAbs, r.finite ? "" : "   NON-FINITE"))
         }
-        let image = try pipeline.textToImage(prompt: prompt, width: w * 16, height: h * 16, seed: 0,
-                                             noise: try reference(directory, "noise"),
-                                             conditioning: try text.map { try reference($0, "conditioning") }) { i, latent in
+        var references: [QwenPipeline.Reference] = [], given: (rows: [Float], slots: [Bool])?, latents: [Float]?
+        let sizes = meta["references"] as? [[Int]] ?? []
+        if !sizes.isEmpty {
+            guard let text else { throw GGUFFile.Failure.unsupported("an edit reference: pass its text reference directory") }
+            for i in sizes.indices {
+                let png = try QwenPipeline.decodeImage(Data(contentsOf: URL(fileURLWithPath: text).appendingPathComponent("image\(i + 1).png")))
+                references.append(.init(rgba: png.rgba, width: png.width, height: png.height))
+            }
+            if mmproj == nil {
+                let textMeta = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: text)
+                    .appendingPathComponent("meta.json"))) as! [String: Any]
+                given = (try reference(text, "conditioning"), (textMeta["image_pad_mask"] as! [Int]).map { $0 != 0 })
+                latents = try sizes.indices.flatMap { try reference(directory, "reference\($0)") }
+                print("edit: the references' conditioning and latents")
+            } else {
+                print("edit: the engine's vision tower, text encoder and VAE encoder")
+            }
+        } else if let text {
+            let rows = try reference(text, "conditioning")
+            given = (rows, [Bool](repeating: false, count: rows.count / QwenDiT.dim))
+        }
+        let image = try pipeline.generate(prompt: prompt, references: references, width: w * 16, height: h * 16, seed: 0,
+                                          noise: try reference(directory, "noise"), conditioning: given,
+                                          referenceLatents: latents) { i, latent in
             latent.withUnsafeBufferPointer { report("latent\(i)", $0.baseAddress!, try! reference(directory, "latent\(i)")) }
         }
         image.withUnsafeBufferPointer { report("image", $0.baseAddress!, try! reference(directory, "image")) }
@@ -183,24 +209,37 @@ extension Checks {
     /// `<dir>/engine.json`, its logits beside); once the reference has run on those tokens, each step's logits are
     /// compared with transformers' (relative error, the greedy choice, the margin between the two best) and the
     /// engine's speed is reported. `system` / `prompt` from `<dir>/engine.json` when it exists.
-    public static func textGeneration(path: String, directory: String, tokens: Int = 48) throws {
+    /// `image` + `mmproj`: Prompt+ looking at an image (sd.cpp's template with it before the prompt).
+    public static func textGeneration(path: String, directory: String, tokens: Int = 48, image: String? = nil, mmproj: String? = nil) throws {
         let dir = URL(fileURLWithPath: directory)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let previous = (try? JSONSerialization.jsonObject(with: Data(contentsOf: dir.appendingPathComponent("engine.json")))) as? [String: Any]
         let system = previous?["system"] as? String
             ?? "You write prompts for an image generation model. Expand the user's request into one detailed English paragraph that describes the finished image: subject, setting, composition, lighting and style. Output only the prompt."
         let prompt = previous?["prompt"] as? String ?? "un gatto rosso che dorme su un davanzale, sera"
-        let file = try GGUFFile(path: path)
+        let imagePath = image ?? previous?["image"] as? String
         let context = try MetalContext()
+        var images: [QwenVisionTower.Output] = []
+        if let imagePath {
+            guard let mmproj else { throw GGUFFile.Failure.unsupported("an image needs the mmproj GGUF") }
+            let png = try QwenPipeline.decodeImage(Data(contentsOf: URL(fileURLWithPath: imagePath)))
+            let input = QwenVisionTower.pixels(rgba: png.rgba, width: png.width, height: png.height)
+            let tower = try QwenVisionTower(file: try GGUFFile(path: mmproj), context: context)
+            images = [try tower.encode(rgb: input.rgb, width: input.width, height: input.height)]
+            tower.release()
+            print(String(format: "image %@: %d slots, vision tower %.2f s", imagePath, images[0].slots, tower.seconds))
+        }
+        let file = try GGUFFile(path: path)
         let encoder = try QwenTextEncoder(file: file, context: context)
         let generator = QwenTextGenerator(encoder: encoder)
         let vocabulary = QwenTextGenerator.vocabulary
         var logits = [Float](repeating: 0, count: tokens * vocabulary)
-        let result = try generator.generate(system: system, prompt: prompt, maxTokens: tokens, sampling: .greedy, seed: 0, logits: { step, l in
+        let result = try generator.generate(system: system, prompt: prompt, images: images, maxTokens: tokens, sampling: .greedy, seed: 0, logits: { step, l in
             logits.withUnsafeMutableBufferPointer { ($0.baseAddress! + step * vocabulary).update(from: l, count: vocabulary) }
         })
         let steps = result.tokens.count
-        let promptIDs = encoder.tokenizer.encode(QwenTextGenerator.template(system: system, prompt: prompt))
+        let promptIDs = encoder.expand(encoder.tokenizer.encode(QwenTextGenerator.template(system: system, prompt: prompt, images: images.count)),
+                                       images: images)
         print(String(format: "%d prompt tokens, %d generated (%@): prefill %.2f s, decode %.2f s, %.1f tokens/s",
                      result.promptTokens, result.generatedTokens, result.finish.rawValue, result.prefill, result.decode,
                      Double(steps - 1) / max(result.decode, 1e-9)))
@@ -208,7 +247,8 @@ extension Checks {
         if let previous, let generated = previous["generated"] as? [Int], generated != result.tokens {
             print("NOTE: not the tokens of the engine's previous run (\(generated.count) then, \(steps) now): the reference must be run again")
         }
-        let meta: [String: Any] = ["system": system, "prompt": prompt, "prompt_ids": promptIDs, "generated": result.tokens, "text": result.text]
+        var meta: [String: Any] = ["system": system, "prompt": prompt, "prompt_ids": promptIDs, "generated": result.tokens, "text": result.text]
+        if let imagePath { meta["image"] = imagePath }
         try JSONSerialization.data(withJSONObject: meta, options: [.prettyPrinted, .sortedKeys]).write(to: dir.appendingPathComponent("engine.json"))
         try logits.prefix(steps * vocabulary).withUnsafeBufferPointer { Data(buffer: $0) }.write(to: dir.appendingPathComponent("engine_logits.f32"))
 

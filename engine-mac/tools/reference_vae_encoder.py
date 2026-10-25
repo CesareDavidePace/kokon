@@ -47,6 +47,22 @@ def encoder_name(key):
     raise KeyError(key)
 
 
+def load_full_vae(path):
+    """diffusers' AutoencoderKLQwenImage21, encoder and decoder, with the weights of Kokon's file, fp32, eval mode."""
+    from diffusers import AutoencoderKLQwenImage21
+    vae = AutoencoderKLQwenImage21()  # the defaults are Qwen-Image 2.1's config
+    model = vae.state_dict()
+    converted = {}
+    for key, value in load_file(path).items():
+        name = encoder_name(key) or decoder_name(key)
+        if name is not None:
+            converted[name] = value.float().reshape(model[name].shape)
+    missing, unexpected = vae.load_state_dict(converted, strict=False)
+    missing = [k for k in missing if k.startswith("encoder.") or k.startswith("quant_conv")]
+    assert not missing and not unexpected, (missing[:10], unexpected[:10])
+    return vae.eval()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("vae")
@@ -54,23 +70,12 @@ def main():
     parser.add_argument("--size", default="256x256", help="WxH, multiples of 16")
     parser.add_argument("--seed", type=int, default=11)
     args = parser.parse_args()
-    from diffusers import AutoencoderKLQwenImage21
     torch.manual_seed(args.seed)
     torch.set_grad_enabled(False)
     os.makedirs(args.out, exist_ok=True)
     width, height = (int(v) for v in args.size.split("x"))
 
-    vae = AutoencoderKLQwenImage21()  # the defaults are Qwen-Image 2.1's config
-    model = vae.state_dict()
-    converted = {}
-    for key, value in load_file(args.vae).items():
-        name = encoder_name(key) or decoder_name(key)
-        if name is not None:
-            converted[name] = value.float().reshape(model[name].shape)
-    missing, unexpected = vae.load_state_dict(converted, strict=False)
-    missing = [k for k in missing if k.startswith("encoder.") or k.startswith("quant_conv")]
-    assert not missing and not unexpected, (missing[:10], unexpected[:10])
-    vae.eval()
+    vae = load_full_vae(args.vae)
 
     image = torch.rand(1, 4, 1, height // 16, width // 16) * 2 - 1
     image = F.interpolate(image[:, :, 0], size=(height, width), mode="bilinear", align_corners=False)[:, :, None]

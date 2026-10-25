@@ -76,6 +76,44 @@ class Weights:
         layer.load_state_dict(state, strict=True)
 
 
+class VisionPrompt:
+    """The processor and the vision tower on a prompt with images: token ids and run()'s `vision` (image rows, merged
+    rows, deepstack, 3D positions). `extra` token ids appended after the prompt (text) get positions too."""
+
+    def __init__(self, processor, full_config, mmproj):
+        self.processor, self.config, self.mmproj, self.tower = processor, full_config, mmproj, None
+
+    def __call__(self, text, images, save=None, extra=()):
+        flat = []
+        for image in images:  # the pipeline: RGBA composited over white for the vision encoder
+            if image.mode == "RGBA":
+                white = Image.new("RGB", image.size, (255, 255, 255))
+                white.paste(image, mask=image.getchannel("A"))
+                image = white
+            flat.append(image.convert("RGB"))
+        inputs = self.processor(text=[text], images=flat, padding=True, padding_side="left", return_tensors="pt")
+        if self.tower is None:
+            vconfig = self.config.vision_config
+            vconfig._attn_implementation = "eager"
+            self.tower = Qwen3VLVisionModel(vconfig).eval()
+            self.tower.load_state_dict(vision_state_dict(self.mmproj, vconfig), strict=True)
+        out = self.tower(inputs.pixel_values.to(torch.float32), grid_thw=inputs.image_grid_thw, return_dict=True)
+        input_ids = torch.cat([inputs.input_ids, torch.tensor([list(extra)], dtype=inputs.input_ids.dtype)], dim=1)
+        types = torch.cat([inputs.mm_token_type_ids, torch.zeros(1, len(extra), dtype=inputs.mm_token_type_ids.dtype)], dim=1)
+        shim = SimpleNamespace(config=self.config)
+        shim.get_vision_position_ids = lambda *a, **k: Qwen3VLModel.get_vision_position_ids(shim, *a, **k)
+        position_ids, _ = Qwen3VLModel.get_rope_index(shim, input_ids, types, image_grid_thw=inputs.image_grid_thw,
+                                                      attention_mask=torch.ones_like(input_ids))
+        if save:
+            save("vision_merged", out.pooler_output)
+            for j, feature in enumerate(out.deepstack_features):
+                save(f"vision_deepstack{j}", feature)
+            save("positions", position_ids[:, 0].to(torch.float32))
+        ids = input_ids[0].tolist()
+        visual = torch.tensor(ids) == self.config.image_token_id
+        return ids, (visual, out.pooler_output, out.deepstack_features, position_ids)
+
+
 def run(weights, config, ids, save=None, vision=None):
     """The text model's forward on one unpadded prompt; returns the last layer's output (no final norm). `vision`:
     (image rows mask, merged rows, deepstack list, position ids [3, 1, T]) for a prompt with images."""
@@ -133,38 +171,10 @@ def main():
         saved[name] = list(array.shape)
 
     full_config = AutoConfig.from_pretrained(args.text_encoder)
-    tower = None
+    vision_prompt = VisionPrompt(processor, full_config, args.mmproj) if args.mmproj else None
 
     def with_images(text, images, save=None):
-        """Token ids and run()'s `vision` for `text` (a template with its image markers) and its images."""
-        nonlocal tower
-        flat = []
-        for image in images:  # the pipeline: RGBA composited over white for the vision encoder
-            if image.mode == "RGBA":
-                white = Image.new("RGB", image.size, (255, 255, 255))
-                white.paste(image, mask=image.getchannel("A"))
-                image = white
-            flat.append(image.convert("RGB"))
-        inputs = processor(text=[text], images=flat, padding=True, padding_side="left", return_tensors="pt")
-        if tower is None:
-            vconfig = full_config.vision_config
-            vconfig._attn_implementation = "eager"
-            tower = Qwen3VLVisionModel(vconfig).eval()
-            tower.load_state_dict(vision_state_dict(args.mmproj, vconfig), strict=True)
-        out = tower(inputs.pixel_values.to(torch.float32), grid_thw=inputs.image_grid_thw, return_dict=True)
-        shim = SimpleNamespace(config=full_config)
-        shim.get_vision_position_ids = lambda *a, **k: Qwen3VLModel.get_vision_position_ids(shim, *a, **k)
-        position_ids, _ = Qwen3VLModel.get_rope_index(shim, inputs.input_ids, inputs.mm_token_type_ids,
-                                                      image_grid_thw=inputs.image_grid_thw,
-                                                      attention_mask=inputs.attention_mask)
-        if save:
-            save("vision_merged", out.pooler_output)
-            for j, feature in enumerate(out.deepstack_features):
-                save(f"vision_deepstack{j}", feature)
-            save("positions", position_ids[:, 0].to(torch.float32))
-        ids = inputs.input_ids[0].tolist()
-        visual = torch.tensor(ids) == full_config.image_token_id
-        return ids, (visual, out.pooler_output, out.deepstack_features, position_ids)
+        return vision_prompt(text, images, save)
 
     vision, images = None, []
     if args.image:

@@ -9,8 +9,9 @@ import Foundation
 ///     POST /sdcpp/v1/jobs/{id}/cancel   200 {status: cancelled}: a running image stops within a DiT layer
 ///     POST /sdcpp/v1/text_gen           Prompt+: the text encoder's LLM writes, streamed as Server-Sent Events
 ///
-/// Text to image only for now: requests with reference images, a mask, an init image, LoRAs or a second pass are
-/// refused with 400 and say so, and so is text generation with images. Jobs and text generation run one at a time;
+/// Text to image and edits (`ref_images`, with the vision projector given as `--llm_vision`; Prompt+ then also looks at
+/// the images); requests with a mask, an
+/// init image, LoRAs or a second pass are refused with 400 and say so. Jobs and text generation run one at a time;
 /// what stays loaded between them depends on the Mac (`QwenPipeline.keepModels`).
 ///
 /// Progress goes to stdout as sd-server's log lines, the ones qls-core's `ProgressParser` reads (process.rs):
@@ -19,10 +20,13 @@ import Foundation
 public final class EngineServer: @unchecked Sendable {
     public struct Paths: Sendable {
         public let diffusionModel, vae, textEncoder: String
-        public init(diffusionModel: String, vae: String, textEncoder: String) {
+        /// The vision tower (mmproj): edits need it.
+        public let vision: String?
+        public init(diffusionModel: String, vae: String, textEncoder: String, vision: String? = nil) {
             self.diffusionModel = diffusionModel
             self.vae = vae
             self.textEncoder = textEncoder
+            self.vision = vision
         }
     }
 
@@ -42,21 +46,27 @@ public final class EngineServer: @unchecked Sendable {
     }
 
     /// The fields of `img_gen` the engine reads (sd-server's names), checked.
-    struct ImageRequest: Sendable {
+    struct ImageRequest: @unchecked Sendable {
         let prompt: String
         let width, height: Int
         let seed: Int64
         let batch: Int
         let sigmas: [Float]
+        /// An edit's condition images, decoded, at the size they are encoded at.
+        let references: [QwenPipeline.Reference]
 
-        /// nil and the reason when the engine cannot do it (yet).
-        static func parse(_ body: Data) -> (ImageRequest?, String?) {
+        /// nil and the reason when the engine cannot do it (yet). `vision`: the engine has the vision tower (edits).
+        static func parse(_ body: Data, vision: Bool = true) -> (ImageRequest?, String?) {
             guard let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else {
                 return (nil, "the body is not a JSON object")
             }
             func array(_ key: String) -> [Any] { json[key] as? [Any] ?? [] }
-            if !array("ref_images").isEmpty || json["init_image"] is String || json["mask_image"] is String {
-                return (nil, "Kokon's Mac engine does text to image only for now (no reference images, init image or mask)")
+            if json["init_image"] is String || json["mask_image"] is String {
+                return (nil, "Kokon's Mac engine has no init image or mask yet (brushed edits, extending images)")
+            }
+            let refs = array("ref_images")
+            if !refs.isEmpty && !vision {
+                return (nil, "Qwen Image 2.1 editing requires Qwen3-VL vision weights; start the engine with --llm_vision")
             }
             if !array("lora").isEmpty { return (nil, "Kokon's Mac engine does not run LoRAs yet") }
             if let hires = json["hires"] as? [String: Any], hires["enabled"] as? Bool == true {
@@ -83,9 +93,41 @@ public final class EngineServer: @unchecked Sendable {
             if seed < 0 { seed = Int64.random(in: 0..<(1 << 31)) }
             let batch = json["batch_count"] as? Int ?? 1
             guard (1...EngineServer.maxBatch).contains(batch) else { return (nil, "batch_count \(batch): 1 to \(EngineServer.maxBatch)") }
+            // ref_image_args: sd.cpp's key=value list; only resize_before_vae changes what the engine does.
+            var resize = true
+            for pair in (json["ref_image_args"] as? String ?? "").split(separator: ",") {
+                let kv = pair.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+                if kv.count == 2, kv[0] == "resize_before_vae" { resize = !["false", "0", "no", "off"].contains(kv[1].lowercased()) }
+            }
+            var references: [QwenPipeline.Reference] = []
+            for (i, item) in refs.enumerated() {
+                guard let text = item as? String, let data = Data(base64Encoded: String(text.split(separator: ",").last ?? ""),
+                                                                   options: .ignoreUnknownCharacters),
+                      let image = try? QwenPipeline.decodeImage(data) else {
+                    return (nil, "ref_images[\(i)] is not a base64 image")
+                }
+                var r = QwenPipeline.Reference(rgba: image.rgba, width: image.width, height: image.height)
+                if resize { r = EngineServer.resizeToTarget(r, width: width, height: height) }
+                guard r.width % 32 == 0, r.height % 32 == 0 else {
+                    return (nil, "Qwen Image 2.1 reference dimensions must be multiples of 32 (\(r.width)×\(r.height))")
+                }
+                references.append(r)
+            }
             return (ImageRequest(prompt: json["prompt"] as? String ?? "", width: width, height: height, seed: seed,
-                                 batch: batch, sigmas: sigmas), nil)
+                                 batch: batch, sigmas: sigmas, references: references), nil)
         }
+    }
+
+    /// sd.cpp's `resize_before_vae` for Qwen-Image 2.1 (pipeline/image.cpp): the reference resized to the output's area
+    /// at its own aspect, each side rounded to 32, nearest neighbour (`sd::ops::interpolate`'s default); the vision
+    /// tower then sees the same image (`vlm_use_vae_input`).
+    static func resizeToTarget(_ r: QwenPipeline.Reference, width: Int, height: Int) -> QwenPipeline.Reference {
+        let area = Double(width * height)
+        let w = (area * Double(r.width) / Double(r.height)).squareRoot()
+        let h = w * Double(r.height) / Double(r.width)
+        let (ow, oh) = (Int((w / 32).rounded() * 32), Int((h / 32).rounded() * 32))
+        guard ow > 0, oh > 0, (ow, oh) != (r.width, r.height) else { return r }
+        return resize(r, width: ow, height: oh)
     }
 
     static let maxBatch = 4, maxQueue = 8
@@ -108,7 +150,9 @@ public final class EngineServer: @unchecked Sendable {
         for path in [paths.diffusionModel, paths.vae, paths.textEncoder] where !FileManager.default.fileExists(atPath: path) {
             throw GGUFFile.Failure.open(path)
         }
+        if let vision = paths.vision, !FileManager.default.fileExists(atPath: vision) { throw GGUFFile.Failure.open(vision) }
         pipeline = try QwenPipeline(encoder: paths.textEncoder, dit: paths.diffusionModel, vae: paths.vae)
+        pipeline.visionPath = paths.vision
         pipeline.keepModels = true
         pipeline.log = { _ in }
         let worker = Thread { [self] in work() }
@@ -137,7 +181,7 @@ public final class EngineServer: @unchecked Sendable {
 
     func capabilities() -> [String: Any] {
         let url = URL(fileURLWithPath: paths.diffusionModel)
-        let feature: [String: Any] = ["ref_images": false, "init_image": false, "mask_image": false, "lora": false,
+        let feature: [String: Any] = ["ref_images": paths.vision != nil, "init_image": false, "mask_image": false, "lora": false,
                                       "hires": false, "custom_sigmas": true, "cancel_generating": true]
         return [
             "engine": "kokon-engine-mac",
@@ -148,7 +192,7 @@ public final class EngineServer: @unchecked Sendable {
             "output_formats": ["png"],
             "limits": ["min_width": 64, "max_width": 4096, "min_height": 64, "max_height": 4096,
                        "max_batch_count": EngineServer.maxBatch, "max_queue_size": EngineServer.maxQueue,
-                       "max_text_tokens": EngineServer.maxTextTokens, "max_text_images": 0],
+                       "max_text_tokens": EngineServer.maxTextTokens, "max_text_images": paths.vision != nil ? EngineServer.maxTextImages : 0],
             "features_by_mode": ["img_gen": feature],
             "defaults_by_mode": ["img_gen": ["sample_steps": QwenPipeline.turboSigmas.count - 1, "txt_cfg": 1]],
             "upscalers": [Any](),
@@ -158,7 +202,7 @@ public final class EngineServer: @unchecked Sendable {
     }
 
     func submit(_ body: Data) -> HTTPServer.Response {
-        let (parsed, reason) = ImageRequest.parse(body)
+        let (parsed, reason) = ImageRequest.parse(body, vision: paths.vision != nil)
         guard let parsed else { return .error(400, reason ?? "bad request") }
         return lock.withLock {
             guard queue.count < EngineServer.maxQueue else { return .error(429, "the queue is full") }
@@ -201,14 +245,16 @@ public final class EngineServer: @unchecked Sendable {
     // MARK: - text generation (Prompt+)
 
     /// The fields of `text_gen` (sd-server's names and checks, `examples/server/routes_sdcpp.cpp`).
-    struct TextRequest: Sendable {
+    struct TextRequest: @unchecked Sendable {
         let system, prompt: String
+        /// Shown before the prompt, sides rounded to 32 as sd.cpp's `vision_size`.
+        let images: [QwenPipeline.Reference]
         let maxTokens: Int
         let sampling: TextSampler.Parameters
         let seed: Int64
         let stream: Bool
 
-        static func parse(_ body: Data) -> (TextRequest?, String?) {
+        static func parse(_ body: Data, vision: Bool = true) -> (TextRequest?, String?) {
             guard let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else { return (nil, "body must be an object") }
             guard let prompt = json["prompt"] as? String, !prompt.isEmpty else { return (nil, "prompt is required") }
             guard let system = json["system_prompt"] as? String else {
@@ -216,8 +262,20 @@ public final class EngineServer: @unchecked Sendable {
             }
             let maxTokens = json["max_tokens"] as? Int ?? 512
             guard (1...EngineServer.maxTextTokens).contains(maxTokens) else { return (nil, "max_tokens must be between 1 and \(EngineServer.maxTextTokens)") }
-            if let images = json["images"] as? [Any], !images.isEmpty {
-                return (nil, "Kokon's Mac engine cannot look at images yet (no vision tower): Prompt+ works on text-to-image prompts only")
+            var images: [QwenPipeline.Reference] = []
+            if let list = json["images"] {
+                guard let list = list as? [Any], list.count <= EngineServer.maxTextImages else {
+                    return (nil, "images must be an array of at most \(EngineServer.maxTextImages) base64 images")
+                }
+                if !list.isEmpty && !vision { return (nil, "images need the Qwen3-VL vision weights (--llm_vision)") }
+                for (i, item) in list.enumerated() {
+                    guard let text = item as? String, let data = Data(base64Encoded: String(text.split(separator: ",").last ?? ""),
+                                                                       options: .ignoreUnknownCharacters),
+                          let image = try? QwenPipeline.decodeImage(data) else {
+                        return (nil, "images[\(i)] is not a base64 image")
+                    }
+                    images.append(EngineServer.roundedTo32(.init(rgba: image.rgba, width: image.width, height: image.height)))
+                }
             }
             var sampling = TextSampler.Parameters(temperature: 0, topP: 1, topK: 0, presencePenalty: 0)
             var seed: Int64 = -1
@@ -234,18 +292,38 @@ public final class EngineServer: @unchecked Sendable {
                     return (nil, "sampling needs temperature >= 0, 0 < top_p <= 1, top_k >= 0 and a finite presence_penalty")
                 }
             }
-            return (TextRequest(system: system, prompt: prompt, maxTokens: maxTokens, sampling: sampling, seed: seed,
+            return (TextRequest(system: system, prompt: prompt, images: images, maxTokens: maxTokens, sampling: sampling, seed: seed,
                                 stream: json["stream"] as? Bool ?? true), nil)
         }
     }
 
-    static let maxTextTokens = 4096
+    static let maxTextTokens = 4096, maxTextImages = 4
+
+    /// sd.cpp's `vision_size` for text generation (no `image_max_pixels`): each side rounded to a multiple of 32, the
+    /// image resized when that changes it (nearest neighbour, as the edit references).
+    static func roundedTo32(_ r: QwenPipeline.Reference) -> QwenPipeline.Reference {
+        let (w, h) = (max(32, Int((Double(r.width) / 32).rounded()) * 32), max(32, Int((Double(r.height) / 32).rounded()) * 32))
+        return (w, h) == (r.width, r.height) ? r : resize(r, width: w, height: h)
+    }
+
+    /// Nearest-neighbour resize of 8-bit RGBA (`sd::ops::interpolate`'s default mode).
+    static func resize(_ r: QwenPipeline.Reference, width ow: Int, height oh: Int) -> QwenPipeline.Reference {
+        var out = [UInt8](repeating: 0, count: ow * oh * 4)
+        for y in 0..<oh {
+            let sy = min(r.height - 1, y * r.height / oh)
+            for x in 0..<ow {
+                let sx = min(r.width - 1, x * r.width / ow)
+                for c in 0..<4 { out[(y * ow + x) * 4 + c] = r.rgba[(sy * r.width + sx) * 4 + c] }
+            }
+        }
+        return QwenPipeline.Reference(rgba: out, width: ow, height: oh)
+    }
 
     /// Synchronous like sd-server's: it waits for a running image (one GPU user at a time) and holds the models while it
     /// writes. Streamed (the default) as Server-Sent Events: `delta` {text} per piece, then `done` {text, finish_reason,
     /// seed, usage, timings} or `error` {error}; closing the connection stops it.
     func textGen(_ body: Data) -> HTTPServer.Response {
-        let (parsed, reason) = TextRequest.parse(body)
+        let (parsed, reason) = TextRequest.parse(body, vision: paths.vision != nil)
         guard let request = parsed else { return .error(400, reason ?? "bad request") }
         guard request.stream else {
             let outcome = Result { try gpu.withLock { try generateText(request) { _ in true } } }
@@ -274,10 +352,11 @@ public final class EngineServer: @unchecked Sendable {
     }
 
     private func generateText(_ r: TextRequest, onPiece: (String) -> Bool) throws -> QwenTextGenerator.Result {
-        let result = try pipeline.generateText(system: r.system, prompt: r.prompt, maxTokens: r.maxTokens, sampling: r.sampling,
-                                               seed: r.seed, onPiece: onPiece)
-        log(String(format: "[INFO   ] engine-mac - text generation: %d prompt tokens, %d generated in %.2fs (prefill %.2fs, %.1f tok/s), seed %lld",
-                   result.promptTokens, result.generatedTokens, result.prepare + result.prefill + result.decode, result.prefill,
+        let result = try pipeline.generateText(system: r.system, prompt: r.prompt, images: r.images, maxTokens: r.maxTokens,
+                                               sampling: r.sampling, seed: r.seed, onPiece: onPiece)
+        log(String(format: "[INFO   ] engine-mac - text generation: %d image(s) in %.2fs, %d prompt tokens, %d generated in %.2fs (prefill %.2fs, %.1f tok/s), seed %lld",
+                   r.images.count, result.image, result.promptTokens, result.generatedTokens,
+                   result.image + result.prepare + result.prefill + result.decode, result.prefill,
                    result.decode > 0 ? Double(result.tokens.count - 1) / result.decode : 0, result.seed))
         return result
     }
@@ -286,7 +365,7 @@ public final class EngineServer: @unchecked Sendable {
     static func done(_ r: QwenTextGenerator.Result) -> [String: Any] {
         ["text": r.text, "finish_reason": r.finish.rawValue, "seed": r.seed,
          "usage": ["prompt_tokens": r.promptTokens, "completion_tokens": r.generatedTokens],
-         "timings": ["prepare_s": r.prepare, "image_s": 0, "prefill_s": r.prefill, "decode_s": r.decode]]
+         "timings": ["prepare_s": r.prepare, "image_s": r.image, "prefill_s": r.prefill, "decode_s": r.decode]]
     }
 
     // MARK: - the jobs
@@ -330,6 +409,9 @@ public final class EngineServer: @unchecked Sendable {
         let started = DispatchTime.now().uptimeNanoseconds
         func seconds(since t: UInt64) -> Double { Double(DispatchTime.now().uptimeNanoseconds - t) * 1e-9 }
         log("[INFO   ] engine-mac - generate_image \(r.width)x\(r.height)")
+        if !r.references.isEmpty {
+            log("[INFO   ] engine-mac - EDIT mode: \(r.references.map { "\($0.width)x\($0.height)" }.joined(separator: ", "))")
+        }
         log("[INFO   ] engine-mac - sampling using Euler method")
         pipeline.cancelled = { [weak self, job] in self?.lock.withLock { job.status == "cancelled" } ?? true }
         var images: [String] = []
@@ -353,13 +435,13 @@ public final class EngineServer: @unchecked Sendable {
                     log("[INFO   ] engine-mac - decoding 1 latents")
                 }
             }
-            let image = try pipeline.textToImage(prompt: r.prompt, width: r.width, height: r.height, seed: UInt64(bitPattern: seed),
-                                                 sigmas: r.sigmas)
+            let image = try pipeline.generate(prompt: r.prompt, references: r.references, width: r.width, height: r.height,
+                                              seed: UInt64(bitPattern: seed), sigmas: r.sigmas)
             let png = try QwenPipeline.pngData(QwenPipeline.pixels(image, width: r.width, height: r.height), width: r.width, height: r.height)
             images.append(png.base64EncodedString())
             let t = pipeline.timings
-            log(String(format: "[INFO   ] engine-mac - image %d/%d: text encoder %.2fs, DiT ready %.2fs, VAE %.2fs, total %.2fs", i + 1, r.batch,
-                       t["encode"] ?? 0, t["dit load"] ?? 0, t["vae"] ?? 0, t["total"] ?? 0))
+            log(String(format: "[INFO   ] engine-mac - image %d/%d: vision %.2fs, text encoder %.2fs, VAE encoder %.2fs, DiT ready %.2fs, VAE %.2fs, total %.2fs",
+                       i + 1, r.batch, t["vision"] ?? 0, t["encode"] ?? 0, t["vae encode"] ?? 0, t["dit load"] ?? 0, t["vae"] ?? 0, t["total"] ?? 0))
         }
         pipeline.events = nil
         let memory = MemoryUsage.now()

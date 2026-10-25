@@ -91,6 +91,16 @@ head answers " Paris" to a factual prompt (it does), so the weights are read rig
 2026-10-25: tokenizer identical on 42 cases (accents, CJK, emoji, decomposed Unicode, special tokens in the text);
 conditioning within 5.1e-6 relative (37 tokens) and 5.6e-6 (144 tokens). One encode: 0.45 s (37 tokens), 0.8 s (144).
 
+**With images** (an edit's prompt, `prompt_template_ti2i`): `<image1><|vision_start|><|image_pad|><|vision_end|>` before
+the prompt, each `<|image_pad|>` expanded to the image's slots (one per 32 × 32 pixels), those rows the vision tower's
+merged rows, Qwen3-VL's 3D M-RoPE positions (`get_rope_index`; interleaved sections 24/20/20), the three deepstack outputs
+added to the image rows after layers 0–2, and the DiT told which conditioning rows are image slots (`image_pad_mask`).
+`reference_text_encoder.py --image <png> --mmproj <mmproj.gguf>` runs the same in transformers; `--sanity` then also asks
+the model the color of a red disk (it answers "Red": the mmproj is read right). `check-text <encoder> <dir> <mmproj>`,
+the street cat at 384 × 256 (96 slots, 139 tokens; M2 Pro, 2026-10-25): ids, positions and image slots identical; the
+conditioning within 7.5e-6 with the reference's own vision rows, 3.3e-5 with the engine's, whose tower is 7.9e-6 from fp64
+on this photo where torch's fp32 is 3.0e-5 from it. One encode with the image: 0.82 s, its vision tower 0.56 s.
+
 **Text to image against diffusers.** `tools/reference_generate.py` runs QwenImage21Pipeline's loop with the
 references above (diffusers' scheduler on the checkpoint's sigmas, the DiT layer by layer, the VAE, the image
 processor) and saves its noise; `check-generate` starts the engine from that noise:

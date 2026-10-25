@@ -12,8 +12,15 @@ import MetalPerformanceShaders
 ///
 /// What diffusers' QwenImage21Pipeline does (0.42, `_get_qwen_prompt_embeds`): the raw template below, the hidden
 /// state of the last decoder layer *before* the model's final RMSNorm (the pipeline hooks the norm away), and the
-/// leading tokens of the system message dropped. Text only: the three M-RoPE axes carry the same position, so the
-/// interleaved M-RoPE is plain RoPE (θ = 5·10⁶) and the vision tower's deepstack inputs never apply.
+/// leading tokens of the system message dropped. Text only, the three M-RoPE axes carry the same position, so the
+/// interleaved M-RoPE is plain RoPE (θ = 5·10⁶).
+///
+/// **With images** (an edit, `prompt_template_ti2i`): "<image1><|vision_start|><|image_pad|><|vision_end|>" before the
+/// prompt (" <imageN>…" for more), each `<|image_pad|>` expanded to one token per 32 × 32 pixels of its image; those rows
+/// start as the vision tower's merged rows instead of token embeddings, positions are Qwen3-VL's 3D M-RoPE
+/// (`get_rope_index`: an image's rows at (start, start + row, start + column), the text after it from start + max(rows,
+/// columns)), and the tower's three deepstack outputs are added to the image rows after layers 0, 1 and 2
+/// (`_deepstack_process`). The DiT gets which conditioning rows are image slots (`image_pad_mask`).
 public final class QwenTextEncoder {
     public static let dim = 4096, heads = 32, kvHeads = 8, headDim = 128, hidden = 12288, layers = 36
     static let eps: Float = 1e-6, theta: Float = 5_000_000
@@ -48,15 +55,66 @@ public final class QwenTextEncoder {
         dropCount = tokenizer.encode("<|im_start|>system\n\(QwenTextEncoder.systemPrompt)<|im_end|>\n").count
     }
 
-    /// Token ids of the text-to-image prompt.
-    public func tokens(prompt: String) -> [Int] { tokenizer.encode(QwenTextEncoder.textToImage(prompt)) }
+    /// `prompt_template_ti2i` for `images` condition images.
+    public static func imageToImage(_ prompt: String, images: Int) -> String {
+        let markers = (1...max(images, 1)).map { "<image\($0)><|vision_start|><|image_pad|><|vision_end|>" }.joined(separator: " ")
+        return textToImage(markers + (prompt.isEmpty ? " " : prompt))
+    }
 
-    /// The DiT's encoder rows for `prompt`: `[T, 4096]`, T = tokens − the system message's.
-    public func conditioning(prompt: String) throws -> (rows: [Float], count: Int) {
-        let ids = tokens(prompt: prompt)
-        let all = try forward(ids: ids)
-        let d = QwenTextEncoder.dim
-        return (Array(all[(dropCount * d)...]), ids.count - dropCount)
+    /// `<|image_pad|>`'s id (151655).
+    public var imagePad: Int { tokenizer.encode("<|image_pad|>")[0] }
+
+    /// Token ids of the prompt: text to image, or with images (each `<|image_pad|>` expanded to the image's slots, as
+    /// the processor does before tokenizing).
+    public func tokens(prompt: String, images: [QwenVisionTower.Output] = []) -> [Int] {
+        guard !images.isEmpty else { return tokenizer.encode(QwenTextEncoder.textToImage(prompt)) }
+        let pad = imagePad
+        var out: [Int] = [], next = 0
+        for id in tokenizer.encode(QwenTextEncoder.imageToImage(prompt, images: images.count)) {
+            if id == pad, next < images.count {
+                out += [Int](repeating: pad, count: images[next].slots)
+                next += 1
+            } else {
+                out.append(id)
+            }
+        }
+        return out
+    }
+
+    /// The DiT's encoder rows for `prompt`: `[T, 4096]`, T = tokens − the system message's; `imageSlots`: which of
+    /// those rows are image slots (diffusers' `image_pad_mask`), in the order of `images`.
+    public func conditioning(prompt: String, images: [QwenVisionTower.Output] = []) throws
+        -> (rows: [Float], count: Int, imageSlots: [Bool]) {
+        let ids = tokens(prompt: prompt, images: images)
+        let all = try forward(ids: ids, images: images)
+        let d = QwenTextEncoder.dim, pad = imagePad
+        return (Array(all[(dropCount * d)...]), ids.count - dropCount, ids[dropCount...].map { $0 == pad && !images.isEmpty })
+    }
+
+    /// Qwen3-VL's `get_rope_index` for one prompt: (t, h, w) per token. Text advances all three by one; the k-th run of
+    /// `<|image_pad|>` is image k's grid of (rows, columns) slots at (start, start + row, start + column), and the text
+    /// after it starts at start + max(rows, columns).
+    public static func positions(ids: [Int], imagePad: Int, grids: [(rows: Int, columns: Int)]) throws -> [SIMD3<Int32>] {
+        var out: [SIMD3<Int32>] = [], position = 0, i = 0, image = 0
+        while i < ids.count {
+            if ids[i] != imagePad {
+                out.append(SIMD3(repeating: Int32(position)))
+                position += 1
+                i += 1
+                continue
+            }
+            guard image < grids.count else { throw QwenSequence.Failure.layout("more image slots than images") }
+            let (rows, columns) = grids[image]
+            guard i + rows * columns <= ids.count, ids[i..<(i + rows * columns)].allSatisfy({ $0 == imagePad }) else {
+                throw QwenSequence.Failure.layout("image \(image + 1): its slots do not match its \(rows) × \(columns) grid")
+            }
+            for r in 0..<rows { for c in 0..<columns { out.append(SIMD3(Int32(position), Int32(position + r), Int32(position + c))) } }
+            position += max(rows, columns)
+            i += rows * columns
+            image += 1
+        }
+        guard image == grids.count else { throw QwenSequence.Failure.layout("\(grids.count) images, \(image) runs of slots") }
+        return out
     }
 
     /// Drops the GPU windows on the file (the caller drops the file to unmap it).
@@ -70,27 +128,35 @@ public final class QwenTextEncoder {
 
     struct Buffers {
         let arena: Arena
-        let x, normed, q, k, v, kx, vx, attended, o, h1, h2, rope, norms: Arena.Slice
+        let x, normed, q, k, v, kx, vx, attended, o, h1, h2, rope, norms, deepstack: Arena.Slice
         let reserves: [Arena.Slice]
     }
     private var nextReserve = 0
 
     /// The last decoder layer's output for every token, `[ids.count, 4096]`. `cache`: each layer's K (after its norm
-    /// and RoPE) and V are kept there too, for text generation (`QwenTextGenerator`).
-    public func forward(ids: [Int], probe: Probe? = nil, cache: KVCache? = nil) throws -> [Float] {
+    /// and RoPE) and V are kept there too, for text generation (`QwenTextGenerator`). `images`: the vision tower's
+    /// outputs for the runs of `<|image_pad|>` in `ids`, in order.
+    public func forward(ids: [Int], probe: Probe? = nil, cache: KVCache? = nil, images: [QwenVisionTower.Output] = []) throws -> [Float] {
         let d = QwenTextEncoder.dim, t = ids.count, kvWidth = QwenTextEncoder.kvHeads * QwenTextEncoder.headDim
         let started = DispatchTime.now().uptimeNanoseconds
         timings = [:]
+        // Image k's slots: the k-th run of <|image_pad|> (`positions` checks each run against its grid).
+        let pad = imagePad
+        let positions = try QwenTextEncoder.positions(ids: ids, imagePad: images.isEmpty ? -1 : pad,
+                                                      grids: images.map { ($0.height / 32, $0.width / 32) })
+        var starts: [Int] = []
+        for i in ids.indices where !images.isEmpty && ids[i] == pad && (i == 0 || ids[i - 1] != pad) { starts.append(i) }
+        let slots = images.reduce(0) { $0 + $1.slots }
         // Rows padded as the DiT's (64, see QwenDiT.padded), plus 64 for the attention kernel's overrun.
         let n = QwenDiT.padded(t) + 64
         let sizes = [n * d, n * d, n * d, n * kvWidth, n * kvWidth, n * d, n * d, n * d, n * d,
                      n * QwenTextEncoder.hidden, n * QwenTextEncoder.hidden, n * 128,
-                     QwenTextEncoder.layers * 4 * d, d * QwenTextEncoder.hidden, d * QwenTextEncoder.hidden]
+                     QwenTextEncoder.layers * 4 * d, max(1, 3 * slots * d), d * QwenTextEncoder.hidden, d * QwenTextEncoder.hidden]
         let arena = try Arena(device: context.device, bytes: Arena.bytes(sizes.map { $0 * 4 }))
         var s = try sizes.map { try arena.slice(floats: $0) }.makeIterator()
         let b = Buffers(arena: arena, x: s.next()!, normed: s.next()!, q: s.next()!, k: s.next()!, v: s.next()!,
                         kx: s.next()!, vx: s.next()!, attended: s.next()!, o: s.next()!, h1: s.next()!, h2: s.next()!,
-                        rope: s.next()!, norms: s.next()!, reserves: [s.next()!, s.next()!])
+                        rope: s.next()!, norms: s.next()!, deepstack: s.next()!, reserves: [s.next()!, s.next()!])
 
         // Norm weights of every layer (F32, small), laid out per layer: input, post-attention, q (128), k (128).
         for layer in 0..<QwenTextEncoder.layers {
@@ -105,7 +171,7 @@ public final class QwenTextEncoder {
                     .update(from: w, count: QwenTextEncoder.headDim)
             }
         }
-        let table = QwenTextEncoder.ropeTable(rows: t)
+        let table = QwenTextEncoder.ropeTable(positions: positions)
         arena.pointer(b.rope).update(from: table, count: table.count)
         // Embedding rows, unpacked on the CPU.
         let embedding = try file.tensor("token_embd.weight")
@@ -117,11 +183,27 @@ public final class QwenTextEncoder {
             guard id >= 0, id < embedding.rows else { throw GGUFFile.Failure.unsupported("token id \(id)") }
             Dequant.row(file.data(embedding) + id * rowBytes, type: type, count: d, into: arena.pointer(b.x, floatOffset: row * d))
         }
+        // Image slots: the tower's merged rows replace the embeddings; its deepstack rows wait in their slice.
+        var at = 0
+        for (image, start) in zip(images, starts) {
+            arena.pointer(b.x, floatOffset: start * d).update(from: image.merged, count: image.slots * d)
+            for (j, rows) in image.deepstack.enumerated() {
+                arena.pointer(b.deepstack, floatOffset: (j * slots + at) * d).update(from: rows, count: image.slots * d)
+            }
+            at += image.slots
+        }
         probe?("embeddings", arena.pointer(b.x), t * d)
 
         var commands = try begin()
         for layer in 0..<QwenTextEncoder.layers {
             try encodeLayer(layer, rows: t, b, commands: commands, cache: cache)
+            if layer < 3, !images.isEmpty {
+                var at = 0
+                for (image, start) in zip(images, starts) {
+                    try addRows(b, at: start, from: (layer * slots + at) * d, count: image.slots * d, commands: commands)
+                    at += image.slots
+                }
+            }
             if let probe, [0, 1, 17, QwenTextEncoder.layers - 1].contains(layer) {
                 try MetalContext.finish(commands, "text encoder")
                 probe("layer\(layer)_out", arena.pointer(b.x), t * d)
@@ -137,12 +219,19 @@ public final class QwenTextEncoder {
 
     /// `[rows, 64, (cos, sin)]` of `position · ω_i`, `ω_i = 1 / θ^(2i / 128)`, fp32 as Qwen3VLTextRotaryEmbedding.
     static func ropeTable(rows: Int) -> [Float] {
+        ropeTable(positions: (0..<rows).map { SIMD3(repeating: Int32($0)) })
+    }
+
+    /// The same for 3D positions, interleaved as `mrope_section` [24, 20, 20] with `mrope_interleaved`: frequency i
+    /// turns with the height when i % 3 == 1, with the width when i % 3 == 2 (both below 60), else with t.
+    static func ropeTable(positions: [SIMD3<Int32>]) -> [Float] {
         let half = QwenTextEncoder.headDim / 2
         let omegas = (0..<half).map { i in 1 / powf(theta, Float(2 * i) / Float(QwenTextEncoder.headDim)) }
-        var out = [Float](repeating: 0, count: rows * half * 2)
-        for row in 0..<rows {
+        let axes = (0..<half).map { i in i < 60 && i % 3 == 1 ? 1 : i < 60 && i % 3 == 2 ? 2 : 0 }
+        var out = [Float](repeating: 0, count: positions.count * half * 2)
+        for (row, p) in positions.enumerated() {
             for (i, w) in omegas.enumerated() {
-                let angle = Float(row) * w
+                let angle = Float(p[axes[i]]) * w
                 out[(row * half + i) * 2] = cosf(angle)
                 out[(row * half + i) * 2 + 1] = sinf(angle)
             }
@@ -253,6 +342,17 @@ public final class QwenTextEncoder {
                                       groups: UInt32(QwenTextEncoder.heads / QwenTextEncoder.kvHeads))
             e.setBytes(&params, length: MemoryLayout<RepeatParams>.stride, index: 2)
             e.dispatchThreads(MTLSize(width: Int(params.count), height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+        }
+    }
+
+    /// x[row `at`…] += deepstack floats from `offset` (`_deepstack_process`).
+    func addRows(_ b: Buffers, at row: Int, from offset: Int, count: Int, commands: MTLCommandBuffer) throws {
+        try compute("add_inplace", commands: commands) { e in
+            e.setBuffer(b.arena.buffer, offset: b.x.offset + row * QwenTextEncoder.dim * 4, index: 0)
+            e.setBuffer(b.arena.buffer, offset: b.deepstack.offset + offset * 4, index: 1)
+            var c = UInt32(count)
+            e.setBytes(&c, length: 4, index: 2)
+            e.dispatchThreads(MTLSize(width: count, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
         }
     }
 

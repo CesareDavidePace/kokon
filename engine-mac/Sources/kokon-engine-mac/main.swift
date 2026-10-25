@@ -12,7 +12,7 @@ kokon-engine-mac: Kokon's Apple Silicon engine (in development)
   check-vae-encoder <vae.safetensors> <reference dir> [WxH]   the VAE encoder against tools/reference_vae_encoder.py, then its time
   time-vae <vae.safetensors> [grid]                    the VAE decoder's time and memory (64 = 1024²; KOKON_VAE_TILE)
   check-tokenizer <encoder.gguf> <fixture.json>       the tokenizer against tools/reference_tokenizer.py
-  check-text <encoder.gguf> <reference dir>           the text encoder against tools/reference_text_encoder.py
+  check-text <encoder.gguf> <reference dir> [mmproj.gguf]   the text encoder against tools/reference_text_encoder.py
   check-vision <mmproj.gguf> <reference dir>          the vision tower against tools/reference_vision.py, then its time
   check-generate <encoder.gguf> <dit.gguf> <vae.safetensors> <reference dir> [text reference dir]
                                            text to image against tools/reference_generate.py, from its noise
@@ -93,8 +93,8 @@ do {
         guard arguments.count == 3 else { fail(usage) }
         try Checks.tokenizer(path: arguments[1], fixture: arguments[2])
     case "check-text":
-        guard arguments.count == 3 else { fail(usage) }
-        try Checks.textEncoder(path: arguments[1], reference: arguments[2])
+        guard arguments.count == 3 || arguments.count == 4 else { fail(usage) }
+        try Checks.textEncoder(path: arguments[1], reference: arguments[2], mmproj: arguments.count == 4 ? arguments[3] : nil)
     case "check-vision":
         guard arguments.count == 3 else { fail(usage) }
         try Checks.vision(path: arguments[1], reference: arguments[2])

@@ -103,12 +103,14 @@ public final class QwenPipeline {
                     (encoderFile, encoder) = (file, try QwenTextEncoder(file: file, context: context))
                 }
                 defer { encoder!.release() }
-                return try encoder!.conditioning(prompt: prompt)
+                let c = try encoder!.conditioning(prompt: prompt)
+                return (c.rows, c.count)
             }
             let encoder = try handedOver ?? QwenTextEncoder(file: try GGUFFile(path: encoderPath), context: context)
             handedOver = nil
             defer { encoder.release() }
-            return try encoder.conditioning(prompt: prompt)
+            let c = try encoder.conditioning(prompt: prompt)
+            return (c.rows, c.count)
         }()
         timings["encode"] = since(t)
         log(String(format: "text encoder: %d tokens in %.2f s", rows, timings["encode"]!))

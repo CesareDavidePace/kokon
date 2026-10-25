@@ -26,31 +26,74 @@ extension Checks {
     }
 
     /// The text encoder against `tools/reference_text_encoder.py`: the token ids, each saved stage, the conditioning.
-    public static func textEncoder(path: String, reference directory: String) throws {
+    /// A reference with images (`--image`) needs the vision tower (`mmproj`): then also the positions, the image slots
+    /// and the tower's outputs on the processor's input.
+    public static func textEncoder(path: String, reference directory: String, mmproj: String? = nil) throws {
         let meta = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: directory)
             .appendingPathComponent("meta.json"))) as! [String: Any]
         let prompt = meta["prompt"] as! String, wantIds = meta["ids"] as! [Int], wantDrop = meta["drop"] as! Int
-        let file = try GGUFFile(path: path)
         let context = try MetalContext()
+        var images: [QwenVisionTower.Output] = []
+        if let sizes = meta["images"] as? [[Int]], !sizes.isEmpty {
+            guard let mmproj else { throw GGUFFile.Failure.unsupported("this reference has images: pass the mmproj GGUF") }
+            let tower = try QwenVisionTower(file: try GGUFFile(path: mmproj), context: context)
+            for i in sizes.indices {
+                let png = try QwenPipeline.decodeImage(Data(contentsOf: URL(fileURLWithPath: directory).appendingPathComponent("image\(i + 1).png")))
+                let input = QwenVisionTower.pixels(rgba: png.rgba, width: png.width, height: png.height)
+                images.append(try tower.encode(rgb: input.rgb, width: input.width, height: input.height))
+                print(String(format: "image %d: %d×%d, %d slots, vision tower %.2f s", i + 1, input.width, input.height,
+                             images[i].slots, tower.seconds))
+            }
+            let merged = images.flatMap(\.merged)
+            merged.withUnsafeBufferPointer {
+                let r = compare($0.baseAddress!, try! reference(directory, "vision_merged"))
+                print(String(format: "  vision merged rel %.2e", r.relative))
+            }
+            tower.release()
+        }
+        let file = try GGUFFile(path: path)
         let encoder = try QwenTextEncoder(file: file, context: context)
-        let ids = encoder.tokens(prompt: prompt)
+        let ids = encoder.tokens(prompt: prompt, images: images)
         print("tokens: \(ids.count), \(ids == wantIds ? "identical" : "DIFFERENT") ids; drop \(encoder.dropCount)"
               + (encoder.dropCount == wantDrop ? "" : " (reference \(wantDrop))"))
         guard ids == wantIds, encoder.dropCount == wantDrop else { throw GGUFFile.Failure.unsupported("token ids differ") }
+        if !images.isEmpty {
+            let positions = try QwenTextEncoder.positions(ids: ids, imagePad: encoder.imagePad,
+                                                          grids: images.map { ($0.height / 32, $0.width / 32) })
+            let want = try reference(directory, "positions")   // [3, T]
+            let same = positions.indices.allSatisfy { i in (0..<3).allSatisfy { Float(positions[i][$0]) == want[$0 * ids.count + i] } }
+            print("positions: \(same ? "identical" : "DIFFERENT")")
+        }
 
         func report(_ name: String, _ got: UnsafePointer<Float>, _ want: [Float]) {
             let r = compare(got, want)
             print(String(format: "  %-12@ rel %.2e   max |Δ| %.3g%@", name as NSString, r.relative, r.maxAbs, r.finite ? "" : "   NON-FINITE"))
         }
-        _ = try encoder.forward(ids: ids) { name, pointer, count in
+        _ = try encoder.forward(ids: ids, probe: { name, pointer, count in
             guard let want = try? reference(directory, name) else { return }
             precondition(want.count == count, "\(name): \(count) floats, reference \(want.count)")
             report(name, pointer, want)
+        }, images: images)
+        if !images.isEmpty {
+            // The text encoder alone: the reference's own vision rows in the slots.
+            var at = 0
+            let merged = try reference(directory, "vision_merged"), deep = try (0..<3).map { try reference(directory, "vision_deepstack\($0)") }
+            let given = images.map { image -> QwenVisionTower.Output in
+                defer { at += image.slots * QwenTextEncoder.dim }
+                let range = at..<(at + image.slots * QwenTextEncoder.dim)
+                return QwenVisionTower.Output(merged: Array(merged[range]), deepstack: deep.map { Array($0[range]) },
+                                              height: image.height, width: image.width)
+            }
+            let (rows, _, _) = try encoder.conditioning(prompt: prompt, images: given)
+            rows.withUnsafeBufferPointer { report("conditioning, the reference's vision rows", $0.baseAddress!, try! reference(directory, "conditioning")) }
         }
         for run in 1...2 {
             let started = DispatchTime.now().uptimeNanoseconds
-            let (rows, count) = try encoder.conditioning(prompt: prompt)
+            let (rows, count, slots) = try encoder.conditioning(prompt: prompt, images: images)
             let seconds = Double(DispatchTime.now().uptimeNanoseconds - started) * 1e-9
+            if run == 1, let want = meta["image_pad_mask"] as? [Int] {
+                print("image slots: \(slots.map { $0 ? 1 : 0 } == want ? "identical" : "DIFFERENT") (\(slots.filter { $0 }.count))")
+            }
             if run == 1 { rows.withUnsafeBufferPointer { report("conditioning", $0.baseAddress!, try! reference(directory, "conditioning")) } }
             print(String(format: "encode %d (%d rows): %.3f s", run, count, seconds))
         }

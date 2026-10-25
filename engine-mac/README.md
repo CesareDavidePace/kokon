@@ -208,6 +208,14 @@ and fp32 only for the Neural Engine's rows, so the separate `pack_half` pass, wh
 The same values to the bit (check-dit at 896²: velocity 6.74e-4 either way). 1024², 3 alternated pairs of 4
 evaluations (M2 Pro, 2026-10-25): 7.67 → 7.58 s per evaluation, the GPU alone between operations 0.71 → 0.64 s.
 
+**q/k/v and gate/proj released as one operation each: measured, not kept.** Each unit ran its rows of the group's
+products back to back (one release, one rendezvous; the Neural Engine on one program with pooled surfaces, the
+group's weights unpacked side by side, one σ per row from the group's largest L: velocity at 896² 6.36e-4, no
+worse). Between operations 0.60 → 0.53 s, but per evaluation, 3 alternated rounds of 4 at 1024²: 7.55 s without,
+7.52 with gate/proj unpacked during `to_out`, 7.56 with them unpacked during the attention (which then took 78 ms
+instead of 66). With the three units at their shared limit, the GPU-alone time moved into the products; what pays
+is fewer bytes moved, as with the fp16 cast above.
+
 **1024² image after this pass (M2 Pro, `generate`, 2026-10-25): 67.3–68.0 s** (text encoder 2.0 s, step 1 8.35 s,
 steps 2–8 7.3–7.7 s, VAE 5.0–5.3 s with its first run at the size; 79.9 s at the start of the fp16 work, 76.0 with
 fp16 attention). `MTLBinaryArchive` was not added: the engine's kernels compile from source in 0.1 s at start (macOS

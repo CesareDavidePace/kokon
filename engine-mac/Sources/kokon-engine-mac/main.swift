@@ -9,6 +9,7 @@ kokon-engine-mac: Kokon's Apple Silicon engine (in development)
   check-dit <dit.gguf> <reference dir>     one DiT evaluation against tools/reference_dit.py
   time-dit <dit.gguf> [grid] [text] [runs] DiT evaluations on random inputs (grid 64 = 1024²)
   check-vae <vae.safetensors> <reference dir> [grid]   the VAE decoder against tools/reference_vae.py, tiles against the whole graph
+  check-vae-encoder <vae.safetensors> <reference dir> [WxH]   the VAE encoder against tools/reference_vae_encoder.py, then its time
   time-vae <vae.safetensors> [grid]                    the VAE decoder's time and memory (64 = 1024²; KOKON_VAE_TILE)
   check-tokenizer <encoder.gguf> <fixture.json>       the tokenizer against tools/reference_tokenizer.py
   check-text <encoder.gguf> <reference dir>           the text encoder against tools/reference_text_encoder.py
@@ -79,6 +80,11 @@ do {
     case "check-vae":
         guard arguments.count >= 3 else { fail(usage) }
         try Checks.vae(path: arguments[1], reference: arguments[2], timeGrid: arguments.count > 3 ? Int(arguments[3]) : nil)
+    case "check-vae-encoder":
+        guard arguments.count >= 3 else { fail(usage) }
+        let size = arguments.count > 3 ? arguments[3].split(separator: "x").compactMap { Int($0) } : [1024, 1024]
+        guard size.count == 2 else { fail("size as WxH") }
+        try Checks.vaeEncoder(path: arguments[1], reference: arguments[2], timeSize: (size[0], size[1]))
     case "time-vae":
         guard arguments.count >= 2 else { fail(usage) }
         try Checks.timeVAE(path: arguments[1], grid: arguments.count > 2 ? Int(arguments[2]) ?? 64 : 64)

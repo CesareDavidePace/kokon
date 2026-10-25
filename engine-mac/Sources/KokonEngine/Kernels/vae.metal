@@ -50,3 +50,23 @@ kernel void vae_dup_up_add(device float *out [[buffer(0)]], device const float *
     uint q = ((gid.z * p.ft + p.ft - 1) * 2 + (gid.y & 1)) * 2 + (gid.x & 1);
     out[(ulong(gid.z) * 2 * p.h + gid.y) * 2 * p.w + gid.x] += x[(ulong(q / repeats) * p.h + gid.y / 2) * p.w + gid.x / 2];
 }
+
+struct AvgDown { uint inC, outC, ft, fs, h, w; };
+
+/// QwenImage21AvgDown3D on a first chunk, added to the down block's output `out` [outC, h, w]: the input [inC, fs·h,
+/// fs·w] seen as inC · ft · fs² channels ((c · ft + t) · fs + i) · fs + j, of which `group` consecutive ones average
+/// into each output channel. With ft = 2 the single frame is padded by a zero frame before it (t = 0), which counts in
+/// the average.
+kernel void vae_avg_down_add(device float *out [[buffer(0)]], device const float *x [[buffer(1)]],
+                             constant AvgDown &p [[buffer(2)]], uint3 gid [[thread_position_in_grid]]) {
+    if (gid.x >= p.w || gid.y >= p.h || gid.z >= p.outC) return;
+    uint group = p.inC * p.ft * p.fs * p.fs / p.outC;
+    float sum = 0;
+    for (uint k = 0; k < group; k++) {
+        uint index = gid.z * group + k;
+        uint j = index % p.fs, i = (index / p.fs) % p.fs, t = (index / (p.fs * p.fs)) % p.ft, c = index / (p.fs * p.fs * p.ft);
+        if (t + 1 < p.ft) continue;   // the padded frame
+        sum += x[(ulong(c) * p.fs * p.h + gid.y * p.fs + i) * p.fs * p.w + gid.x * p.fs + j];
+    }
+    out[(ulong(gid.z) * p.h + gid.y) * p.w + gid.x] += sum / float(group);
+}

@@ -46,9 +46,9 @@ public final class QwenVAE {
     /// Engine; at level 0 they stay on the GPU and are right, but save little: all five in fp16 2.43 s against 2.77 at
     /// 1024², the first two 2.65, for 2.2–2.7e-3 of diffusers instead of 1.1e-5 (M2 Pro, `check-vae`, 2026-10-25). The
     /// VAE stays fp32.
-    private var executables: [String: MPSGraphExecutable] = [:]
+    var executables: [String: MPSGraphExecutable] = [:]
     private var feedOrders: [String: [Int]] = [:]
-    private let lock = NSLock()
+    let lock = NSLock()
 
     public init(path: String, context: MetalContext) throws {
         file = try SafetensorsFile(path: path)
@@ -163,7 +163,7 @@ public final class QwenVAE {
         func give(_ buffer: MTLBuffer) { free.append(buffer) }
     }
 
-    private func data(_ buffer: MTLBuffer, _ shape: [Int]) -> MPSGraphTensorData {
+    func data(_ buffer: MTLBuffer, _ shape: [Int]) -> MPSGraphTensorData {
         MPSGraphTensorData(buffer, shape: shape.map { NSNumber(value: $0) }, dataType: .float32)
     }
 
@@ -255,7 +255,7 @@ public final class QwenVAE {
 
     /// Weights as fp32 buffers, each read from the file once.
     private var weightBuffers: [String: MTLBuffer] = [:]
-    private func weight(_ name: String) throws -> MTLBuffer {
+    func weight(_ name: String) throws -> MTLBuffer {
         try lock.withLock {
             if let b = weightBuffers[name] { return b }
             let values = try file.floats(name)
@@ -266,7 +266,7 @@ public final class QwenVAE {
         }
     }
 
-    private func dispatch(_ kernel: String, _ buffers: [MTLBuffer], _ parameters: [UInt32], grid: MTLSize,
+    func dispatch(_ kernel: String, _ buffers: [MTLBuffer], _ parameters: [UInt32], grid: MTLSize,
                           commands: MPSCommandBuffer) throws {
         let pipeline = try context.pipeline(kernel)
         var p = parameters
@@ -280,7 +280,7 @@ public final class QwenVAE {
     }
 
     /// QwenImage21RMS_norm then SiLU, per pixel over `channels` planes (`x` and `out` may be the same).
-    private func normSilu(_ x: MTLBuffer, to out: MTLBuffer, gamma: String, channels: Int, pixels: Int, commands: MPSCommandBuffer) throws {
+    func normSilu(_ x: MTLBuffer, to out: MTLBuffer, gamma: String, channels: Int, pixels: Int, commands: MPSCommandBuffer) throws {
         try dispatch("vae_norm_silu", [x, out, try weight(gamma)], [UInt32(channels), UInt32(pixels)],
                      grid: MTLSize(width: pixels, height: 1, depth: 1), commands: commands)
     }
@@ -294,12 +294,14 @@ public final class QwenVAE {
     }
 
     /// `name` (a k × k convolution and its bias) on `[inC, h, w]`, plus `skip` (the residual block's input, through
-    /// its 1×1 shortcut when named), clamped to [−1, 1] for the head.
-    private func convolution(_ x: MTLBuffer, _ name: String, inC: Int, outC: Int, k: Int, height h: Int, width w: Int,
-                             to out: MTLBuffer, skip: (buffer: MTLBuffer, shortcut: String?, channels: Int)? = nil,
-                             clamp: Bool = false, commands: MPSCommandBuffer) throws {
+    /// its 1×1 shortcut when named), clamped to [−1, 1] for the head. `downsample`: stride 2 with one zero row and
+    /// column after the input (the encoder's `ZeroPad2d((0, 1, 0, 1))` then `Conv2d(stride=2)`), `[outC, h/2, w/2]`.
+    func convolution(_ x: MTLBuffer, _ name: String, inC: Int, outC: Int, k: Int, height h: Int, width w: Int,
+                     to out: MTLBuffer, skip: (buffer: MTLBuffer, shortcut: String?, channels: Int)? = nil,
+                     clamp: Bool = false, downsample: Bool = false, commands: MPSCommandBuffer) throws {
         let kind = skip == nil ? "" : skip!.shortcut == nil ? "+x" : "+1x1(\(skip!.channels))"
-        let key = "conv \(inC)→\(outC) \(k)×\(k)\(kind)\(clamp ? " clamp" : "") \(h)×\(w)"
+        let key = "conv \(inC)→\(outC) \(k)×\(k)\(kind)\(clamp ? " clamp" : "")\(downsample ? " /2" : "") \(h)×\(w)"
+        let (oh, ow) = downsample ? (h / 2, w / 2) : (h, w)
         let (executable, order) = try lock.withLock { () throws -> (MPSGraphExecutable, [Int]) in
             if let e = executables[key], let order = feedOrders[key] { return (e, order) }
             let g = MPSGraph()
@@ -312,9 +314,10 @@ public final class QwenVAE {
                 return t
             }
             func conv(_ x: MPSGraphTensor, _ inC: Int, _ k: Int) -> MPSGraphTensor {
-                let d = MPSGraphConvolution2DOpDescriptor(strideInX: 1, strideInY: 1, dilationRateInX: 1, dilationRateInY: 1,
-                                                          groups: 1, paddingLeft: k / 2, paddingRight: k / 2, paddingTop: k / 2,
-                                                          paddingBottom: k / 2, paddingStyle: .explicit, dataLayout: .NCHW,
+                let (stride, before, after) = downsample ? (2, 0, 1) : (1, k / 2, k / 2)
+                let d = MPSGraphConvolution2DOpDescriptor(strideInX: stride, strideInY: stride, dilationRateInX: 1, dilationRateInY: 1,
+                                                          groups: 1, paddingLeft: before, paddingRight: after, paddingTop: before,
+                                                          paddingBottom: after, paddingStyle: .explicit, dataLayout: .NCHW,
                                                           weightsLayout: .OIHW)!
                 let y = g.convolution2D(x, weights: input([outC, inC, k, k]), descriptor: d, name: nil)
                 return g.addition(y, input([1, outC, 1, 1]), name: nil)
@@ -323,7 +326,7 @@ public final class QwenVAE {
             let x = input([1, inC, h, w])
             var y = conv(x, inC, k)
             if let skip {
-                let s = input([1, skip.channels, h, w])
+                let s = input([1, skip.channels, oh, ow])
                 y = g.addition(y, skip.shortcut == nil ? s : conv(s, skip.channels, 1), name: nil)
             }
             if clamp {
@@ -342,13 +345,13 @@ public final class QwenVAE {
         var inputs = [data(x, [1, inC, h, w]), data(try weight(name + ".weight"), [outC, inC, k, k]),
                       data(try weight(name + ".bias"), [1, outC, 1, 1])]
         if let skip {
-            inputs.append(data(skip.buffer, [1, skip.channels, h, w]))
+            inputs.append(data(skip.buffer, [1, skip.channels, oh, ow]))
             if let shortcut = skip.shortcut {
                 inputs += [data(try weight(shortcut + ".weight"), [outC, skip.channels, 1, 1]), data(try weight(shortcut + ".bias"), [1, outC, 1, 1])]
             }
         }
         _ = executable.encode(to: commands, inputs: order.map { inputs[$0] },
-                              results: [data(out, [1, outC, h, w])], executionDescriptor: nil)
+                              results: [data(out, [1, outC, oh, ow])], executionDescriptor: nil)
     }
 
     /// Tiles of side `tile` over `n` pixels: each one's start, and the share it gives (`core`, `length`) at least
@@ -384,105 +387,113 @@ public final class QwenVAE {
     /// The graph of `stage` for an `h` × `w` input.
     private func build(_ stage: Stage, height h: Int, width w: Int) throws -> (graph: MPSGraph, input: MPSGraphTensor, output: MPSGraphTensor) {
         let g = MPSGraph()
-        func n(_ values: [Int]) -> [NSNumber] { values.map { NSNumber(value: $0) } }
-        func constant(_ values: [Float], _ shape: [Int]) -> MPSGraphTensor {
-            g.constant(values.withUnsafeBytes { Data($0) }, shape: n(shape), dataType: .float32)
-        }
-        func weight(_ name: String, _ shape: [Int]) throws -> MPSGraphTensor {
-            let values = try file.floats(name)
-            guard values.count == shape.reduce(1, *) else {
-                throw GGUFFile.Failure.unsupported("\(name): \(values.count) values, \(shape) expected")
-            }
-            return constant(values, shape)
-        }
-        /// Conv (OIHW weights, the file's 5D `[O, I, 1, k, k]` squeezed) + bias, padding k / 2.
-        func conv(_ x: MPSGraphTensor, _ name: String, _ inC: Int, _ outC: Int, _ k: Int) throws -> MPSGraphTensor {
-            let pad = k / 2
-            let d = MPSGraphConvolution2DOpDescriptor(strideInX: 1, strideInY: 1, dilationRateInX: 1, dilationRateInY: 1,
-                                                      groups: 1, paddingLeft: pad, paddingRight: pad, paddingTop: pad,
-                                                      paddingBottom: pad, paddingStyle: .explicit, dataLayout: .NCHW,
-                                                      weightsLayout: .OIHW)!
-            let y = g.convolution2D(x, weights: try weight(name + ".weight", [outC, inC, k, k]), descriptor: d, name: nil)
-            return g.addition(y, try weight(name + ".bias", [1, outC, 1, 1]), name: nil)
-        }
-        /// QwenImage21RMS_norm: F.normalize over channels (x / max(‖x‖, 1e-12)) · √C · γ.
-        func norm(_ x: MPSGraphTensor, _ name: String, _ c: Int) throws -> MPSGraphTensor {
-            let length = g.squareRoot(with: g.reductionSum(with: g.square(with: x, name: nil), axes: [1], name: nil), name: nil)
-            let normalized = g.division(x, g.maximum(length, g.constant(1e-12, dataType: .float32), name: nil), name: nil)
-            let scaled = g.multiplication(normalized, g.constant(Double(Float(c).squareRoot()), dataType: .float32), name: nil)
-            return g.multiplication(scaled, try weight(name, [1, c, 1, 1]), name: nil)
-        }
-        func silu(_ x: MPSGraphTensor) -> MPSGraphTensor { g.multiplication(x, g.sigmoid(with: x, name: nil), name: nil) }
-        /// QwenImage21ResidualBlock (Wan `residual.{0,2,3,6}`, `shortcut`).
-        func residual(_ x: MPSGraphTensor, _ name: String, _ inC: Int, _ outC: Int) throws -> MPSGraphTensor {
-            let skip = inC == outC ? x : try conv(x, name + ".shortcut", inC, outC, 1)
-            var y = silu(try norm(x, name + ".residual.0.gamma", inC))
-            y = try conv(y, name + ".residual.2", inC, outC, 3)
-            y = silu(try norm(y, name + ".residual.3.gamma", outC))
-            y = try conv(y, name + ".residual.6", outC, outC, 3)
-            return g.addition(y, skip, name: nil)
-        }
-        /// QwenImage21AttentionBlock: one head over all `hw` pixels.
-        func attention(_ x: MPSGraphTensor, _ name: String, _ c: Int, _ hw: Int, _ hh: Int, _ ww: Int) throws -> MPSGraphTensor {
-            let qkv = try conv(try norm(x, name + ".norm.gamma", c), name + ".to_qkv", c, 3 * c, 1)   // [1, 3C, H, W]
-            let rows = g.transpose(g.reshape(qkv, shape: n([3 * c, hw]), name: nil), permutation: n([1, 0]), name: nil)
-            func part(_ i: Int) -> MPSGraphTensor {
-                g.reshape(g.sliceTensor(rows, dimension: 1, start: i * c, length: c, name: nil), shape: n([1, 1, hw, c]), name: nil)
-            }
-            let o = g.scaledDotProductAttention(query: part(0), key: part(1), value: part(2), mask: nil,
-                                                scale: 1 / Float(c).squareRoot(), name: nil)
-            let back = g.reshape(g.transpose(g.reshape(o, shape: n([hw, c]), name: nil), permutation: n([1, 0]), name: nil),
-                                 shape: n([1, c, hh, ww]), name: nil)
-            return g.addition(try conv(back, name + ".proj", c, c, 1), x, name: nil)
-        }
-        /// QwenImage21DupUp3D on a first chunk: each output channel's 2×2 pixels from the input channels it repeats.
-        func dupUp(_ x: MPSGraphTensor, _ inC: Int, _ outC: Int, _ ft: Int, _ hh: Int, _ ww: Int) -> MPSGraphTensor {
-            let repeats = outC * ft * 4 / inC
-            var y = g.broadcast(g.reshape(x, shape: n([inC, 1, hh, ww]), name: nil), shape: n([inC, repeats, hh, ww]), name: nil)
-            y = g.reshape(y, shape: n([outC, ft, 2, 2, hh, ww]), name: nil)
-            y = g.sliceTensor(y, dimension: 1, start: ft - 1, length: 1, name: nil)
-            y = g.reshape(y, shape: n([outC, 2, 2, hh, ww]), name: nil)
-            y = g.transpose(y, permutation: n([0, 3, 1, 4, 2]), name: nil)   // [C, H, 2, W, 2]
-            return g.reshape(y, shape: n([1, outC, 2 * hh, 2 * ww]), name: nil)
-        }
-
+        let parts = VAEGraph(g: g, file: file)
         let input: MPSGraphTensor
         var x: MPSGraphTensor
         let dims = QwenVAE.dims
         var (hh, ww) = (h, w)
         if stage.first >= 0 {
-            input = g.placeholder(shape: n([1, Stage.channels(stage.first), h, w]), dataType: .float32, name: "input")
+            input = g.placeholder(shape: parts.n([1, Stage.channels(stage.first), h, w]), dataType: .float32, name: "input")
             x = input
         } else {
-            input = g.placeholder(shape: n([1, 64, h, w]), dataType: .float32, name: "latent")
-            x = g.addition(g.multiplication(input, constant(QwenVAE.latentsStd, [1, 64, 1, 1]), name: nil),
-                           constant(QwenVAE.latentsMean, [1, 64, 1, 1]), name: nil)
-            x = try conv(x, "conv2", 64, 64, 1)                                    // post_quant_conv
-            x = try conv(x, "decoder.conv1", 64, dims[0], 3)                       // conv_in
-            x = try residual(x, "decoder.middle.0", dims[0], dims[0])              // mid_block.resnets.0
-            x = try attention(x, "decoder.middle.1", dims[0], h * w, h, w)        // mid_block.attentions.0
-            x = try residual(x, "decoder.middle.2", dims[0], dims[0])              // mid_block.resnets.1
+            input = g.placeholder(shape: parts.n([1, 64, h, w]), dataType: .float32, name: "latent")
+            x = g.addition(g.multiplication(input, parts.constant(QwenVAE.latentsStd, [1, 64, 1, 1]), name: nil),
+                           parts.constant(QwenVAE.latentsMean, [1, 64, 1, 1]), name: nil)
+            x = try parts.conv(x, "conv2", 64, 64, 1)                                    // post_quant_conv
+            x = try parts.conv(x, "decoder.conv1", 64, dims[0], 3)                       // conv_in
+            x = try parts.residual(x, "decoder.middle.0", dims[0], dims[0])              // mid_block.resnets.0
+            x = try parts.attention(x, "decoder.middle.1", dims[0], h * w, h, w)        // mid_block.attentions.0
+            x = try parts.residual(x, "decoder.middle.2", dims[0], dims[0])              // mid_block.resnets.1
         }
         for i in max(stage.first, 0)..<stage.end {                                                          // up_blocks.i
             let (inC, outC) = (dims[i], dims[i + 1])
             let blockInput = x
             var c = inC
             for j in 0..<3 {
-                x = try residual(x, "decoder.upsamples.\(i).upsamples.\(j)", c, outC)
+                x = try parts.residual(x, "decoder.upsamples.\(i).upsamples.\(j)", c, outC)
                 c = outC
             }
             if i < 4 {
-                x = g.resize(x, size: n([2 * hh, 2 * ww]), mode: .nearest, centerResult: true, alignCorners: false,
+                x = g.resize(x, size: parts.n([2 * hh, 2 * ww]), mode: .nearest, centerResult: true, alignCorners: false,
                              layout: .NCHW, name: nil)
-                x = try conv(x, "decoder.upsamples.\(i).upsamples.3.resample.1", outC, outC, 3)   // upsampler
-                x = g.addition(x, dupUp(blockInput, inC, outC, QwenVAE.temporal[i], hh, ww), name: nil)   // avg_shortcut
+                x = try parts.conv(x, "decoder.upsamples.\(i).upsamples.3.resample.1", outC, outC, 3)   // upsampler
+                x = g.addition(x, parts.dupUp(blockInput, inC, outC, QwenVAE.temporal[i], hh, ww), name: nil)   // avg_shortcut
                 (hh, ww) = (2 * hh, 2 * ww)
             }
         }
         if stage.end < 5 { return (g, input, x) }
-        x = silu(try norm(x, "decoder.head.0.gamma", dims[5]))                    // norm_out
-        x = try conv(x, "decoder.head.2", dims[5], 4, 3)                           // conv_out
+        x = parts.silu(try parts.norm(x, "decoder.head.0.gamma", dims[5]))                    // norm_out
+        x = try parts.conv(x, "decoder.head.2", dims[5], 4, 3)                           // conv_out
         x = g.clamp(x, min: g.constant(-1, dataType: .float32), max: g.constant(1, dataType: .float32), name: nil)
         return (g, input, x)
+    }
+}
+
+/// The VAE's pieces as MPSGraph operations, the file's weights as constants: the decoder's graphs (`build`) and the
+/// encoder's mid block and head (`QwenVAEEncoder.swift`).
+struct VAEGraph {
+    let g: MPSGraph
+    let file: SafetensorsFile
+
+    func n(_ values: [Int]) -> [NSNumber] { values.map { NSNumber(value: $0) } }
+    func constant(_ values: [Float], _ shape: [Int]) -> MPSGraphTensor {
+        g.constant(values.withUnsafeBytes { Data($0) }, shape: n(shape), dataType: .float32)
+    }
+    func weight(_ name: String, _ shape: [Int]) throws -> MPSGraphTensor {
+        let values = try file.floats(name)
+        guard values.count == shape.reduce(1, *) else {
+            throw GGUFFile.Failure.unsupported("\(name): \(values.count) values, \(shape) expected")
+        }
+        return constant(values, shape)
+    }
+    /// Conv (OIHW weights, the file's 5D `[O, I, 1, k, k]` squeezed) + bias, padding k / 2.
+    func conv(_ x: MPSGraphTensor, _ name: String, _ inC: Int, _ outC: Int, _ k: Int) throws -> MPSGraphTensor {
+        let pad = k / 2
+        let d = MPSGraphConvolution2DOpDescriptor(strideInX: 1, strideInY: 1, dilationRateInX: 1, dilationRateInY: 1,
+                                                  groups: 1, paddingLeft: pad, paddingRight: pad, paddingTop: pad,
+                                                  paddingBottom: pad, paddingStyle: .explicit, dataLayout: .NCHW,
+                                                  weightsLayout: .OIHW)!
+        let y = g.convolution2D(x, weights: try weight(name + ".weight", [outC, inC, k, k]), descriptor: d, name: nil)
+        return g.addition(y, try weight(name + ".bias", [1, outC, 1, 1]), name: nil)
+    }
+    /// QwenImage21RMS_norm: F.normalize over channels (x / max(‖x‖, 1e-12)) · √C · γ.
+    func norm(_ x: MPSGraphTensor, _ name: String, _ c: Int) throws -> MPSGraphTensor {
+        let length = g.squareRoot(with: g.reductionSum(with: g.square(with: x, name: nil), axes: [1], name: nil), name: nil)
+        let normalized = g.division(x, g.maximum(length, g.constant(1e-12, dataType: .float32), name: nil), name: nil)
+        let scaled = g.multiplication(normalized, g.constant(Double(Float(c).squareRoot()), dataType: .float32), name: nil)
+        return g.multiplication(scaled, try weight(name, [1, c, 1, 1]), name: nil)
+    }
+    func silu(_ x: MPSGraphTensor) -> MPSGraphTensor { g.multiplication(x, g.sigmoid(with: x, name: nil), name: nil) }
+    /// QwenImage21ResidualBlock (Wan `residual.{0,2,3,6}`, `shortcut`).
+    func residual(_ x: MPSGraphTensor, _ name: String, _ inC: Int, _ outC: Int) throws -> MPSGraphTensor {
+        let skip = inC == outC ? x : try conv(x, name + ".shortcut", inC, outC, 1)
+        var y = silu(try norm(x, name + ".residual.0.gamma", inC))
+        y = try conv(y, name + ".residual.2", inC, outC, 3)
+        y = silu(try norm(y, name + ".residual.3.gamma", outC))
+        y = try conv(y, name + ".residual.6", outC, outC, 3)
+        return g.addition(y, skip, name: nil)
+    }
+    /// QwenImage21AttentionBlock: one head over all `hw` pixels.
+    func attention(_ x: MPSGraphTensor, _ name: String, _ c: Int, _ hw: Int, _ hh: Int, _ ww: Int) throws -> MPSGraphTensor {
+        let qkv = try conv(try norm(x, name + ".norm.gamma", c), name + ".to_qkv", c, 3 * c, 1)   // [1, 3C, H, W]
+        let rows = g.transpose(g.reshape(qkv, shape: n([3 * c, hw]), name: nil), permutation: n([1, 0]), name: nil)
+        func part(_ i: Int) -> MPSGraphTensor {
+            g.reshape(g.sliceTensor(rows, dimension: 1, start: i * c, length: c, name: nil), shape: n([1, 1, hw, c]), name: nil)
+        }
+        let o = g.scaledDotProductAttention(query: part(0), key: part(1), value: part(2), mask: nil,
+                                            scale: 1 / Float(c).squareRoot(), name: nil)
+        let back = g.reshape(g.transpose(g.reshape(o, shape: n([hw, c]), name: nil), permutation: n([1, 0]), name: nil),
+                             shape: n([1, c, hh, ww]), name: nil)
+        return g.addition(try conv(back, name + ".proj", c, c, 1), x, name: nil)
+    }
+    /// QwenImage21DupUp3D on a first chunk: each output channel's 2×2 pixels from the input channels it repeats.
+    func dupUp(_ x: MPSGraphTensor, _ inC: Int, _ outC: Int, _ ft: Int, _ hh: Int, _ ww: Int) -> MPSGraphTensor {
+        let repeats = outC * ft * 4 / inC
+        var y = g.broadcast(g.reshape(x, shape: n([inC, 1, hh, ww]), name: nil), shape: n([inC, repeats, hh, ww]), name: nil)
+        y = g.reshape(y, shape: n([outC, ft, 2, 2, hh, ww]), name: nil)
+        y = g.sliceTensor(y, dimension: 1, start: ft - 1, length: 1, name: nil)
+        y = g.reshape(y, shape: n([outC, 2, 2, hh, ww]), name: nil)
+        y = g.transpose(y, permutation: n([0, 3, 1, 4, 2]), name: nil)   // [C, H, 2, W, 2]
+        return g.reshape(y, shape: n([1, outC, 2 * hh, 2 * ww]), name: nil)
     }
 }

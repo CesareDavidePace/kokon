@@ -384,3 +384,36 @@ extension Checks {
         print(String(format: "int8 weights, fp16 activations %d×%d×%d: %.2f ms (%.1f TFLOP/s), relative error %.2e", rows, k, n, tw * 1e3, flops / tw / 1e12, ew))
     }
 }
+
+extension Checks {
+    /// The VAE encoder against `tools/reference_vae_encoder.py` (diffusers fp32): the normalized latent of its image;
+    /// then the time and memory of an encode at `timeSize` (a smooth random image, as the reference's).
+    public static func vaeEncoder(path: String, reference directory: String, timeSize: (width: Int, height: Int) = (1024, 1024)) throws {
+        let meta = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: directory)
+            .appendingPathComponent("meta.json"))) as! [String: Any]
+        let size = meta["size"] as! [Int]
+        let (w, h) = (size[0], size[1])
+        let context = try MetalContext()
+        let vae = try QwenVAE(path: path, context: context)
+        let image = try reference(directory, "image"), want = try reference(directory, "latent")
+        var started = DispatchTime.now().uptimeNanoseconds
+        let got = try vae.encode(image, height: h, width: w)
+        var seconds = Double(DispatchTime.now().uptimeNanoseconds - started) * 1e-9
+        let r = got.withUnsafeBufferPointer { compare($0.baseAddress!, want) }
+        print(String(format: "VAE encoder %d×%d → %d×%d latent: rel %.2e, max |Δ| %.3g%@ (%.2f s with the graphs' build)",
+                     w, h, w / 16, h / 16, r.relative, r.maxAbs, r.finite ? "" : " NON-FINITE", seconds))
+        let (tw, th) = timeSize
+        let random = (0..<(4 * th * tw)).map { i -> Float in
+            let (y, x) = ((i / tw) % th, i % tw)
+            return sinf(Float(x) * 0.013 + Float(i / (tw * th))) * cosf(Float(y) * 0.021) * 0.9
+        }
+        for run in 1...3 {
+            started = DispatchTime.now().uptimeNanoseconds
+            _ = try vae.encode(random, height: th, width: tw)
+            seconds = Double(DispatchTime.now().uptimeNanoseconds - started) * 1e-9
+            Thread.sleep(forTimeInterval: 1.5)   // buffers the GPU used leave the footprint up to a second after their release
+            let m = MemoryUsage.now()
+            print(String(format: "encode %d at %d×%d: %.2f s, footprint after %.2f GB (peak %.2f GB)", run, tw, th, seconds, m.footprint, m.footprintPeak))
+        }
+    }
+}

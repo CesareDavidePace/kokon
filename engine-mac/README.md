@@ -44,6 +44,7 @@ Windows and Linux.
 | `AttentionSplit.swift`, `CPUAttention.swift` | the target's attention cut by heads: GPU, CPU (AMX + cores), optionally the Neural Engine |
 | `AttentionProbe.swift` | `probe-attention`: the target's attention on each unit alone |
 | `QwenVAE.swift`, `Safetensors.swift` | the VAE decoder as one MPSGraph, from Kokon's VAE file (Wan 2.2 names) |
+| `QwenVAEEncoder.swift` | the VAE encoder (edits' reference images), checked against diffusers |
 | `QwenTokenizer.swift` | Qwen's byte-level BPE tokenizer, read from the encoder GGUF's metadata |
 | `QwenTextEncoder.swift`, `Kernels/text.metal` | the text encoder: Qwen3-VL-8B's text decoder on the GPU, diffusers' prompt template |
 | `QwenPipeline.swift` | text to image: noise, Turbo's 8 flow-Euler steps (`planner::TURBO_SIGMAS`), VAE, PNG; models kept loaded for the server |
@@ -377,6 +378,14 @@ fp16 up blocks (norms and the mid block kept fp32) are wrong (2.7e-1) and 3–11
 them on the Neural Engine (optimization level 1, its default); at level 0 they stay on the GPU and are right but
 gain little: all five 2.43 s against 2.77 at 1024², for 2.7e-3 of diffusers instead of 1.1e-5 (up to ~19 levels off).
 The VAE stays fp32 (2026-10-25).
+
+**VAE encoder** (`QwenVAEEncoder.swift`; for the reference images of edits): the down blocks as single operations as
+the decoder's up blocks (its convolution graphs, one with stride 2 and the zero row and column after the input; the
+AvgDown shortcut as a kernel, with the zero frame the single image is padded by counted in its average), the mid block
+and the head as one graph at 1/16 of the image, then the posterior's mode normalized as the edit pipeline does.
+`check-vae-encoder` against `tools/reference_vae_encoder.py` (diffusers fp32, a smooth random RGBA image, 256 × 192,
+texture-fix VAE, M2 Pro, 2026-10-25): the latent within 6.5e-6. 1024²: 0.59 s an encode, peak 2.4 GB, 0.87 GB kept after
+(its weights); in its own autorelease pool (without one, a loop on a thread without a pool kept 1.5 GB per encode).
 
 Credits: the Neural Engine program technique and the GPU + AMX + Neural Engine split come from
 [Siliconed](https://github.com/gwenn-ha-dev/Siliconed) (Apache-2.0), written again here.

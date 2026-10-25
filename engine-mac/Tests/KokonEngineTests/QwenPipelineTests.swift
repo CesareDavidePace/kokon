@@ -13,10 +13,22 @@ final class QwenPipelineTests: XCTestCase {
         XCTAssertEqual(QwenPipeline.unpack(tokens, height: h, width: w), latent)
     }
 
-    func testNoiseIsStandardNormalAndSeeded() {
-        let a = QwenPipeline.gaussian(seed: 7, count: 200_001)
-        XCTAssertEqual(a, QwenPipeline.gaussian(seed: 7, count: 200_001))
-        XCTAssertNotEqual(Array(a.prefix(8)), Array(QwenPipeline.gaussian(seed: 8, count: 8)))
+    func testNoiseIsSdCppsBitForBit() {
+        // Values of sd.cpp's PhiloxRNG built as Kokon's macOS engine (tools/philox_reference.cpp): the first four
+        // and the last of a 1024² latent's draw, then the first of the next draw.
+        let cases: [(UInt64, [UInt32], UInt32)] = [
+            (42, [0x3e46ace2, 0x400a53f3, 0xbe302e09, 0x3f595c00, 0x3fe8a248], 0x3e0e7a13),
+            (711_449_798, [0x3f0c5c5e, 0x3e28992a, 0x3e0ac701, 0xbf825663, 0x3e9eeab0], 0xbfc42d4a),
+        ]
+        for (seed, want, next) in cases {
+            let a = Noise.philox(seed: seed, count: 262_144)
+            XCTAssertEqual([a[0], a[1], a[2], a[3], a[262_143]].map(\.bitPattern), want, "seed \(seed)")
+            XCTAssertEqual(Noise.philox(seed: seed, count: 1, offset: 1)[0].bitPattern, next, "seed \(seed), next draw")
+        }
+    }
+
+    func testNoiseIsStandardNormal() {
+        let a = Noise.philox(seed: 7, count: 200_001)
         let mean = a.reduce(0, +) / Float(a.count)
         let variance = a.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Float(a.count)
         XCTAssertEqual(mean, 0, accuracy: 0.01)

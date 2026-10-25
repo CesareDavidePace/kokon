@@ -91,3 +91,22 @@ extension Checks {
         print("wrote \(png)")
     }
 }
+
+extension Checks {
+    /// The seed's noise against sd.cpp's own generator (`tools/philox_reference.cpp`): every value, bit for bit.
+    public static func noise(dump: String) throws {
+        let data = try Data(contentsOf: URL(fileURLWithPath: dump))
+        let want = data.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
+        let seeds: [UInt64] = [0, 1, 42, 711_449_798, 4001, 0xFFFF_FFFF, 0x0123_4567_89AB_CDEF, .max]
+        var offset = 0, differ = 0, worst: Float = 0
+        for seed in seeds {
+            let got = Noise.philox(seed: seed, count: 262_144) + Noise.philox(seed: seed, count: 1000, offset: 1)
+            for (i, g) in got.enumerated() where g.bitPattern != want[offset + i].bitPattern {
+                differ += 1; worst = max(worst, abs(g - want[offset + i]))
+            }
+            offset += got.count
+        }
+        print("noise: \(offset - differ) of \(offset) values bit-identical to sd.cpp's" + (differ > 0 ? ", largest |Δ| \(worst)" : ""))
+        if differ > 0 || offset != want.count { throw GGUFFile.Failure.unsupported("noise differs from sd.cpp's") }
+    }
+}

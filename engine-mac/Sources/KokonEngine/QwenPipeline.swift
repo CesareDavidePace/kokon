@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 /// **Qwen-Image 2.1 Turbo, text to image**: `QwenImage21Pipeline.__call__` (diffusers 0.42) with the engine's parts.
 ///
 ///     prompt ─ QwenTextEncoder ─ conditioning [T, 4096]      (the encoder's file is unmapped before the DiT loads)
-///     noise [64, h, w] ─ packed [h·w, 64] ─ 8 × { v = DiT(x, σᵢ);  x += (σᵢ₊₁ − σᵢ) · v }   flow Euler
+///     sd.cpp's noise for the seed [64, h, w] ─ packed [h·w, 64] ─ 8 × { v = DiT(x, σᵢ);  x += (σᵢ₊₁ − σᵢ) · v }   flow Euler
 ///     x ─ unpacked [64, h, w] ─ QwenVAE ─ RGBA [4, 16h, 16w] in [−1, 1] ─ 8-bit RGBA
 ///
 /// The sigmas are Turbo's (`sample_sigmas` of the checkpoint, the ones Kokon already sends to sd.cpp); the
@@ -61,7 +61,7 @@ public final class QwenPipeline {
         log(String(format: "text encoder: %d tokens in %.2f s", rows, timings["encode"]!))
 
         // 2. Noise, packed: token y·w + x holds the 64 channels of cell (y, x).
-        let start = noise ?? QwenPipeline.gaussian(seed: seed, count: channels * h * w)
+        let start = noise ?? Noise.philox(seed: seed, count: channels * h * w)   // sd.cpp's, value for value
         guard start.count == channels * h * w else {
             throw QwenSequence.Failure.layout("noise of \(start.count) values for a \(channels)×\(h)×\(w) latent")
         }
@@ -111,29 +111,6 @@ public final class QwenPipeline {
         let c = tokens.count / (h * w)
         var out = [Float](repeating: 0, count: tokens.count)
         for p in 0..<(h * w) { for ch in 0..<c { out[ch * h * w + p] = tokens[p * c + ch] } }
-        return out
-    }
-
-    /// Standard normal values for `seed`: SplitMix64 bits, Box–Muller in double precision.
-    /// Not sd.cpp's generator nor torch's: the same seed does not give the same noise as they do.
-    public static func gaussian(seed: UInt64, count: Int) -> [Float] {
-        var state = seed
-        func next() -> UInt64 {
-            state &+= 0x9E37_79B9_7F4A_7C15
-            var z = state
-            z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
-            z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
-            return z ^ (z >> 31)
-        }
-        func uniform() -> Double { (Double(next() >> 11) + 0.5) / Double(1 << 53) }   // (0, 1)
-        var out = [Float](repeating: 0, count: count)
-        var i = 0
-        while i < count {
-            let r = (-2 * Foundation.log(uniform())).squareRoot(), angle = 2 * Double.pi * uniform()
-            out[i] = Float(r * cos(angle))
-            if i + 1 < count { out[i + 1] = Float(r * sin(angle)) }
-            i += 2
-        }
         return out
     }
 

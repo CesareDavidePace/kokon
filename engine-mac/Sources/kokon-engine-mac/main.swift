@@ -13,6 +13,7 @@ kokon-engine-mac: Kokon's Apple Silicon engine (in development)
   check-text <encoder.gguf> <reference dir>           the text encoder against tools/reference_text_encoder.py
   check-generate <encoder.gguf> <dit.gguf> <vae.safetensors> <reference dir>
                                            text to image against tools/reference_generate.py, from its noise
+  check-noise <philox.bin>                 the seed's noise against sd.cpp's generator (tools/philox_reference.cpp)
   generate <encoder.gguf> <dit.gguf> <vae.safetensors> "<prompt>" [--size WxH] [--seed N] [--out file.png]
                                            text to image, Turbo's 8 steps (default 1024x1024, seed 42, out.png)
   probe                                    this Mac's matrix throughput: GPU, AMX, Neural Engine, together
@@ -90,6 +91,9 @@ do {
         try QwenPipeline.writePNG(QwenPipeline.pixels(image, width: size.width, height: size.height),
                                   width: size.width, height: size.height, to: out)
         print("wrote \(out) (\(size.width)×\(size.height), seed \(seed))")
+    case "check-noise":
+        guard arguments.count == 2 else { fail(usage) }
+        try Checks.noise(dump: arguments[1])
     case "probe":
         try Probe.run()
     default:

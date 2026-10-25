@@ -76,8 +76,17 @@ processor) and saves its noise; `check-generate` starts the engine from that noi
 
 256², 2026-10-25: each step's latent within 6.7e-6 relative, the image within 1.0e-5, 97 of 262 144 8-bit values
 differ by 1. **First 1024² image (M2 Pro, `generate`): 100.7 s in all**, text encoder 1.7 s, 8 steps of 11.4–12.9 s,
-VAE 5.4 s with its graph build; peak memory 4.1 GB (Kokon's sd.cpp: ~4.5 min). The seed's noise is the engine's
-own (SplitMix64 + Box–Muller), not sd.cpp's: the same seed gives a different image than Kokon today.
+VAE 5.4 s with its graph build; peak memory 4.1 GB (Kokon's sd.cpp: ~4.5 min).
+
+**The seed's noise is sd.cpp's** (`Noise.swift`: its default Philox generator, the latent filled in the same
+order), so a seed starts from the same latent as in Kokon today. Bit for bit against sd.cpp's own code compiled as
+Kokon's macOS engine is (Apple clang, Release: `x · a + b` fused), 8 seeds × 263 144 values; without the fused
+multiply-add 0.7 % of the values differ in the last bit:
+
+```bash
+clang++ -std=c++17 -O3 -I <stable-diffusion.cpp>/src tools/philox_reference.cpp -o philox && ./philox > philox.bin
+.build/release/kokon-engine-mac check-noise philox.bin
+```
 
 ## First measurements (M2 Pro 19-core GPU, 16 GB, macOS 27, 2026-10-25, `probe`)
 

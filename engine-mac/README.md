@@ -23,9 +23,23 @@ swift test                                   # no model needed
 | `Kernels/dequant.metal`, `GPUDequant.swift` | the same on the GPU, to `[n, k]` or `[k, n]`, fp32 or fp16 |
 | `NeuralEngine.swift` | a matrix product on the Neural Engine: a small Core ML program written at run time, weight as an input |
 | `Probe.swift` | GPU (MPS), AMX (Accelerate) and Neural Engine (Core ML) on Qwen's product shapes, alone and together |
+| `QwenSequence.swift` | the joint text/image sequence, block-causal segments and RoPE positions |
+| `QwenDiT.swift`, `Kernels/dit.metal`, `Attention.swift`, `Arena.swift` | the DiT: modulation on the CPU, everything per token on the GPU |
 
 Tests check the CPU and GPU unpacking against gguf-py's values (`tools/make_quant_fixtures.py` writes the
-fixture).
+fixture), and the sequence layout against diffusers' rules worked out by hand.
+
+**The DiT against diffusers.** `tools/reference_dit.py` runs diffusers' own Qwen-Image 2.1 modules in fp32 on the
+CPU, on Kokon's GGUF weights unpacked by gguf-py, and saves every stage; `check-dit` compares the engine with it:
+
+```bash
+python3 -m venv ~/kokon-bench/venv-oracle && ~/kokon-bench/venv-oracle/bin/pip install torch diffusers transformers gguf numpy
+~/kokon-bench/venv-oracle/bin/python -I tools/reference_dit.py <dit.gguf> ~/kokon-bench/ref/dit-t2i-256   # ~30 s
+.build/release/kokon-engine-mac check-dit <dit.gguf> ~/kokon-bench/ref/dit-t2i-256
+.build/release/kokon-engine-mac time-dit <dit.gguf> 64 32        # 1024², 32 text rows, plus a profile
+```
+
+256² text-to-image, σ 0.7, 2026-10-25: every stage within 2e-5 relative of diffusers fp32 (velocity 6e-6).
 
 ## First measurements (M2 Pro 19-core GPU, 16 GB, macOS 27, 2026-10-25, `probe`)
 
@@ -44,6 +58,10 @@ m = 4 096 rows (a 1024² image), TFLOP/s:
   the balancing loop.
 - Neural Engine numbers leave out the fp32 ↔ fp16 conversions and scaling it needs; the plan is to have the
   GPU write its inputs straight into the Neural Engine's buffers.
+
+**One DiT evaluation at 1024² (32 text rows), GPU only: 16.2 s** (sd.cpp: 27.4 s): products 11.6 s, attention
+(MPSGraph) 4.1 s, unpacking 0.2 s, the rest 0.3 s. Every product goes to MPS on a multiple of 64 rows: one product
+of 32 rows (the text projection) slowed all later ones to 18.5 s.
 
 Credits: the Neural Engine program technique and the GPU + AMX + Neural Engine split come from
 [Siliconed](https://github.com/gwenn-ha-dev/Siliconed) (Apache-2.0), written again here.

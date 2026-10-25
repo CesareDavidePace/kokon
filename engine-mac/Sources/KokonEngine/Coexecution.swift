@@ -129,7 +129,9 @@ final class Coexecutor {
     }
 
     func split(m: Int, k: Int, n: Int) -> Split {
-        let ane = aneEnabled && m == rows ? aneRows : 0
+        // Its programs are compiled for `aneRows`: any product of at least `rows` rows (the first evaluation of a
+        // conditioning carries the prefix's rows too) gives it the last `aneRows`, the GPU the extra ones.
+        let ane = aneEnabled && m >= rows ? aneRows : 0
         let amx = amxEnabled ? amxRows["\(k)×\(n)"] ?? Int((Double(m) / 16 / 64).rounded()) * 64 : 0
         return Split(gpu: m - ane - amx, amx: amx, ane: ane)
     }

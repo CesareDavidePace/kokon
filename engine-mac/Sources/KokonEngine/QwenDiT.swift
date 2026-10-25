@@ -45,6 +45,14 @@ public final class QwenDiT {
     /// K and V packed for the flash kernel (`attention_pack_kv`): fp16, heads first, keys padded to 64.
     let kPacked, vPacked: Arena.Slice
     let paddedKeys: Int
+    /// **The prefix's K and V, kept per layer** (text, later reference images): the prefix sees only its own keys and
+    /// the modulation of t = 0, so its rows do not change from one evaluation of an image to the next. They are
+    /// saved during the first evaluation of a conditioning and every later one runs only the target's rows
+    /// (`KOKON_PREFIX_CACHE=0`: the whole sequence every time). nil when off or when it would exceed `prefixCacheLimit`.
+    let prefixCache: MTLBuffer?
+    static let prefixCacheLimit = 512 << 20
+    /// The conditioning whose prefix the cache holds.
+    private var cachedEncoder: [Float]?
     private var nextReserve = 0
     private var products: [String: MPSMatrixMultiplication] = [:]
     /// The AMX and the Neural Engine beside the GPU on the large products and the target's attention
@@ -83,8 +91,16 @@ public final class QwenDiT {
         paddedKeys = (n + 63) / 64 * 64
 
         let environment = ProcessInfo.processInfo.environment
-        if environment["KOKON_COEXEC"] != "0", sequence.count >= 1024 {
-            coexecutor = try Coexecutor(context: context, rows: QwenDiT.padded(sequence.count),
+        let cacheBytes = QwenDiT.layers * 2 * sequence.prefix * d * 4
+        if environment["KOKON_PREFIX_CACHE"] != "0", sequence.prefix > 0, cacheBytes <= QwenDiT.prefixCacheLimit {
+            prefixCache = try context.scratch(cacheBytes, label: "prefix K/V")
+        } else {
+            prefixCache = nil
+        }
+        // With the cache the split products are the target's rows; without it, the whole sequence's.
+        let splitRows = QwenDiT.padded(prefixCache != nil ? sequence.target : sequence.count)
+        if environment["KOKON_COEXEC"] != "0", splitRows >= 1024 {
+            coexecutor = try Coexecutor(context: context, rows: splitRows,
                                         ane: environment["KOKON_ANE"] != "0", amx: environment["KOKON_AMX"] != "0",
                                         aneAttention: environment["KOKON_ANE_ATTENTION"] == "1", halfWeights: halfWeights)
         } else {
@@ -193,28 +209,19 @@ public final class QwenDiT {
         }
         arena.pointer(latent).update(from: target, count: s * QwenDiT.channels)
 
+        // The cached path when there is a cache and no probe (the probes compare every row of every stage).
+        let cached = prefixCache != nil && probe == nil
         var commands = try begin()
-        let textCount = sequence.textRows.count
-        if textCount > 0 {
-            try rmsNorm(textIn, into: textOut, rows: textCount, weight: textNorm, commands: commands)
-            try linear("txt_in.in_layer.weight", a: textOut, c: textIn, m: textCount, commands: commands)
-            try elementwise("gelu_tanh", [(textIn, 0)], count: textCount * d, commands: commands)
-            try linear("txt_in.out_layer.weight", a: textIn, c: textOut, m: textCount, commands: commands)
-            // Scatter to the joint rows, by runs.
-            let blit = commands.makeBlitCommandEncoder()!
-            var i = 0
-            while i < textCount {
-                var j = i + 1
-                while j < textCount, sequence.textRows[j].joint == sequence.textRows[j - 1].joint + 1 { j += 1 }
-                blit.copy(from: arena.buffer, sourceOffset: textOut.offset + i * d * 4, to: arena.buffer,
-                          destinationOffset: x.offset + sequence.textRows[i].joint * d * 4, size: (j - i) * d * 4)
-                i = j
-            }
-            blit.endEncoding()
-        }
+        // A new conditioning: the whole sequence once, the prefix's K and V saved on the way. A pass of the prefix
+        // alone took 1.86 s at 1024² (products of 64 rows run far below the GPU's rate); riding along the first
+        // evaluation it costs its 64 rows.
+        let saving = cached && cachedEncoder != encoder
+        if !cached || saving { try embedText(commands: commands) }
         try linear("img_in.weight", a: latent, c: x, m: s, cRow: p, commands: commands)
         if let probe { try finish(commands); probe("joint_in", arena.pointer(x), n * d); commands = try begin() }
 
+        let rows = cached && !saving ? p..<n : 0..<n
+        let mode: Pass = !cached ? .full : saving ? .saving : .target
         for layer in 0..<QwenDiT.layers {
             var stage: Stage?
             if let probe, layer == 0 {
@@ -224,7 +231,7 @@ public final class QwenDiT {
                     return try self.begin()
                 }
             }
-            try encodeLayer(layer, commands: &commands, stage: stage)
+            try encodeLayer(layer, rows: rows, mode: mode, commands: &commands, stage: stage)
             if let probe {
                 try finish(commands); probe("layer\(layer)_out", arena.pointer(x), n * d); commands = try begin()
             } else {
@@ -232,9 +239,10 @@ public final class QwenDiT {
                 commands = try begin()
             }
         }
-        try layerNorm(x, into: normed, rows: n, prefixMod: 4 * d, targetMod: 5 * d + 4 * d, commands: commands)
+        try layerNorm(x, into: normed, rows: rows, prefixMod: 4 * d, targetMod: 5 * d + 4 * d, commands: commands)
         if let probe { try finish(commands); probe("norm_out", arena.pointer(normed), n * d); commands = try begin() }
         try linear("proj_out.weight", a: normed, aRow: p, c: output, m: s, commands: commands)
+        if saving { cachedEncoder = encoder }
         try finish(commands)
         if let coexecutor, !profiling, balancing { try coexecutor.rebalance() }
         let out = Array(UnsafeBufferPointer(start: arena.pointer(output), count: s * QwenDiT.channels))
@@ -247,39 +255,86 @@ public final class QwenDiT {
     /// A probe point inside a layer: finishes the command buffer, reads, returns the next one.
     typealias Stage = (String, Arena.Slice, MTLCommandBuffer) throws -> MTLCommandBuffer
 
-    func encodeLayer(_ layer: Int, commands: inout MTLCommandBuffer, stage: Stage? = nil) throws {
+    /// `.full`: every row. `.saving`: every row, the prefix's K and V saved into the cache. `.target`: the target's
+    /// rows, the prefix's K and V restored from the cache for the attention.
+    enum Pass { case full, saving, target }
+
+    /// The text rows through txt_in, scattered into their joint rows of x.
+    func embedText(commands: MTLCommandBuffer) throws {
+        let d = QwenDiT.dim, textCount = sequence.textRows.count
+        guard textCount > 0 else { return }
+        try rmsNorm(textIn, into: textOut, rows: textCount, weight: textNorm, commands: commands)
+        try linear("txt_in.in_layer.weight", a: textOut, c: textIn, m: textCount, commands: commands)
+        try elementwise("gelu_tanh", [(textIn, 0)], count: textCount * d, commands: commands)
+        try linear("txt_in.out_layer.weight", a: textIn, c: textOut, m: textCount, commands: commands)
+        // Scatter to the joint rows, by runs.
+        let blit = commands.makeBlitCommandEncoder()!
+        var i = 0
+        while i < textCount {
+            var j = i + 1
+            while j < textCount, sequence.textRows[j].joint == sequence.textRows[j - 1].joint + 1 { j += 1 }
+            blit.copy(from: arena.buffer, sourceOffset: textOut.offset + i * d * 4, to: arena.buffer,
+                      destinationOffset: x.offset + sequence.textRows[i].joint * d * 4, size: (j - i) * d * 4)
+            i = j
+        }
+        blit.endEncoding()
+    }
+
+    /// The prefix's K and V of `layer` between k, v and the cache (`save`: into the cache).
+    func copyPrefix(layer: Int, save: Bool, commands: MTLCommandBuffer) {
+        guard let prefixCache else { return }
+        let bytes = sequence.prefix * QwenDiT.dim * 4
+        let blit = commands.makeBlitCommandEncoder()!
+        for (i, slice) in [k, v].enumerated() {
+            let cached = (layer * 2 + i) * bytes
+            if save {
+                blit.copy(from: arena.buffer, sourceOffset: slice.offset, to: prefixCache, destinationOffset: cached, size: bytes)
+            } else {
+                blit.copy(from: prefixCache, sourceOffset: cached, to: arena.buffer, destinationOffset: slice.offset, size: bytes)
+            }
+        }
+        blit.endEncoding()
+    }
+
+    func encodeLayer(_ layer: Int, rows: Range<Int>, mode: Pass, commands: inout MTLCommandBuffer, stage: Stage? = nil) throws {
         func mark(_ name: String, _ slice: Arena.Slice) throws {
             if let stage { commands = try stage(name, slice, commands) }
         }
         let d = QwenDiT.dim, n = sequence.count, p = sequence.prefix
+        let (first, count) = (rows.lowerBound, rows.count)
         let block = "transformer_blocks.\(layer)."
         let band = 5 * d   // the target's modulation row follows the prefix's
-        try layerNorm(x, into: normed, rows: n, prefixMod: 0, targetMod: band, commands: commands)
-        try linear(block + "attn.to_q.weight", a: normed, c: q, m: n, next: block + "attn.to_k.weight", commands: commands)
-        try linear(block + "attn.to_k.weight", a: normed, c: k, m: n, next: block + "attn.to_v.weight", commands: commands)
+        try layerNorm(x, into: normed, rows: rows, prefixMod: 0, targetMod: band, commands: commands)
+        try linear(block + "attn.to_q.weight", a: normed, aRow: first, c: q, m: count, cRow: first, next: block + "attn.to_k.weight", commands: commands)
+        try linear(block + "attn.to_k.weight", a: normed, aRow: first, c: k, m: count, cRow: first, next: block + "attn.to_v.weight", commands: commands)
         try mark("norm1", normed)
-        try linear(block + "attn.to_v.weight", a: normed, c: v, m: n, next: block + "attn.to_out.0.weight", commands: commands)
-        try headNormRope(q, weightOffset: (layer * 2) * QwenDiT.headDim, rows: n, commands: commands)
-        try headNormRope(k, weightOffset: (layer * 2 + 1) * QwenDiT.headDim, rows: n, commands: commands)
+        try linear(block + "attn.to_v.weight", a: normed, aRow: first, c: v, m: count, cRow: first, next: block + "attn.to_out.0.weight", commands: commands)
+        try headNormRope(q, weightOffset: (layer * 2) * QwenDiT.headDim, rows: rows, commands: commands)
+        try headNormRope(k, weightOffset: (layer * 2 + 1) * QwenDiT.headDim, rows: rows, commands: commands)
         try mark("q", q); try mark("k", k); try mark("v", v)
-        for segment in sequence.segments {
-            try attend(queries: segment.start, count: segment.end - segment.start, keys: segment.end,
-                       causal: segment.isText, commands: commands)
+        if mode != .target {
+            for segment in sequence.segments {
+                try attend(queries: segment.start, count: segment.end - segment.start, keys: segment.end,
+                           causal: segment.isText, commands: commands)
+            }
         }
+        if mode == .saving { copyPrefix(layer: layer, save: true, commands: commands) }
+        if mode == .target { copyPrefix(layer: layer, save: false, commands: commands) }
         try attend(queries: p, count: n - p, keys: n, causal: false, commands: commands)
-        try linear(block + "attn.to_out.0.weight", a: attended, c: o, m: n, next: block + "img_mlp.gate_layer.weight", commands: commands)
+        try linear(block + "attn.to_out.0.weight", a: attended, aRow: first, c: o, m: count, cRow: first,
+                   next: block + "img_mlp.gate_layer.weight", commands: commands)
         try mark("attn_out", o)
-        try residual(gate: d, rows: n, commands: commands)
+        try residual(gate: d, rows: rows, commands: commands)
         try mark("res1", x)
-        try layerNorm(x, into: normed, rows: n, prefixMod: 2 * d, targetMod: band + 2 * d, commands: commands)
+        try layerNorm(x, into: normed, rows: rows, prefixMod: 2 * d, targetMod: band + 2 * d, commands: commands)
         try mark("norm2", normed)
-        try linear(block + "img_mlp.gate_layer.weight", a: normed, c: h1, m: n, next: block + "img_mlp.proj.weight", commands: commands)
-        try linear(block + "img_mlp.proj.weight", a: normed, c: h2, m: n, next: block + "img_mlp.out.weight", commands: commands)
-        try elementwise("swiglu", [(h1, 0), (h2, 0)], count: n * QwenDiT.hidden, commands: commands)
-        try linear(block + "img_mlp.out.weight", a: h1, c: o, m: n,
+        try linear(block + "img_mlp.gate_layer.weight", a: normed, aRow: first, c: h1, m: count, cRow: first, next: block + "img_mlp.proj.weight", commands: commands)
+        try linear(block + "img_mlp.proj.weight", a: normed, aRow: first, c: h2, m: count, cRow: first, next: block + "img_mlp.out.weight", commands: commands)
+        try elementwise("swiglu", [(h1, first * QwenDiT.hidden), (h2, first * QwenDiT.hidden)], count: count * QwenDiT.hidden, commands: commands)
+        try linear(block + "img_mlp.out.weight", a: h1, aRow: first, c: o, m: count, cRow: first,
                    next: layer + 1 < QwenDiT.layers ? "transformer_blocks.\(layer + 1).attn.to_q.weight" : nil, commands: commands)
         try mark("mlp", o)
-        try residual(gate: 3 * d, rows: n, commands: commands)
+        try residual(gate: 3 * d, rows: rows, commands: commands)
     }
 
     // MARK: - encoders
@@ -417,16 +472,17 @@ public final class QwenDiT {
     struct ResidualParams { var columns: UInt32; var targetStart: UInt32; var count: UInt32 }
 
     /// `out = LN(x) · mod[band]`, `prefixMod` / `targetMod` floats into the modulation slice.
-    func layerNorm(_ input: Arena.Slice, into out: Arena.Slice, rows: Int, prefixMod: Int, targetMod: Int,
+    func layerNorm(_ input: Arena.Slice, into out: Arena.Slice, rows: Range<Int>, prefixMod: Int, targetMod: Int,
                    commands: MTLCommandBuffer) throws {
+        let at = rows.lowerBound * QwenDiT.dim * 4
         try compute("layernorm_modulate", commands: commands) { e in
-            e.setBuffer(arena.buffer, offset: input.offset, index: 0)
-            e.setBuffer(arena.buffer, offset: out.offset, index: 1)
+            e.setBuffer(arena.buffer, offset: input.offset + at, index: 0)
+            e.setBuffer(arena.buffer, offset: out.offset + at, index: 1)
             e.setBuffer(arena.buffer, offset: modulation.offset + prefixMod * 4, index: 2)
             e.setBuffer(arena.buffer, offset: modulation.offset + targetMod * 4, index: 3)
-            var params = RowParams(columns: UInt32(QwenDiT.dim), targetStart: UInt32(sequence.prefix), eps: QwenDiT.eps)
+            var params = RowParams(columns: UInt32(QwenDiT.dim), targetStart: UInt32(max(0, sequence.prefix - rows.lowerBound)), eps: QwenDiT.eps)
             e.setBytes(&params, length: MemoryLayout<RowParams>.stride, index: 4)
-            e.dispatchThreadgroups(MTLSize(width: rows, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+            e.dispatchThreadgroups(MTLSize(width: rows.count, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
         }
     }
 
@@ -441,30 +497,31 @@ public final class QwenDiT {
         }
     }
 
-    func headNormRope(_ tensor: Arena.Slice, weightOffset: Int, rows: Int, commands: MTLCommandBuffer) throws {
+    func headNormRope(_ tensor: Arena.Slice, weightOffset: Int, rows: Range<Int>, commands: MTLCommandBuffer) throws {
         try compute("head_rmsnorm_rope", commands: commands) { e in
-            e.setBuffer(arena.buffer, offset: tensor.offset, index: 0)
+            e.setBuffer(arena.buffer, offset: tensor.offset + rows.lowerBound * QwenDiT.dim * 4, index: 0)
             e.setBuffer(arena.buffer, offset: qkNorms.offset + weightOffset * 4, index: 1)
-            e.setBuffer(arena.buffer, offset: rope.offset, index: 2)
-            var params = HeadParams(heads: UInt32(QwenDiT.heads), rows: UInt32(rows), eps: QwenDiT.eps)
+            e.setBuffer(arena.buffer, offset: rope.offset + rows.lowerBound * 128 * 4, index: 2)
+            var params = HeadParams(heads: UInt32(QwenDiT.heads), rows: UInt32(rows.count), eps: QwenDiT.eps)
             e.setBytes(&params, length: MemoryLayout<HeadParams>.stride, index: 3)
-            let units = rows * QwenDiT.heads   // one SIMD group each, 8 per threadgroup
+            let units = rows.count * QwenDiT.heads   // one SIMD group each, 8 per threadgroup
             e.dispatchThreadgroups(MTLSize(width: (units + 7) / 8, height: 1, depth: 1),
                                    threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
         }
     }
 
     /// `x += tanh(gate) · o`, the gate `gate` floats into each band's modulation row.
-    func residual(gate: Int, rows: Int, commands: MTLCommandBuffer) throws {
-        let d = QwenDiT.dim
+    func residual(gate: Int, rows: Range<Int>, commands: MTLCommandBuffer) throws {
+        let d = QwenDiT.dim, at = rows.lowerBound * d * 4
         try compute("gated_residual", commands: commands) { e in
-            e.setBuffer(arena.buffer, offset: x.offset, index: 0)
-            e.setBuffer(arena.buffer, offset: o.offset, index: 1)
+            e.setBuffer(arena.buffer, offset: x.offset + at, index: 0)
+            e.setBuffer(arena.buffer, offset: o.offset + at, index: 1)
             e.setBuffer(arena.buffer, offset: modulation.offset + gate * 4, index: 2)
             e.setBuffer(arena.buffer, offset: modulation.offset + (5 * d + gate) * 4, index: 3)
-            var params = ResidualParams(columns: UInt32(d), targetStart: UInt32(sequence.prefix), count: UInt32(rows * d))
+            var params = ResidualParams(columns: UInt32(d), targetStart: UInt32(max(0, sequence.prefix - rows.lowerBound)),
+                                        count: UInt32(rows.count * d))
             e.setBytes(&params, length: MemoryLayout<ResidualParams>.stride, index: 4)
-            e.dispatchThreads(MTLSize(width: rows * d, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+            e.dispatchThreads(MTLSize(width: rows.count * d, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
         }
     }
 

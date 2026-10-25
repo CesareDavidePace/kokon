@@ -118,12 +118,13 @@ extension Checks {
         }
         let encoder = random(text * QwenDiT.dim, 8), latent = random(sequence.target * QwenDiT.channels, 2)
         print("sequence: \(sequence.count) rows (\(sequence.prefix) text, \(sequence.target) target)"
-              + (dit.coexecutor.map { ", products split \($0.split(m: QwenDiT.padded(sequence.count), k: 4096, n: 4096)), attention \($0.heads)" } ?? ", GPU only"))
+              + (dit.coexecutor.map { ", products split \($0.split(m: $0.rows, k: 4096, n: 4096)), attention \($0.heads)" } ?? ", GPU only"))
         for run in 0..<runs {
             let started = DispatchTime.now().uptimeNanoseconds
             let out = try dit.forward(encoder: encoder, target: latent, sigma: 0.5)
             let seconds = Double(DispatchTime.now().uptimeNanoseconds - started) * 1e-9
-            print(String(format: "evaluation %d: %.2f s%@", run + 1, seconds, out.allSatisfy(\.isFinite) ? "" : "  NON-FINITE OUTPUT"))
+            print(String(format: "evaluation %d: %.2f s%@%@", run + 1, seconds, dit.timings["prefix"].map { String(format: " (prefix pass %.2f s)", $0) } ?? "",
+                         out.allSatisfy(\.isFinite) ? "" : "  NON-FINITE OUTPUT"))
             if let c = dit.coexecutor {
                 print(String(format: "  AMX/CPU busy %.2f s, Neural Engine busy %.2f s%@", c.amxSeconds, c.aneSeconds,
                              c.failures.isEmpty ? "" : "; FAILURES: \(c.failures.prefix(3))"))

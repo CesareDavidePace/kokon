@@ -193,6 +193,15 @@ rows, 64-key tiles, K and V loaded together. MFA's shapes rest on its async copi
 cannot use. On Apple9+ GPUs (M3 and later) the engine picks `flash_attention_direct`, each SIMD group reading the
 packed K and V straight from memory as MFA's tables prefer there: 142 ms on the M2 Pro, not yet measured on an M3+.
 
+**Prefix K/V cache** (`KOKON_PREFIX_CACHE=0` turns it off): the prefix (text; later the reference images) sees only
+its own keys and the modulation of t = 0, so its K and V are saved per layer during the first evaluation of a
+conditioning (33 MB for 32 text rows) and every later evaluation runs only the target's rows, its attention reading
+the saved prefix. `check-steps` and `check-generate` give the same numbers with and without it. 1024², alternated
+runs (M2 Pro, 2026-10-25): evaluations after the first 7.35 s against 7.53 (−2.4 %: text-to-image has 32 prefix
+rows of 4 128, and the products drop from 4 160 padded rows to 4 096); for an edit, whose reference image is a prefix
+as long as the target, about half of each step. A pass of the prefix alone, before the first evaluation, took
+1.86 s (products of 64 rows run far below the GPU's rate), so the first evaluation carries the prefix instead.
+
 MFA's GEMM (libnnc, 48 × 48 blocks, 2 × 2 SIMD groups) was tried against MPS: its async copies are an AIR intrinsic
 that macOS 27's run-time compiler refuses (libnnc ships prebuilt metallibs for it), and without them it ran at
 3.6–4.0 TFLOP/s against MPS's 5.1–5.6 at 1472 × 4096 × 4096, so MPS stays.

@@ -183,6 +183,16 @@ against 5.1e-4 before (fp16 weights alone 5.7e-4; the Neural Engine's rows were 
 The 1024² image against the previous precision: 0.05 levels on average, at most 6. **1024² image: 69.8 s** (text
 encoder 2.0 s, step 1 8.4 s, steps 2–8 7.4–8.0 s, VAE 6.0 s).
 
+**Attention retune after MFA's tables** (`probe-attention`, 1024², 32 heads, M2 Pro, 2026-10-25): K and V are
+packed once per layer to fp16, heads first (`attention_pack_kv`, 1.1 ms), and the kernel reads them unconverted:
+91.0 ms with the packing against 95.2, the same accuracy; per layer in the DiT the attention's wall 66.5–67.3 →
+64.7–65.6 ms, an evaluation ~1 % (A/B in alternating runs; `KOKON_ATTENTION=unpacked` for the comparison). MFA's
+M1/M2 shape (4 SIMD groups × 8 rows, 128-key tiles, the head in chunks of 32) on the same packed operands: 105 ms;
+8 × 8 rows with 128-key tiles in chunks of 32: 94; 64-key tiles in chunks of 64: 104; so the kernel keeps 8 × 8
+rows, 64-key tiles, K and V loaded together. MFA's shapes rest on its async copies, which run-time compiled Metal
+cannot use. On Apple9+ GPUs (M3 and later) the engine picks `flash_attention_direct`, each SIMD group reading the
+packed K and V straight from memory as MFA's tables prefer there: 142 ms on the M2 Pro, not yet measured on an M3+.
+
 MFA's GEMM (libnnc, 48 × 48 blocks, 2 × 2 SIMD groups) was tried against MPS: its async copies are an AIR intrinsic
 that macOS 27's run-time compiler refuses (libnnc ships prebuilt metallibs for it), and without them it ran at
 3.6–4.0 TFLOP/s against MPS's 5.1–5.6 at 1472 × 4096 × 4096, so MPS stays.

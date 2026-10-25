@@ -51,23 +51,49 @@ extension Probe {
 
         // The GPU's flash kernel, all heads.
         struct FlashParams { var queries, keys, causal, stride: UInt32; var scale: Float; var headBase: UInt32 }
-        for kernel in ["flash_attention", "flash_attention_half"] {
+        // Packed fp16 K and V (`attention_pack_kv`) for the kernels that read them, keys padded to 128.
+        struct PackParams { var keys, paddedKeys, stride, heads: UInt32 }
+        let paddedKeys = (keys + 127) / 128 * 128
+        let kp = try context.scratch(heads * paddedKeys * d * 2, label: "k fp16"), vp = try context.scratch(heads * paddedKeys * d * 2, label: "v fp16")
+        func pack(_ commands: MTLCommandBuffer) throws {
+            let e = commands.makeComputeCommandEncoder()!
+            e.setComputePipelineState(try context.pipeline("attention_pack_kv"))
+            e.setBuffer(kb, offset: 0, index: 0); e.setBuffer(vb, offset: 0, index: 1)
+            e.setBuffer(kp, offset: 0, index: 2); e.setBuffer(vp, offset: 0, index: 3)
+            var pp = PackParams(keys: UInt32(keys), paddedKeys: UInt32(paddedKeys), stride: UInt32(stride), heads: UInt32(heads))
+            e.setBytes(&pp, length: MemoryLayout<PackParams>.stride, index: 4)
+            e.dispatchThreads(MTLSize(width: d / 4, height: paddedKeys, depth: heads), threadsPerThreadgroup: MTLSize(width: 32, height: 8, depth: 1))
+            e.endEncoding()
+        }
+        let packTime = try best(3) {
+            let commands = context.queue.makeCommandBuffer()!
+            try pack(commands)
+            return try MetalContext.finish(commands, "pack")
+        }
+        print(String(format: "GPU attention_pack_kv, 32 heads: %.2f ms", packTime * 1e3))
+        let kernels = [("flash_attention", false, 64, 256), ("flash_attention_half", false, 64, 256),
+                       ("flash_attention_packed", true, 64, 256), ("flash_attention_direct", true, 64, 256)]
+        for (kernel, packed, rowsPerGroup, threads) in kernels {
         let gpu = try best(3) {
             let commands = context.queue.makeCommandBuffer()!
+            if packed { try pack(commands) }
             let e = commands.makeComputeCommandEncoder()!
             e.setComputePipelineState(try context.pipeline(kernel))
-            e.setBuffer(qb, offset: offset * stride * 4, index: 0); e.setBuffer(kb, offset: 0, index: 1)
-            e.setBuffer(vb, offset: 0, index: 2); e.setBuffer(ob, offset: offset * stride * 4, index: 3)
+            e.setBuffer(qb, offset: offset * stride * 4, index: 0)
+            e.setBuffer(packed ? kp : kb, offset: 0, index: 1); e.setBuffer(packed ? vp : vb, offset: 0, index: 2)
+            e.setBuffer(ob, offset: offset * stride * 4, index: 3)
             var p = FlashParams(queries: UInt32(queries), keys: UInt32(keys), causal: 0, stride: UInt32(stride),
                                 scale: scale * Float(M_LOG2E), headBase: 0)
             e.setBytes(&p, length: MemoryLayout<FlashParams>.stride, index: 4)
-            e.dispatchThreadgroups(MTLSize(width: (queries + 63) / 64, height: heads, depth: 1),
-                                   threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+            var padded = UInt32(paddedKeys)
+            if packed { e.setBytes(&padded, length: 4, index: 5) }
+            e.dispatchThreadgroups(MTLSize(width: (queries + rowsPerGroup - 1) / rowsPerGroup, height: heads, depth: 1),
+                                   threadsPerThreadgroup: MTLSize(width: threads, height: 1, depth: 1))
             e.endEncoding()
             return try MetalContext.finish(commands, "flash")
         }
         let gpuError = error { i, c in f(ob)[(offset + i) * stride + c] }
-        print(String(format: "GPU %@, 32 heads: %.1f ms, %.2f ms/head, %.2f TFLOP/s; head 0 rel %.1e", kernel,
+        print(String(format: "GPU %@%@, 32 heads: %.1f ms, %.2f ms/head, %.2f TFLOP/s; head 0 rel %.1e", kernel, packed ? " (with packing)" : "",
                      gpu * 1e3, gpu * 1e3 / Double(heads), 4 * Double(queries) * Double(keys) * Double(d) * Double(heads) / gpu / 1e12, gpuError))
         }
         if ProcessInfo.processInfo.environment["KOKON_PROBE_GPU_ONLY"] == "1" { return }

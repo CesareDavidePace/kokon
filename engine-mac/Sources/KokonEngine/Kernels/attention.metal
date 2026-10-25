@@ -259,3 +259,228 @@ kernel void flash_attention_half(device const float *q [[buffer(0)]], device con
         }
     }
 }
+
+// K and V of heads [0, heads) packed for the kernels below: fp16, heads first, `[head][key][128]`, keys padded with
+// zeros to `paddedKeys`. One pass per layer; each threadgroup then reads half the bytes, contiguous, unconverted.
+struct PackParams {
+    uint keys;
+    uint paddedKeys;
+    uint stride;
+    uint heads;
+};
+
+kernel void attention_pack_kv(device const float *k [[buffer(0)]], device const float *v [[buffer(1)]],
+                              device half *kp [[buffer(2)]], device half *vp [[buffer(3)]],
+                              constant PackParams &p [[buffer(4)]], uint3 g [[thread_position_in_grid]]) {
+    uint c4 = g.x, r = g.y, h = g.z;   // c4: 4 columns
+    if (c4 >= D / 4 || r >= p.paddedKeys || h >= p.heads) return;
+    ulong at = ((ulong)h * p.paddedKeys + r) * D / 4 + c4;
+    if (r < p.keys) {
+        ulong from = (ulong)r * p.stride / 4 + h * D / 4 + c4;
+        ((device half4 *)kp)[at] = half4(((device const float4 *)k)[from]);
+        ((device half4 *)vp)[at] = half4(((device const float4 *)v)[from]);
+    } else {
+        ((device half4 *)kp)[at] = half4(0.0h);
+        ((device half4 *)vp)[at] = half4(0.0h);
+    }
+}
+
+// `flash_attention_half` on the packed K and V: the same tiles and arithmetic, loads straight from fp16.
+kernel void flash_attention_packed(device const float *q [[buffer(0)]], device const half *kp [[buffer(1)]],
+                                   device const half *vp [[buffer(2)]], device float *out [[buffer(3)]],
+                                   constant FlashParams &p [[buffer(4)]], constant uint &paddedKeys [[buffer(5)]],
+                                   uint2 tg [[threadgroup_position_in_grid]],
+                                   uint tid [[thread_index_in_threadgroup]],
+                                   uint sg [[simdgroup_index_in_threadgroup]],
+                                   uint lane [[thread_index_in_simdgroup]]) {
+    threadgroup half ktile[BK * D];
+    threadgroup half vtile[BK * D];
+    threadgroup half *qstage = ktile + sg * 8 * D;
+
+    const uint head = p.headBase + tg.y;
+    const uint q0 = tg.x * BQ + sg * 8;
+    const uint stride = p.stride;
+    device const half4 *kh = (device const half4 *)(kp + (ulong)head * paddedKeys * D);
+    device const half4 *vh = (device const half4 *)(vp + (ulong)head * paddedKeys * D);
+
+    for (uint i = lane; i < 8 * D; i += 32) qstage[i] = half(q[(ulong)(q0 + i / D) * stride + head * D + i % D]);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    simdgroup_half8x8 Q[16];
+    simdgroup_float8x8 O[16];
+    for (uint d = 0; d < 16; d++) {
+        simdgroup_load(Q[d], qstage + 8 * d, D);
+        O[d] = make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    const uint row = (lane / 16) * 4 + (lane / 2) % 4;
+    const uint col = ((lane / 8) % 2) * 4 + (lane % 2) * 2;
+    const uint qi = q0 + row;
+    const uint offset = p.keys - p.queries;
+    const int limit = p.causal ? int(offset + qi) : int(p.keys) - 1;
+    float m = -INFINITY, l = 0.0f;
+
+    uint kEnd = p.keys;
+    if (p.causal) kEnd = min(p.keys, offset + min(tg.x * BQ + BQ - 1, p.queries - 1) + 1);
+
+    for (uint j0 = 0; j0 < kEnd; j0 += BK) {
+        for (uint i = tid; i < BK * D / 4; i += 256) {
+            ((threadgroup half4 *)ktile)[i] = kh[(ulong)j0 * D / 4 + i];
+            ((threadgroup half4 *)vtile)[i] = vh[(ulong)j0 * D / 4 + i];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        simdgroup_float8x8 S[8];
+        for (uint c = 0; c < 8; c++) S[c] = make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+        for (uint d = 0; d < 16; d++) {
+            for (uint c = 0; c < 8; c++) {
+                simdgroup_half8x8 Kt;
+                simdgroup_load(Kt, ktile + 8 * c * D + 8 * d, D, ulong2(0, 0), true);
+                simdgroup_multiply_accumulate(S[c], Q[d], Kt, S[c]);
+            }
+        }
+
+        float2 s[8];
+        float blockMax = -INFINITY;
+        for (uint c = 0; c < 8; c++) {
+            s[c] = elements(S[c]) * p.scale;
+            int j = int(j0 + 8 * c + col);
+            if (j > limit) s[c].x = -INFINITY;
+            if (j + 1 > limit) s[c].y = -INFINITY;
+            blockMax = max(blockMax, max(s[c].x, s[c].y));
+        }
+        blockMax = max(blockMax, simd_shuffle_xor(blockMax, 1));
+        blockMax = max(blockMax, simd_shuffle_xor(blockMax, 8));
+        float mNew = max(m, blockMax);
+        float alpha = (mNew == -INFINITY) ? 1.0f : exp2(m - mNew);
+        float sum = 0.0f;
+        simdgroup_half8x8 P[8];
+        for (uint c = 0; c < 8; c++) {
+            float2 e = (mNew == -INFINITY) ? float2(0.0f) : exp2(s[c] - mNew);
+            elementsHalf(P[c]) = half2(e);
+            sum += e.x + e.y;
+        }
+        sum += simd_shuffle_xor(sum, 1);
+        sum += simd_shuffle_xor(sum, 8);
+        l = l * alpha + sum;
+        m = mNew;
+        if (!simd_all(alpha == 1.0f)) {
+            for (uint d = 0; d < 16; d++) elements(O[d]) *= alpha;
+        }
+        for (uint d = 0; d < 16; d++) {
+            for (uint c = 0; c < 8; c++) {
+                simdgroup_half8x8 V;
+                simdgroup_load(V, vtile + 8 * c * D + 8 * d, D);
+                simdgroup_multiply_accumulate(O[d], P[c], V, O[d]);
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    if (qi < p.queries) {
+        const float inv = 1.0f / l;
+        device float *o = out + (ulong)qi * stride + head * D + col;
+        for (uint d = 0; d < 16; d++) {
+            float2 e = elements(O[d]) * inv;
+            o[8 * d] = e.x;
+            o[8 * d + 1] = e.y;
+        }
+    }
+}
+
+// The same on GPUs that prefer device loads to threadgroup tiles (Apple9+, M3 and later: MFA's and libnnc's tables):
+// each SIMD group reads the packed K and V straight from memory, no threadgroup tiles, no barriers in the loop.
+kernel void flash_attention_direct(device const float *q [[buffer(0)]], device const half *kp [[buffer(1)]],
+                                   device const half *vp [[buffer(2)]], device float *out [[buffer(3)]],
+                                   constant FlashParams &p [[buffer(4)]], constant uint &paddedKeys [[buffer(5)]],
+                                   uint2 tg [[threadgroup_position_in_grid]],
+                                   uint tid [[thread_index_in_threadgroup]],
+                                   uint sg [[simdgroup_index_in_threadgroup]],
+                                   uint lane [[thread_index_in_simdgroup]]) {
+    threadgroup half qtile[BQ * D];
+    threadgroup half *qstage = qtile + sg * 8 * D;
+
+    const uint head = p.headBase + tg.y;
+    const uint q0 = tg.x * BQ + sg * 8;
+    const uint stride = p.stride;
+    device const half *kh = kp + (ulong)head * paddedKeys * D;
+    device const half *vh = vp + (ulong)head * paddedKeys * D;
+
+    for (uint i = lane; i < 8 * D; i += 32) qstage[i] = half(q[(ulong)(q0 + i / D) * stride + head * D + i % D]);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    simdgroup_half8x8 Q[16];
+    simdgroup_float8x8 O[16];
+    for (uint d = 0; d < 16; d++) {
+        simdgroup_load(Q[d], qstage + 8 * d, D);
+        O[d] = make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    const uint row = (lane / 16) * 4 + (lane / 2) % 4;
+    const uint col = ((lane / 8) % 2) * 4 + (lane % 2) * 2;
+    const uint qi = q0 + row;
+    const uint offset = p.keys - p.queries;
+    const int limit = p.causal ? int(offset + qi) : int(p.keys) - 1;
+    float m = -INFINITY, l = 0.0f;
+
+    uint kEnd = p.keys;
+    if (p.causal) kEnd = min(p.keys, offset + min(tg.x * BQ + BQ - 1, p.queries - 1) + 1);
+
+    for (uint j0 = 0; j0 < kEnd; j0 += BK) {
+
+        simdgroup_float8x8 S[8];
+        for (uint c = 0; c < 8; c++) S[c] = make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+        for (uint d = 0; d < 16; d++) {
+            for (uint c = 0; c < 8; c++) {
+                simdgroup_half8x8 Kt;
+                simdgroup_load(Kt, kh + (ulong)(j0 + 8 * c) * D + 8 * d, D, ulong2(0, 0), true);
+                simdgroup_multiply_accumulate(S[c], Q[d], Kt, S[c]);
+            }
+        }
+
+        float2 s[8];
+        float blockMax = -INFINITY;
+        for (uint c = 0; c < 8; c++) {
+            s[c] = elements(S[c]) * p.scale;
+            int j = int(j0 + 8 * c + col);
+            if (j > limit) s[c].x = -INFINITY;
+            if (j + 1 > limit) s[c].y = -INFINITY;
+            blockMax = max(blockMax, max(s[c].x, s[c].y));
+        }
+        blockMax = max(blockMax, simd_shuffle_xor(blockMax, 1));
+        blockMax = max(blockMax, simd_shuffle_xor(blockMax, 8));
+        float mNew = max(m, blockMax);
+        float alpha = (mNew == -INFINITY) ? 1.0f : exp2(m - mNew);
+        float sum = 0.0f;
+        simdgroup_half8x8 P[8];
+        for (uint c = 0; c < 8; c++) {
+            float2 e = (mNew == -INFINITY) ? float2(0.0f) : exp2(s[c] - mNew);
+            elementsHalf(P[c]) = half2(e);
+            sum += e.x + e.y;
+        }
+        sum += simd_shuffle_xor(sum, 1);
+        sum += simd_shuffle_xor(sum, 8);
+        l = l * alpha + sum;
+        m = mNew;
+        if (!simd_all(alpha == 1.0f)) {
+            for (uint d = 0; d < 16; d++) elements(O[d]) *= alpha;
+        }
+        for (uint d = 0; d < 16; d++) {
+            for (uint c = 0; c < 8; c++) {
+                simdgroup_half8x8 V;
+                simdgroup_load(V, vh + (ulong)(j0 + 8 * c) * D + 8 * d, D);
+                simdgroup_multiply_accumulate(O[d], P[c], V, O[d]);
+            }
+        }
+    }
+
+    if (qi < p.queries) {
+        const float inv = 1.0f / l;
+        device float *o = out + (ulong)qi * stride + head * D + col;
+        for (uint d = 0; d < 16; d++) {
+            float2 e = elements(O[d]) * inv;
+            o[8 * d] = e.x;
+            o[8 * d + 1] = e.y;
+        }
+    }
+}

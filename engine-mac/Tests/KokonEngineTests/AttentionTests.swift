@@ -7,7 +7,11 @@ import XCTest
 final class AttentionTests: XCTestCase {
     struct FlashParams { var queries, keys, causal, stride: UInt32; var scale: Float; var headBase: UInt32 }
 
-    func run(queries: Int, keys: Int, causal: Bool, heads: Int = 2, magnitude: Float = 4) throws -> (worst: Double, untouched: Bool) {
+    struct PackParams { var keys, paddedKeys, stride, heads: UInt32 }
+
+    /// `kernel` on K and V packed by `attention_pack_kv` when `packed`.
+    func run(queries: Int, keys: Int, causal: Bool, heads: Int = 2, magnitude: Float = 4,
+             kernel: String = "flash_attention", packed: Bool = false) throws -> (worst: Double, untouched: Bool) {
         let context = try MetalContext()
         let stride = heads * 128, padding = 64
         let rows = max(queries, keys) + padding
@@ -27,9 +31,22 @@ final class AttentionTests: XCTestCase {
         let (qb, kb, vb) = (try buffer(q), try buffer(k), try buffer(v))
         let ob = try buffer([Float](repeating: 7, count: rows * stride))
         let commands = context.queue.makeCommandBuffer()!
+        let paddedKeys = (keys + 63) / 64 * 64
+        let kp = try context.scratch(heads * paddedKeys * 128 * 2, label: "kp"), vp = try context.scratch(heads * paddedKeys * 128 * 2, label: "vp")
+        if packed {
+            let e = commands.makeComputeCommandEncoder()!
+            e.setComputePipelineState(try context.pipeline("attention_pack_kv"))
+            for (i, b) in [kb, vb, kp, vp].enumerated() { e.setBuffer(b, offset: 0, index: i) }
+            var pp = PackParams(keys: UInt32(keys), paddedKeys: UInt32(paddedKeys), stride: UInt32(stride), heads: UInt32(heads))
+            e.setBytes(&pp, length: MemoryLayout<PackParams>.stride, index: 4)
+            e.dispatchThreads(MTLSize(width: 32, height: paddedKeys, depth: heads), threadsPerThreadgroup: MTLSize(width: 32, height: 8, depth: 1))
+            e.endEncoding()
+        }
         let e = commands.makeComputeCommandEncoder()!
-        e.setComputePipelineState(try context.pipeline("flash_attention"))
-        for (i, b) in [qb, kb, vb, ob].enumerated() { e.setBuffer(b, offset: 0, index: i) }
+        e.setComputePipelineState(try context.pipeline(kernel))
+        for (i, b) in [qb, packed ? kp : kb, packed ? vp : vb, ob].enumerated() { e.setBuffer(b, offset: 0, index: i) }
+        var padded = UInt32(paddedKeys)
+        if packed { e.setBytes(&padded, length: 4, index: 5) }
         var p = FlashParams(queries: UInt32(queries), keys: UInt32(keys), causal: causal ? 1 : 0, stride: UInt32(stride),
                             scale: 1 / Float(128).squareRoot() * Float(M_LOG2E), headBase: 0)
         e.setBytes(&p, length: MemoryLayout<FlashParams>.stride, index: 4)
@@ -86,6 +103,17 @@ final class AttentionTests: XCTestCase {
             let r = try run(queries: q, keys: k, causal: true)
             XCTAssertLessThan(r.worst, 1e-5, "\(q)×\(k) causal")
             XCTAssertTrue(r.untouched, "\(q)×\(k) causal wrote past its queries")
+        }
+    }
+
+    /// The fp16 kernels on packed K and V (the target's attention): within fp16's rounding of exact.
+    func testPacked() throws {
+        for kernel in ["flash_attention_packed", "flash_attention_direct"] {
+            for (q, k) in [(32, 32), (40, 70), (100, 130), (7, 300)] {
+                let r = try run(queries: q, keys: k, causal: false, kernel: kernel, packed: true)
+                XCTAssertLessThan(r.worst, 5e-3, "\(kernel) \(q)×\(k)")
+                XCTAssertTrue(r.untouched, "\(kernel) \(q)×\(k) wrote past its queries")
+            }
         }
     }
 }

@@ -42,6 +42,9 @@ public final class QwenDiT {
     let x, normed, q, k, v, attended, o, h1, h2: Arena.Slice
     let reserves: [Arena.Slice]
     let rope, modulation, qkNorms, textNorm, textIn, textOut, latent, output: Arena.Slice
+    /// K and V packed for the flash kernel (`attention_pack_kv`): fp16, heads first, keys padded to 64.
+    let kPacked, vPacked: Arena.Slice
+    let paddedKeys: Int
     private var nextReserve = 0
     private var products: [String: MPSMatrixMultiplication] = [:]
     /// The AMX and the Neural Engine beside the GPU on the large products and the target's attention
@@ -66,7 +69,8 @@ public final class QwenDiT {
         let sizes = [n * d, n * d, n * d, n * d, n * d, n * d, n * d, n * QwenDiT.hidden, n * QwenDiT.hidden,
                      d * QwenDiT.hidden, d * QwenDiT.hidden,
                      n * 128, 2 * 5 * d, QwenDiT.layers * 2 * QwenDiT.headDim, d, t * d, t * d,
-                     s * QwenDiT.channels, s * QwenDiT.channels]
+                     s * QwenDiT.channels, s * QwenDiT.channels,
+                     QwenDiT.heads * (n + 63) / 64 * 64 * QwenDiT.headDim / 2, QwenDiT.heads * (n + 63) / 64 * 64 * QwenDiT.headDim / 2]
         let arena = try Arena(device: context.device, bytes: Arena.bytes(sizes.map { $0 * 4 }))
         self.arena = arena
         var slices = try sizes.map { try arena.slice(floats: $0) }.makeIterator()
@@ -75,6 +79,8 @@ public final class QwenDiT {
         reserves = [slices.next()!, slices.next()!]
         rope = slices.next()!; modulation = slices.next()!; qkNorms = slices.next()!; textNorm = slices.next()!
         textIn = slices.next()!; textOut = slices.next()!; latent = slices.next()!; output = slices.next()!
+        kPacked = slices.next()!; vPacked = slices.next()!
+        paddedKeys = (n + 63) / 64 * 64
 
         let environment = ProcessInfo.processInfo.environment
         if environment["KOKON_COEXEC"] != "0", sequence.count >= 1024 {
@@ -475,8 +481,14 @@ public final class QwenDiT {
     /// fp16 operands by default (Gabriele 10-25: 76.0 s against 79.9 s per 1024² image, the velocity within 6e-4 of
     /// fp64 instead of 1e-5); `KOKON_ATTENTION=fp32` keeps the fp32 kernel (the accuracy checks).
     let graphAttention = ProcessInfo.processInfo.environment["KOKON_ATTENTION"] == "graph"
-    let flashKernel = ProcessInfo.processInfo.environment["KOKON_ATTENTION"] == "fp32" ? "flash_attention" : "flash_attention_half"
+    let flashKernel = ProcessInfo.processInfo.environment["KOKON_ATTENTION"] == "fp32" ? "flash_attention" : "flash_attention_half"  // "unpacked": no K/V packing
     struct FlashParams { var queries, keys, causal, stride: UInt32; var scale: Float; var headBase: UInt32 }
+    struct PackParams { var keys, paddedKeys, stride, heads: UInt32 }
+    /// The target's attention (not causal) on K and V packed first to fp16, heads first: 1024², 32 heads, M2 Pro
+    /// (`probe-attention`, 2026-10-25): 91.0 ms with the packing against 95.2 for `flash_attention_half`, the same
+    /// accuracy. Apple9+ GPUs (M3 and later) read the packed K and V straight from memory (`flash_attention_direct`),
+    /// as MFA's and libnnc's tables do there; on the M2 Pro that variant takes 142 ms. Not yet measured on an M3+.
+    lazy var packedKernel = context.device.supportsFamily(.apple9) ? "flash_attention_direct" : "flash_attention_packed"
 
     /// Queries `[queries, queries + count)` against keys `[0, keys)`, into the same rows of `attended`. The target's
     /// queries are cut by heads with the Neural Engine and the CPU when the co-executor runs (`AttentionSplit.swift`).
@@ -515,15 +527,28 @@ public final class QwenDiT {
     func flash(queries: Int, count: Int, keys: Int, causal: Bool, heads: Int, commands: MTLCommandBuffer) throws {
         guard heads > 0 else { return }
         let row = QwenDiT.dim * 4
-        try compute(flashKernel, commands: commands) { e in
+        let packed = !causal && flashKernel == "flash_attention_half" && ProcessInfo.processInfo.environment["KOKON_ATTENTION"] != "unpacked"
+        if packed {
+            try compute("attention_pack_kv", commands: commands) { e in
+                e.setBuffer(arena.buffer, offset: k.offset, index: 0); e.setBuffer(arena.buffer, offset: v.offset, index: 1)
+                e.setBuffer(arena.buffer, offset: kPacked.offset, index: 2); e.setBuffer(arena.buffer, offset: vPacked.offset, index: 3)
+                var pp = PackParams(keys: UInt32(keys), paddedKeys: UInt32(paddedKeys), stride: UInt32(QwenDiT.dim), heads: UInt32(heads))
+                e.setBytes(&pp, length: MemoryLayout<PackParams>.stride, index: 4)
+                e.dispatchThreads(MTLSize(width: QwenDiT.headDim / 4, height: paddedKeys, depth: heads),
+                                  threadsPerThreadgroup: MTLSize(width: 32, height: 8, depth: 1))
+            }
+        }
+        try compute(packed ? packedKernel : flashKernel, commands: commands) { e in
             e.setBuffer(arena.buffer, offset: q.offset + queries * row, index: 0)
-            e.setBuffer(arena.buffer, offset: k.offset, index: 1)
-            e.setBuffer(arena.buffer, offset: v.offset, index: 2)
+            e.setBuffer(arena.buffer, offset: packed ? kPacked.offset : k.offset, index: 1)
+            e.setBuffer(arena.buffer, offset: packed ? vPacked.offset : v.offset, index: 2)
             e.setBuffer(arena.buffer, offset: attended.offset + queries * row, index: 3)
             var params = FlashParams(queries: UInt32(count), keys: UInt32(keys), causal: causal ? 1 : 0,
                                      stride: UInt32(QwenDiT.dim), scale: 1 / Float(QwenDiT.headDim).squareRoot() * Float(M_LOG2E),
                                      headBase: 0)
             e.setBytes(&params, length: MemoryLayout<FlashParams>.stride, index: 4)
+            var padded = UInt32(paddedKeys)
+            if packed { e.setBytes(&padded, length: 4, index: 5) }
             e.dispatchThreadgroups(MTLSize(width: (count + 63) / 64, height: heads, depth: 1),
                                    threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
         }

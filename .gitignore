@@ -26,3 +26,6 @@ __pycache__/
 /docs/media/demo.gif
 /mcp/LICENSE
 /src-tauri/binaries/kokon-*
+# Swift build output of the Mac engine
+/engine-mac/.build
+/engine-mac/.swiftpm

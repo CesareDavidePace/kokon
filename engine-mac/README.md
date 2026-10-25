@@ -67,7 +67,10 @@ of 32 rows (the text projection) slowed all later ones to 18.5 s.
 Engine 2048 at 1024²): **11.3 s per evaluation at 1024²**, 8.8 s at 896². The GPU packs the Neural Engine's fp16
 operands straight into its IOSurfaces and unpacks its output, so the CPU only runs the AMX. Accuracy at 896²
 against diffusers fp32: the velocity within 3.6e-4 relative (GPU alone 4.4e-6); running the model in bf16, as
-most tools do, deviates by roughly 1e-2. The attention (4.1 s, GPU only, the other units idle) is next.
+most tools do, deviates by roughly 1e-2. 
+**Attention** is a fused (flash) kernel of our own (`Kernels/attention.metal`, fp32, online softmax, block-causal
+mask): 4.5 s per 1024² evaluation against MPSGraph's 4.1 s, but without MPSGraph's score matrix (2.2 GB at 1 MP,
+~34 GB at 4 MP). `KOKON_ATTENTION=graph` keeps MPSGraph for comparison. The other units are idle during it: next.
 
 Credits: the Neural Engine program technique and the GPU + AMX + Neural Engine split come from
 [Siliconed](https://github.com/gwenn-ha-dev/Siliconed) (Apache-2.0), written again here.

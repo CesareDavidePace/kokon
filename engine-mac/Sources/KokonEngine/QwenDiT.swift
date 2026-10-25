@@ -397,8 +397,28 @@ public final class QwenDiT {
         }
     }
 
+    /// Attention through `Kernels/attention.metal` (default) or MPSGraph (`KOKON_ATTENTION=graph`, the check).
+    let graphAttention = ProcessInfo.processInfo.environment["KOKON_ATTENTION"] == "graph"
+    struct FlashParams { var queries, keys, causal, stride: UInt32; var scale: Float; var headBase: UInt32 }
+
     /// Queries `[queries, queries + count)` against keys `[0, keys)`, into the same rows of `attended`.
     func attend(queries: Int, count: Int, keys: Int, causal: Bool, commands: MTLCommandBuffer) throws {
+        let row = QwenDiT.dim * 4
+        if !graphAttention {
+            try compute("flash_attention", commands: commands) { e in
+                e.setBuffer(arena.buffer, offset: q.offset + queries * row, index: 0)
+                e.setBuffer(arena.buffer, offset: k.offset, index: 1)
+                e.setBuffer(arena.buffer, offset: v.offset, index: 2)
+                e.setBuffer(arena.buffer, offset: attended.offset + queries * row, index: 3)
+                var params = FlashParams(queries: UInt32(count), keys: UInt32(keys), causal: causal ? 1 : 0,
+                                         stride: UInt32(QwenDiT.dim), scale: 1 / Float(QwenDiT.headDim).squareRoot() * Float(M_LOG2E),
+                                         headBase: 0)
+                e.setBytes(&params, length: MemoryLayout<FlashParams>.stride, index: 4)
+                e.dispatchThreadgroups(MTLSize(width: (count + 63) / 64, height: QwenDiT.heads, depth: 1),
+                                       threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+            }
+            return
+        }
         let key = "\(count)×\(keys)\(causal ? "c" : "")"
         let attention: GraphAttention
         if let a = attentions[key] { attention = a } else {
@@ -406,7 +426,6 @@ public final class QwenDiT {
                                            headDim: QwenDiT.headDim, causal: causal)
             attentions[key] = attention
         }
-        let row = QwenDiT.dim * 4
         let b = arena.buffer
         try gpu("attention", commands) {
             attention.encode(commands: $0, q: (b, q.offset + queries * row), k: (b, k.offset), v: (b, v.offset),

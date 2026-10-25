@@ -147,7 +147,7 @@ public final class QwenDiT {
     // MARK: - one evaluation
 
     /// Called with a stage's name and its rows (CPU pointer, floats) when `probe` is set; the pass then waits on
-    /// the GPU at each stage. Stages: joint_in, layer0_out, layer1_out, layer31_out, norm_out, model_out.
+    /// the GPU at each stage. Stages: joint_in, l0_* (inside layer 0), layer0_out … layer31_out, norm_out, model_out.
     public typealias Probe = (String, UnsafePointer<Float>, Int) -> Void
 
     /// One evaluation: `encoder` the encoder's last layer `[T, 4096]` (all positions, image slots included),
@@ -198,7 +198,7 @@ public final class QwenDiT {
                 }
             }
             try encodeLayer(layer, commands: &commands, stage: stage)
-            if let probe, layer == 0 || layer == 1 || layer == QwenDiT.layers - 1 {
+            if let probe {
                 try finish(commands); probe("layer\(layer)_out", arena.pointer(x), n * d); commands = try begin()
             } else {
                 commands.commit()

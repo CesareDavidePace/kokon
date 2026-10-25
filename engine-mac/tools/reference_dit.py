@@ -7,6 +7,10 @@ The whole model in fp32 is 28 GB, more than a 16 GB Mac holds: the script follow
 cache) with one block module whose weights are swapped layer by layer.
 
     python -I engine-mac/tools/reference_dit.py <dit.gguf> <out dir> [--grid 16] [--text 24] [--sigma 0.7]
+        [--all-layers] [--dtype float64]
+
+`--dtype float64` runs every module in fp64 (diffusers' own `.float()` casts made no-ops): the truth an fp32
+engine and the fp32 reference are both measured against, to tell a bug from the weights' own sensitivity.
 
 Writes `<out>/meta.json` and one raw little-endian fp32 file per tensor (`<name>.f32`).
 """
@@ -31,8 +35,15 @@ from diffusers.models.transformers.transformer_qwenimage21 import (
 PREFIX = "model.diffusion_model."
 
 
+def enable_float64():
+    """diffusers casts to fp32 in RoPE, its RMSNorms and the timestep path: `Tensor.float()` keeps fp64 tensors fp64."""
+    to_float = torch.Tensor.float
+    torch.Tensor.float = lambda self, *a, **k: self if self.dtype == torch.float64 else to_float(self, *a, **k)
+
+
 class Weights:
-    def __init__(self, path):
+    def __init__(self, path, dtype=torch.float32):
+        self.dtype = dtype
         self.reader = gguf.GGUFReader(path)
         self.tensors = {t.name.removeprefix(PREFIX): t for t in self.reader.tensors}
 
@@ -46,7 +57,7 @@ class Weights:
         t = self.tensors[name]
         values = gguf.quants.dequantize(t.data, t.tensor_type).astype(np.float32)
         shape = [int(d) for d in reversed(t.shape)]  # ggml ne order -> torch order
-        return torch.from_numpy(values.reshape(shape).copy())
+        return torch.from_numpy(values.reshape(shape).copy()).to(self.dtype)
 
     def load(self, module, prefix):
         state = {name: self.get(prefix + name) for name, _ in module.named_parameters()}
@@ -81,8 +92,8 @@ def layer0_stages(block, x, modulation, rotary_emb, target_token_mask, save):
 class ReferenceDiT:
     """QwenImage21Transformer2DModel.forward, batch 1, no cache, text-to-image, one block module swapped per layer."""
 
-    def __init__(self, path, layers=32):
-        self.w = w = Weights(path)
+    def __init__(self, path, layers=32, dtype=torch.float32):
+        self.w = w = Weights(path, dtype)
         d, self.layers = 4096, layers
         self.img_in = torch.nn.Linear(64, d, bias=False)
         w.load(self.img_in, "img_in.")
@@ -98,6 +109,11 @@ class ReferenceDiT:
         w.load(self.proj_out, "proj_out.")
         self.rope = QwenImage21Rope(theta=10000, axes_dim=[16, 56, 56])
         self.block = QwenImage21TransformerBlock(d, 32, 128, mlp_ratio=3, eps=1e-6)
+        for m in (self.img_in, self.txt_in, self.time_text_embed, self.modulation_linear, self.norm_out,
+                  self.proj_out, self.block):
+            m.to(dtype)
+
+    all_layers = False
 
     def forward(self, encoder, latent, h, w_, timestep, save=None, progress=True):
         """`encoder` [1, T, d], `latent` [1, h * w, 64], `timestep` a [1] tensor (σ); returns the target's velocity
@@ -133,7 +149,7 @@ class ReferenceDiT:
                 layer0_stages(self.block, joint, modulation, rotary_emb, target_token_mask, save)
             joint = self.block(hidden_states=joint, modulation=modulation, rotary_emb=rotary_emb, attention_mask=None,
                                target_token_mask=target_token_mask, segments=segments)
-            if save and (layer in (0, 1) or layer == self.layers - 1):
+            if save and (self.all_layers or layer in (0, 1) or layer == self.layers - 1):
                 save(f"layer{layer}_out", joint[0])
             if progress:
                 print(f"layer {layer} done", flush=True)
@@ -155,7 +171,12 @@ def main():
     parser.add_argument("--sigma", type=float, default=0.7)
     parser.add_argument("--layers", type=int, default=32)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--all-layers", action="store_true", help="save every layer's output")
+    parser.add_argument("--dtype", default="float32", choices=["float32", "float64"])
     args = parser.parse_args()
+    dtype = getattr(torch, args.dtype)
+    if dtype == torch.float64:
+        enable_float64()
     torch.manual_seed(args.seed)
     torch.set_grad_enabled(False)
     os.makedirs(args.out, exist_ok=True)
@@ -173,11 +194,12 @@ def main():
     latent = torch.randn(1, h * w_, 64)
     save("in_encoder", encoder[0])
     save("in_latent", latent[0])
-    dit = ReferenceDiT(args.gguf, layers=args.layers)
-    dit.forward(encoder, latent, h, w_, torch.tensor([args.sigma], dtype=torch.float32), save=save)
+    dit = ReferenceDiT(args.gguf, layers=args.layers, dtype=dtype)
+    dit.all_layers = args.all_layers
+    dit.forward(encoder.to(dtype), latent.to(dtype), h, w_, torch.tensor([args.sigma], dtype=dtype), save=save)
 
     meta = {"grid": [h, w_], "text": args.text, "sigma": args.sigma, "layers": args.layers, "prefix": args.text,
-            "seed": args.seed, "tensors": saved, "gguf": os.path.basename(args.gguf),
+            "seed": args.seed, "dtype": args.dtype, "tensors": saved, "gguf": os.path.basename(args.gguf),
             "diffusers": __import__("diffusers").__version__, "torch": torch.__version__}
     with open(os.path.join(args.out, "meta.json"), "w") as f:
         json.dump(meta, f, indent=1)

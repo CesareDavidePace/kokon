@@ -49,8 +49,10 @@ python3 -m venv ~/kokon-bench/venv-oracle && ~/kokon-bench/venv-oracle/bin/pip i
 
 256² text-to-image, σ 0.7, 2026-10-25: every stage within 2e-5 relative of diffusers fp32 (velocity 6e-6).
 unsloth's Qwen-Image 2.1 Turbo Q4_K_M (the file Kokon will ship with this engine; ComfyUI layout, each block's MLP
-`gate_up` fused, read as two views): velocity within 7.2e-5, layers 0–1 within 2.4e-6, the gap growing in the last
-layers (not understood yet).
+`gate_up` fused, read as two views): **check it against an fp64 reference** (`--dtype float64 --all-layers`, ~1 min).
+On this file torch's own fp32 run drifts from layer 6 on, to 7.3e-5 of fp64 at the velocity, while the engine stays
+within 3.9e-6 (every layer within 6.3e-6); on the old uniform Q4_K file both are within 4.1e-6 of fp64. The 7.2e-5
+once measured against the fp32 reference was the reference's error, not the engine's.
 
 **The text encoder against transformers.** The reference tokenizes with the processor of the official
 Qwen/Qwen-Image-2.1-Turbo repository (`processor/` and `text_encoder/config.json`, a few MB) and runs transformers'

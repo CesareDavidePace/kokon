@@ -15,6 +15,8 @@ kokon-engine-mac: Kokon's Apple Silicon engine (in development)
   check-generate <encoder.gguf> <dit.gguf> <vae.safetensors> <reference dir> [text reference dir]
                                            text to image against tools/reference_generate.py, from its noise
                                            (and from the text reference's conditioning when given)
+  check-textgen <encoder.gguf> <dir> [tokens]       text generation (Prompt+), greedy, against tools/reference_text_generation.py
+  time-matvec <encoder.gguf>                        the decode's products on the encoder's weights: ms and GB/s
   check-steps <dit.gguf> <generate reference dir> <text reference dir>
                                            each step alone against tools/reference_generate.py (its latents in)
   check-noise <philox.bin>                 the seed's noise against sd.cpp's generator (tools/philox_reference.cpp)
@@ -66,6 +68,12 @@ do {
         let numbers = arguments.dropFirst(2).compactMap { Int($0) }
         try Checks.timeDiT(path: arguments[1], grid: numbers.first ?? 64, text: numbers.dropFirst().first ?? 32,
                            runs: numbers.dropFirst(2).first ?? 3)
+    case "check-textgen":
+        guard arguments.count >= 3 else { fail(usage) }
+        try Checks.textGeneration(path: arguments[1], directory: arguments[2], tokens: arguments.count > 3 ? Int(arguments[3]) ?? 48 : 48)
+    case "time-matvec":
+        guard arguments.count == 2 else { fail(usage) }
+        try Checks.timeMatvec(path: arguments[1])
     case "check-ane":
         try Checks.aneSurfaces()
     case "check-vae":

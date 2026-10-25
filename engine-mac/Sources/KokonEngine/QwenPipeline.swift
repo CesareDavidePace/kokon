@@ -51,6 +51,11 @@ public final class QwenPipeline {
         }
     }
     private var encoderFile: GGUFFile?, encoder: QwenTextEncoder?
+    /// **Prompt+ hands its encoder to the next image**: Prompt+ writes the prompt the next image encodes, on the same file,
+    /// so when the encoder is not kept (`keepEncoder`), the one text generation opened stays open until that image's
+    /// encode, which then drops it. Its pages are the file's, which macOS can reclaim. M2 Pro 16 GB, 2026-10-25: opening
+    /// the encoder and its first pass cost ~2 s of a 12-token prefill of 2.2–2.5 s (0.46 s once warm).
+    private var handedOver: QwenTextEncoder?
     private var ditFile: GGUFFile?, dit: QwenDiT?
     /// Checked before each step and after each DiT layer: true stops the image (`QwenDiT.Cancelled`).
     public var cancelled: () -> Bool = { false }
@@ -100,8 +105,8 @@ public final class QwenPipeline {
                 defer { encoder!.release() }
                 return try encoder!.conditioning(prompt: prompt)
             }
-            let file = try GGUFFile(path: encoderPath)
-            let encoder = try QwenTextEncoder(file: file, context: context)
+            let encoder = try handedOver ?? QwenTextEncoder(file: try GGUFFile(path: encoderPath), context: context)
+            handedOver = nil
             defer { encoder.release() }
             return try encoder.conditioning(prompt: prompt)
         }()
@@ -162,6 +167,30 @@ public final class QwenPipeline {
         timings["total"] = since(started)
         log(String(format: "VAE: %.2f s; total %.1f s", timings["vae"]!, timings["total"]!))
         return image
+    }
+
+    /// **Prompt+**: the text encoder's LLM writes the assistant's reply to `prompt` (`QwenTextGenerator`), on the same
+    /// file and with the same keeping rules as the image's encoder.
+    public func generateText(system: String, prompt: String, maxTokens: Int, sampling: TextSampler.Parameters, seed: Int64,
+                             onPiece: (String) -> Bool) throws -> QwenTextGenerator.Result {
+        let started = DispatchTime.now().uptimeNanoseconds
+        let encoder: QwenTextEncoder
+        if keepModels && keepEncoder {
+            if self.encoder == nil {
+                let file = try GGUFFile(path: encoderPath)
+                (encoderFile, self.encoder) = (file, try QwenTextEncoder(file: file, context: context))
+            }
+            encoder = self.encoder!
+        } else {
+            encoder = try handedOver ?? QwenTextEncoder(file: try GGUFFile(path: encoderPath), context: context)
+            handedOver = encoder   // for the image that follows
+        }
+        defer { encoder.release() }
+        var result = try QwenTextGenerator(encoder: encoder).generate(system: system, prompt: prompt, maxTokens: maxTokens,
+                                                                      sampling: sampling, seed: seed, onPiece: onPiece)
+        // With opening the file and reading its tokenizer.
+        result.prepare = Double(DispatchTime.now().uptimeNanoseconds - started) * 1e-9 - result.prefill - result.decode
+        return result
     }
 
     // MARK: - latents

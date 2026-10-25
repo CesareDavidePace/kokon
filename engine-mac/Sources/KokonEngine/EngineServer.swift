@@ -7,10 +7,11 @@ import Foundation
 ///     POST /sdcpp/v1/img_gen            202 {id, kind, status, created, poll_url}: the job is queued
 ///     GET  /sdcpp/v1/jobs/{id}          {status: queued|generating|completed|failed|cancelled, result, error}
 ///     POST /sdcpp/v1/jobs/{id}/cancel   200 {status: cancelled}: a running image stops within a DiT layer
+///     POST /sdcpp/v1/text_gen           Prompt+: the text encoder's LLM writes, streamed as Server-Sent Events
 ///
 /// Text to image only for now: requests with reference images, a mask, an init image, LoRAs or a second pass are
-/// refused with 400 and say so. Jobs run one at a time; the text encoder, the DiT and the compiled VAE stay loaded
-/// between them (`QwenPipeline.keepModels`).
+/// refused with 400 and say so, and so is text generation with images. Jobs and text generation run one at a time;
+/// what stays loaded between them depends on the Mac (`QwenPipeline.keepModels`).
 ///
 /// Progress goes to stdout as sd-server's log lines, the ones qls-core's `ProgressParser` reads (process.rs):
 /// `generate_image WxH`, `sampling using`, `generating image: i/n - seed s`, step bars `| i/n - x.xxs/it`,
@@ -95,6 +96,8 @@ public final class EngineServer: @unchecked Sendable {
     private var running: Job?
     private let lock = NSLock()
     private let wake = DispatchSemaphore(value: 0)
+    /// Held by a running image or text generation: one GPU user at a time.
+    private let gpu = NSLock()
     /// Lines to stdout (qls-core reads them from the log file it redirects stdout to).
     public var log: @Sendable (String) -> Void = { line in
         FileHandle.standardOutput.write(Data((line + "\n").utf8))
@@ -125,7 +128,8 @@ public final class EngineServer: @unchecked Sendable {
         case ("GET", let p) where p.count == 2 && p[0] == "jobs":
             return lock.withLock { jobs[p[1]].map { .json(200, describe($0)) } ?? .error(404, "unknown job \(p[1])") }
         case ("POST", let p) where p.count == 3 && p[0] == "jobs" && p[2] == "cancel": return cancel(p[1])
-        case (_, ["upscale"]), (_, ["text_gen"]):
+        case ("POST", ["text_gen"]): return textGen(request.body)
+        case (_, ["upscale"]):
             return .error(404, "Kokon's Mac engine has no \(parts[2]) endpoint yet")
         default: return .error(404, "not found: \(request.method) \(request.path)")
         }
@@ -143,12 +147,13 @@ public final class EngineServer: @unchecked Sendable {
             "schedulers": [String](),
             "output_formats": ["png"],
             "limits": ["min_width": 64, "max_width": 4096, "min_height": 64, "max_height": 4096,
-                       "max_batch_count": EngineServer.maxBatch, "max_queue_size": EngineServer.maxQueue],
+                       "max_batch_count": EngineServer.maxBatch, "max_queue_size": EngineServer.maxQueue,
+                       "max_text_tokens": EngineServer.maxTextTokens, "max_text_images": 0],
             "features_by_mode": ["img_gen": feature],
             "defaults_by_mode": ["img_gen": ["sample_steps": QwenPipeline.turboSigmas.count - 1, "txt_cfg": 1]],
             "upscalers": [Any](),
             "upscale": false,
-            "text_generation": false,
+            "text_generation": true,
         ]
     }
 
@@ -193,6 +198,97 @@ public final class EngineServer: @unchecked Sendable {
         return out
     }
 
+    // MARK: - text generation (Prompt+)
+
+    /// The fields of `text_gen` (sd-server's names and checks, `examples/server/routes_sdcpp.cpp`).
+    struct TextRequest: Sendable {
+        let system, prompt: String
+        let maxTokens: Int
+        let sampling: TextSampler.Parameters
+        let seed: Int64
+        let stream: Bool
+
+        static func parse(_ body: Data) -> (TextRequest?, String?) {
+            guard let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else { return (nil, "body must be an object") }
+            guard let prompt = json["prompt"] as? String, !prompt.isEmpty else { return (nil, "prompt is required") }
+            guard let system = json["system_prompt"] as? String else {
+                return (nil, "system_prompt is required (an empty string means no system prompt)")
+            }
+            let maxTokens = json["max_tokens"] as? Int ?? 512
+            guard (1...EngineServer.maxTextTokens).contains(maxTokens) else { return (nil, "max_tokens must be between 1 and \(EngineServer.maxTextTokens)") }
+            if let images = json["images"] as? [Any], !images.isEmpty {
+                return (nil, "Kokon's Mac engine cannot look at images yet (no vision tower): Prompt+ works on text-to-image prompts only")
+            }
+            var sampling = TextSampler.Parameters(temperature: 0, topP: 1, topK: 0, presencePenalty: 0)
+            var seed: Int64 = -1
+            if let s = json["sampling"] {
+                guard let s = s as? [String: Any] else { return (nil, "sampling must be an object") }
+                func number(_ key: String) -> Double? { (s[key] as? NSNumber)?.doubleValue }
+                sampling.temperature = Float(number("temperature") ?? 0)
+                sampling.topP = Float(number("top_p") ?? 1)
+                sampling.topK = Int(number("top_k") ?? 0)
+                sampling.presencePenalty = Float(number("presence_penalty") ?? 0)
+                seed = (s["seed"] as? NSNumber)?.int64Value ?? -1
+                guard sampling.temperature.isFinite, sampling.temperature >= 0, sampling.topP.isFinite, sampling.topP > 0, sampling.topP <= 1,
+                      sampling.topK >= 0, sampling.presencePenalty.isFinite else {
+                    return (nil, "sampling needs temperature >= 0, 0 < top_p <= 1, top_k >= 0 and a finite presence_penalty")
+                }
+            }
+            return (TextRequest(system: system, prompt: prompt, maxTokens: maxTokens, sampling: sampling, seed: seed,
+                                stream: json["stream"] as? Bool ?? true), nil)
+        }
+    }
+
+    static let maxTextTokens = 4096
+
+    /// Synchronous like sd-server's: it waits for a running image (one GPU user at a time) and holds the models while it
+    /// writes. Streamed (the default) as Server-Sent Events: `delta` {text} per piece, then `done` {text, finish_reason,
+    /// seed, usage, timings} or `error` {error}; closing the connection stops it.
+    func textGen(_ body: Data) -> HTTPServer.Response {
+        let (parsed, reason) = TextRequest.parse(body)
+        guard let request = parsed else { return .error(400, reason ?? "bad request") }
+        guard request.stream else {
+            let outcome = Result { try gpu.withLock { try generateText(request) { _ in true } } }
+            switch outcome {
+            case .success(let result): return .json(200, EngineServer.done(result))
+            case .failure(let error):
+                log("[ERROR  ] engine-mac - text generation failed: \(error)")
+                return .error(500, "text generation failed")
+            }
+        }
+        return .streaming(contentType: "text/event-stream") { [self] write in
+            // Before waiting for a running image, so the client gets the headers at once.
+            guard write(Data(": waiting for the model\n\n".utf8)) else { return }
+            func event(_ name: String, _ object: Any) -> Bool {
+                let data = (try? JSONSerialization.data(withJSONObject: object)) ?? Data("{}".utf8)
+                return write(Data("event: \(name)\ndata: ".utf8) + data + Data("\n\n".utf8))
+            }
+            let outcome = Result { try gpu.withLock { try generateText(request) { piece in event("delta", ["text": piece]) } } }
+            switch outcome {
+            case .success(let result): _ = event("done", EngineServer.done(result))
+            case .failure(let error):
+                log("[ERROR  ] engine-mac - text generation failed: \(error)")
+                _ = event("error", ["error": "text generation failed"])
+            }
+        }
+    }
+
+    private func generateText(_ r: TextRequest, onPiece: (String) -> Bool) throws -> QwenTextGenerator.Result {
+        let result = try pipeline.generateText(system: r.system, prompt: r.prompt, maxTokens: r.maxTokens, sampling: r.sampling,
+                                               seed: r.seed, onPiece: onPiece)
+        log(String(format: "[INFO   ] engine-mac - text generation: %d prompt tokens, %d generated in %.2fs (prefill %.2fs, %.1f tok/s), seed %lld",
+                   result.promptTokens, result.generatedTokens, result.prepare + result.prefill + result.decode, result.prefill,
+                   result.decode > 0 ? Double(result.tokens.count - 1) / result.decode : 0, result.seed))
+        return result
+    }
+
+    /// sd-server's `done` object.
+    static func done(_ r: QwenTextGenerator.Result) -> [String: Any] {
+        ["text": r.text, "finish_reason": r.finish.rawValue, "seed": r.seed,
+         "usage": ["prompt_tokens": r.promptTokens, "completion_tokens": r.generatedTokens],
+         "timings": ["prepare_s": r.prepare, "image_s": 0, "prefill_s": r.prefill, "decode_s": r.decode]]
+    }
+
     // MARK: - the jobs
 
     private func work() {
@@ -206,7 +302,7 @@ public final class EngineServer: @unchecked Sendable {
                 running = job
                 return job
             }) else { continue }
-            let outcome: Result<[String], Error> = autoreleasepool { Result { try generate(job) } }
+            let outcome: Result<[String], Error> = autoreleasepool { Result { try gpu.withLock { try generate(job) } } }
             lock.withLock {
                 running = nil
                 job.completed = Int(Date().timeIntervalSince1970)

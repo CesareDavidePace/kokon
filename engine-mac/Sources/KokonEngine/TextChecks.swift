@@ -134,3 +134,93 @@ extension Checks {
         if differ > 0 || offset != want.count { throw GGUFFile.Failure.unsupported("noise differs from sd.cpp's") }
     }
 }
+
+extension Checks {
+    /// Text generation (Prompt+) against `tools/reference_text_generation.py`: the engine writes greedily (its tokens to
+    /// `<dir>/engine.json`, its logits beside); once the reference has run on those tokens, each step's logits are
+    /// compared with transformers' (relative error, the greedy choice, the margin between the two best) and the
+    /// engine's speed is reported. `system` / `prompt` from `<dir>/engine.json` when it exists.
+    public static func textGeneration(path: String, directory: String, tokens: Int = 48) throws {
+        let dir = URL(fileURLWithPath: directory)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let previous = (try? JSONSerialization.jsonObject(with: Data(contentsOf: dir.appendingPathComponent("engine.json")))) as? [String: Any]
+        let system = previous?["system"] as? String
+            ?? "You write prompts for an image generation model. Expand the user's request into one detailed English paragraph that describes the finished image: subject, setting, composition, lighting and style. Output only the prompt."
+        let prompt = previous?["prompt"] as? String ?? "un gatto rosso che dorme su un davanzale, sera"
+        let file = try GGUFFile(path: path)
+        let context = try MetalContext()
+        let encoder = try QwenTextEncoder(file: file, context: context)
+        let generator = QwenTextGenerator(encoder: encoder)
+        let vocabulary = QwenTextGenerator.vocabulary
+        var logits = [Float](repeating: 0, count: tokens * vocabulary)
+        let result = try generator.generate(system: system, prompt: prompt, maxTokens: tokens, sampling: .greedy, seed: 0, logits: { step, l in
+            logits.withUnsafeMutableBufferPointer { ($0.baseAddress! + step * vocabulary).update(from: l, count: vocabulary) }
+        })
+        let steps = result.tokens.count
+        let promptIDs = encoder.tokenizer.encode(QwenTextGenerator.template(system: system, prompt: prompt))
+        print(String(format: "%d prompt tokens, %d generated (%@): prefill %.2f s, decode %.2f s, %.1f tokens/s",
+                     result.promptTokens, result.generatedTokens, result.finish.rawValue, result.prefill, result.decode,
+                     Double(steps - 1) / max(result.decode, 1e-9)))
+        print("text: \(result.text)")
+        if let previous, let generated = previous["generated"] as? [Int], generated != result.tokens {
+            print("NOTE: not the tokens of the engine's previous run (\(generated.count) then, \(steps) now): the reference must be run again")
+        }
+        let meta: [String: Any] = ["system": system, "prompt": prompt, "prompt_ids": promptIDs, "generated": result.tokens, "text": result.text]
+        try JSONSerialization.data(withJSONObject: meta, options: [.prettyPrinted, .sortedKeys]).write(to: dir.appendingPathComponent("engine.json"))
+        try logits.prefix(steps * vocabulary).withUnsafeBufferPointer { Data(buffer: $0) }.write(to: dir.appendingPathComponent("engine_logits.f32"))
+
+        guard let want = try? reference(directory, "reference_logits"), want.count == steps * vocabulary,
+              (previous?["generated"] as? [Int]) == result.tokens else {
+            print("no reference for these tokens yet: run tools/reference_text_generation.py on \(directory), then this again")
+            return
+        }
+        var worst = 0.0, agree = 0, ties = 0
+        for s in 0..<steps {
+            let r = logits.withUnsafeBufferPointer { compare($0.baseAddress! + s * vocabulary, Array(want[(s * vocabulary)..<((s + 1) * vocabulary)])) }
+            worst = max(worst, r.relative)
+            let row = want[(s * vocabulary)..<((s + 1) * vocabulary)]
+            let sorted = row.enumerated().sorted { $0.element > $1.element }
+            let (best, second) = (sorted[0], sorted[1])
+            if best.offset == result.tokens[s] { agree += 1 } else if best.element - second.element < 0.05 { ties += 1 }
+            if s < 4 || s == steps - 1 || best.offset != result.tokens[s] {
+                print(String(format: "  step %2d  rel %.2e   max |Δ| %.3g   engine %6d  reference %6d  (margin %.3f)", s, r.relative, r.maxAbs,
+                             result.tokens[s], best.offset, best.element - second.element))
+            }
+        }
+        print(String(format: "logits within %.2e relative at every step; the greedy choice agrees at %d of %d (%d near-ties)", worst, agree, steps, ties))
+    }
+}
+
+extension Checks {
+    /// The decode's matrix-vector products on the encoder's real weights, alone: milliseconds and GB/s per shape (the
+    /// decode reads every weight once a token, so these rates bound its speed), then one whole token's GPU time.
+    public static func timeMatvec(path: String) throws {
+        let file = try GGUFFile(path: path)
+        let context = try MetalContext()
+        let encoder = try QwenTextEncoder(file: file, context: context)
+        let generator = QwenTextGenerator(encoder: encoder)
+        let cache = try KVCache(context: context, layers: QwenTextEncoder.layers, kvHeads: QwenTextEncoder.kvHeads, capacity: 1024)
+        let decoder = try QwenTextGenerator.Decoder(generator: generator, cache: cache)
+        let x = try context.scratch(QwenTextEncoder.hidden * 4, label: "x"), y = try context.scratch(QwenTextGenerator.vocabulary * 4, label: "y")
+        for i in 0..<QwenTextEncoder.hidden { x.contents().assumingMemoryBound(to: Float.self)[i] = Float(i % 7) * 0.1 - 0.3 }
+        for name in ["blk.0.attn_q.weight", "blk.0.attn_k.weight", "blk.0.attn_v.weight", "blk.0.ffn_gate.weight", "blk.0.ffn_down.weight", "output.weight"] {
+            let tensor = try file.tensor(name)
+            let runs = 20
+            // Warm (the file's pages), then timed: one command buffer of `runs` products.
+            for timed in [false, true] {
+                let commands = try encoder.begin()
+                for _ in 0..<(timed ? runs : 2) { try decoder.matvec(tensor, x: (x, 0), y: (y, 0), commands) }
+                let seconds = try MetalContext.finish(commands, name) / Double(timed ? runs : 2)
+                if timed {
+                    print(String(format: "  %-24@ %@ %6d × %5d   %.3f ms   %.0f GB/s", name as NSString, (tensor.type?.name ?? "?") as NSString,
+                                 tensor.rows, tensor.columns, seconds * 1e3, Double(tensor.bytes) / seconds / 1e9))
+                }
+            }
+        }
+        for run in 0..<5 {
+            let t = DispatchTime.now().uptimeNanoseconds
+            _ = try decoder.token(1000 + run, position: run)
+            print(String(format: "token %d: %.1f ms (GPU %.1f ms)", run, Double(DispatchTime.now().uptimeNanoseconds - t) * 1e-6, decoder.lastGPU * 1e3))
+        }
+    }
+}

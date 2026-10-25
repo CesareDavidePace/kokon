@@ -75,8 +75,9 @@ public final class QwenTextEncoder {
     }
     private var nextReserve = 0
 
-    /// The last decoder layer's output for every token, `[ids.count, 4096]`.
-    public func forward(ids: [Int], probe: Probe? = nil) throws -> [Float] {
+    /// The last decoder layer's output for every token, `[ids.count, 4096]`. `cache`: each layer's K (after its norm
+    /// and RoPE) and V are kept there too, for text generation (`QwenTextGenerator`).
+    public func forward(ids: [Int], probe: Probe? = nil, cache: KVCache? = nil) throws -> [Float] {
         let d = QwenTextEncoder.dim, t = ids.count, kvWidth = QwenTextEncoder.kvHeads * QwenTextEncoder.headDim
         let started = DispatchTime.now().uptimeNanoseconds
         timings = [:]
@@ -120,7 +121,7 @@ public final class QwenTextEncoder {
 
         var commands = try begin()
         for layer in 0..<QwenTextEncoder.layers {
-            try encodeLayer(layer, rows: t, b, commands: commands)
+            try encodeLayer(layer, rows: t, b, commands: commands, cache: cache)
             if let probe, [0, 1, 17, QwenTextEncoder.layers - 1].contains(layer) {
                 try MetalContext.finish(commands, "text encoder")
                 probe("layer\(layer)_out", arena.pointer(b.x), t * d)
@@ -149,7 +150,7 @@ public final class QwenTextEncoder {
         return out
     }
 
-    func encodeLayer(_ layer: Int, rows t: Int, _ b: Buffers, commands: MTLCommandBuffer) throws {
+    func encodeLayer(_ layer: Int, rows t: Int, _ b: Buffers, commands: MTLCommandBuffer, cache: KVCache? = nil) throws {
         let d = QwenTextEncoder.dim, block = "blk.\(layer)."
         let norms = layer * 4 * d
         try rmsNorm(b, b.x, into: b.normed, rows: t, weight: norms, commands: commands)
@@ -159,6 +160,8 @@ public final class QwenTextEncoder {
         try headNormRope(b, b.q, heads: QwenTextEncoder.heads, weight: norms + 2 * d, rows: t, commands: commands)
         try headNormRope(b, b.k, heads: QwenTextEncoder.kvHeads, weight: norms + 2 * d + QwenTextEncoder.headDim,
                          rows: t, commands: commands)
+        try cache?.store(layer: layer, k: (b.arena.buffer, b.k.offset), v: (b.arena.buffer, b.v.offset), rows: t, position: 0,
+                         context: context, commands: commands)
         try repeatKV(b, b.k, into: b.kx, rows: t, commands: commands)
         try repeatKV(b, b.v, into: b.vx, rows: t, commands: commands)
         try attend(b, rows: t, commands: commands)

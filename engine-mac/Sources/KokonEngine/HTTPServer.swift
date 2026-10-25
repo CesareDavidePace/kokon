@@ -1,8 +1,9 @@
 import Foundation
 
 /// **A minimal HTTP/1.1 server on a loopback port**, enough for qls-core's client (reqwest): one request per
-/// connection (`Connection: close`), a `Content-Length` body, JSON in and out. POSIX sockets, a thread per
-/// connection: the engine serves one local client, and the slow part of every request is the GPU, not the socket.
+/// connection (`Connection: close`), a `Content-Length` body, JSON in and out, or a body written as it is made
+/// (`Response.stream`, chunked: `text_gen`'s Server-Sent Events). POSIX sockets, a thread per connection: the engine
+/// serves one local client, and the slow part of every request is the GPU, not the socket.
 public final class HTTPServer: @unchecked Sendable {
     public struct Request: Sendable {
         public let method: String
@@ -14,11 +15,20 @@ public final class HTTPServer: @unchecked Sendable {
         public var status: Int
         public var body: Data
         public var contentType = "application/json"
+        /// A body written piece by piece (chunked transfer): `stream` gets a writer, which returns false once the client
+        /// has gone (the connection closed).
+        public var stream: (@Sendable (_ write: (Data) -> Bool) -> Void)?
 
         public init(status: Int, body: Data, contentType: String = "application/json") {
             self.status = status
             self.body = body
             self.contentType = contentType
+        }
+
+        public static func streaming(contentType: String, _ stream: @escaping @Sendable (_ write: (Data) -> Bool) -> Void) -> Response {
+            var r = Response(status: 200, body: Data(), contentType: contentType)
+            r.stream = stream
+            return r
         }
 
         public static func json(_ status: Int, _ object: Any) -> Response {
@@ -136,15 +146,35 @@ public final class HTTPServer: @unchecked Sendable {
     static func write(_ fd: Int32, _ response: Response) {
         let reason = [200: "OK", 202: "Accepted", 400: "Bad Request", 404: "Not Found", 409: "Conflict",
                       429: "Too Many Requests", 500: "Internal Server Error"][response.status] ?? "Status"
+        if let stream = response.stream {
+            guard send(fd, Data("HTTP/1.1 \(response.status) \(reason)\r\nContent-Type: \(response.contentType)\r\nCache-Control: no-cache\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n".utf8)) else { return }
+            var open = true
+            stream { piece in
+                guard open, !piece.isEmpty else { return open }
+                var chunk = Data((String(piece.count, radix: 16) + "\r\n").utf8)
+                chunk.append(piece)
+                chunk.append(contentsOf: "\r\n".utf8)
+                open = send(fd, chunk)
+                return open
+            }
+            if open { _ = send(fd, Data("0\r\n\r\n".utf8)) }
+            return
+        }
         var out = Data("HTTP/1.1 \(response.status) \(reason)\r\nContent-Type: \(response.contentType)\r\nContent-Length: \(response.body.count)\r\nConnection: close\r\n\r\n".utf8)
         out.append(response.body)
-        out.withUnsafeBytes { raw in
+        _ = send(fd, out)
+    }
+
+    /// All of `data`; false when the connection is gone.
+    static func send(_ fd: Int32, _ data: Data) -> Bool {
+        data.withUnsafeBytes { raw in
             var sent = 0
             while sent < raw.count {
-                let n = send(fd, raw.baseAddress! + sent, raw.count - sent, 0)
-                if n <= 0 { return }
+                let n = Darwin.send(fd, raw.baseAddress! + sent, raw.count - sent, 0)
+                if n <= 0 { return false }
                 sent += n
             }
+            return true
         }
     }
 }

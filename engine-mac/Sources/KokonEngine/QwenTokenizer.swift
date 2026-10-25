@@ -121,15 +121,30 @@ public final class QwenTokenizer: @unchecked Sendable {
         return result
     }
 
+    static let byteValues: [Character: UInt8] = {
+        var reverse: [Character: UInt8] = [:]
+        for (b, c) in byteCharacters.enumerated() { reverse[c] = UInt8(b) }
+        return reverse
+    }()
+    private lazy var addedIDs = Set(added.map(\.id))
+
     /// Token ids back to text (byte-level characters to bytes); for messages and tests.
     public func decode(_ ids: [Int]) -> String {
-        var reverse: [Character: UInt8] = [:]
-        for (b, c) in QwenTokenizer.byteCharacters.enumerated() { reverse[c] = UInt8(b) }
         var bytes: [UInt8] = []
         for id in ids where id >= 0 && id < tokens.count {
-            if added.contains(where: { $0.id == id }) { bytes += Array(tokens[id].utf8); continue }
-            for c in tokens[id] { if let b = reverse[c] { bytes.append(b) } }
+            bytes += self.bytes(of: id) ?? Array(tokens[id].utf8)
         }
         return String(decoding: bytes, as: UTF8.self)
+    }
+
+    /// A token's bytes, nil for an added token (`<|im_end|>`, `<think>`, …: the ones text generation leaves out, as
+    /// sd.cpp's Qwen2 special tokens).
+    public func bytes(of id: Int) -> [UInt8]? {
+        guard id >= 0, id < tokens.count else { return [] }
+        lock.lock()
+        let isAdded = addedIDs.contains(id)
+        lock.unlock()
+        if isAdded { return nil }
+        return tokens[id].compactMap { QwenTokenizer.byteValues[$0] }
     }
 }

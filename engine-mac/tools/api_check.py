@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Text to image through a running `kokon-engine-mac serve` (or sd-server) as qls-core sends it: capabilities,
-img_gen, polling jobs/{id}, optionally a cancel. Prints the time of each image and writes the PNGs.
+img_gen, polling jobs/{id}, optionally a cancel; with `--enhance`, Prompt+ first (text_gen with Kokon's built-in
+system prompt, read from crates/qls-core/src/enhancer.rs, and its sampling). Prints the time of each image and writes
+the PNGs.
 
-    python3 -I tools/api_check.py --port 1234 --images 2 --out /tmp/api [--size 1024x1024] [--cancel-after 10]
+    python3 -I tools/api_check.py --port 1234 --images 2 --out /tmp/api [--size 1024x1024] [--cancel-after 10] [--enhance]
 """
-import argparse, base64, json, os, time, urllib.request, urllib.error
+import argparse, base64, json, os, re, time, urllib.request, urllib.error
 
 TURBO_SIGMAS = [1.0, 0.978453, 0.95418, 0.926626, 0.89508, 0.845148, 0.704534, 0.414568, 0.0]
 
@@ -29,17 +31,30 @@ def main():
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--out", default=".")
     p.add_argument("--cancel-after", type=float, default=0, help="cancel the last image after this many seconds")
+    p.add_argument("--enhance", action="store_true", help="Prompt+ writes each image's prompt first")
     a = p.parse_args()
+    enhancer = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../crates/qls-core/src/enhancer.rs")
+    system = re.search(r'pub const T2I_SYSTEM_PROMPT: &str = r#"(.*?)"#;', open(enhancer).read(), re.S).group(1) if a.enhance else ""
     width, height = (int(v) for v in a.size.split("x"))
     status, caps = call(a.port, "GET", "/sdcpp/v1/capabilities", timeout=10)
     print(f"capabilities {status}: engine {caps.get('engine', 'sd-server')}, model {caps.get('model', {}).get('name')}")
     os.makedirs(a.out, exist_ok=True)
     for i in range(a.images):
-        body = {"prompt": a.prompt, "negative_prompt": "", "width": width, "height": height, "seed": a.seed + i,
+        started = time.time()
+        prompt = a.prompt
+        if a.enhance:
+            status, done = call(a.port, "POST", "/sdcpp/v1/text_gen", {
+                "prompt": a.prompt, "system_prompt": system, "max_tokens": 1024, "stream": False,
+                "sampling": {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "presence_penalty": 1.5, "seed": a.seed + i}}, timeout=300)
+            if status != 200:
+                print(f"text_gen {status}: {done}")
+                return 1
+            prompt = done["text"]
+            print(f"Prompt+ {time.time() - started:.1f} s, {done['usage']['completion_tokens']} tokens, {done['timings']}: {prompt[:80]}…")
+        body = {"prompt": prompt, "negative_prompt": "", "width": width, "height": height, "seed": a.seed + i,
                 "batch_count": 1, "sample_params": {"sample_method": "euler", "sample_steps": 8,
                                                     "custom_sigmas": TURBO_SIGMAS, "guidance": {"txt_cfg": 1.0}},
                 "output_format": "png", "embed_image_metadata": False}
-        started = time.time()
         status, accepted = call(a.port, "POST", "/sdcpp/v1/img_gen", body)
         if status != 202:
             print(f"img_gen {status}: {accepted}")

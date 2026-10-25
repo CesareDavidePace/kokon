@@ -68,4 +68,20 @@ final class QwenTokenizerTests: XCTestCase {
         XCTAssertEqual(tokenizer.encode("e\u{301}"), [byte(0xC3), byte(0xA9)])
         XCTAssertEqual(tokenizer.decode(tokenizer.encode("the cat é")), "the cat é")
     }
+
+    /// Text generation's stream: whole UTF-8 characters only, added tokens left out, invalid bytes as U+FFFD (sd.cpp's
+    /// TokenStreamDecoder).
+    func testStreamDecoderHoldsPartialCharacters() {
+        var stream = TokenStreamDecoder(tokenizer: tokenizer)
+        XCTAssertEqual(stream.push(id("the")), "the")
+        XCTAssertEqual(stream.push(byte(0xC3)), "")          // the first byte of é
+        XCTAssertEqual(stream.push(id("<|im_start|>")), "")  // an added token: nothing
+        XCTAssertEqual(stream.push(byte(0xA9)), "é")
+        XCTAssertEqual(stream.push(byte(0xFF)), "\u{FFFD}")  // never valid
+        XCTAssertEqual(stream.push(byte(0xE2)), "")
+        XCTAssertEqual(stream.push(byte(UInt8(ascii: "a"))), "\u{FFFD}a")   // a broken sequence, then the next character
+        XCTAssertEqual(stream.push(byte(0xF0)), "")
+        XCTAssertEqual(stream.flush(), "\u{FFFD}")           // unfinished at the end
+        XCTAssertEqual(stream.flush(), "")
+    }
 }

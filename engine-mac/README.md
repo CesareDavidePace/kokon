@@ -16,7 +16,7 @@ swift test                                   # no model needed
 .build/release/kokon-engine-mac generate <encoder.gguf> <dit.gguf> <vae.safetensors> "a red fox in the snow" \
     [--size 1024x1024] [--seed 42] [--out out.png]
 .build/release/kokon-engine-mac serve --diffusion-model <dit.gguf> --vae <vae.safetensors> --llm <encoder.gguf> \
-    [--listen-port 1234]                     # sd-server's /sdcpp/v1 API, text to image
+    [--listen-port 1234]                     # sd-server's /sdcpp/v1 API, text to image and Prompt+
 .build/release/kokon-engine-mac bench        # a few minutes: speed and accuracy of this Mac's paths, a report
 .build/release/kokon-engine-mac check-na     # the Metal 4 matrix product against MPS
 .build/release/kokon-engine-mac check-ane8   # the int8 Neural Engine programs against the fp16 one
@@ -47,7 +47,8 @@ Windows and Linux.
 | `QwenTokenizer.swift` | Qwen's byte-level BPE tokenizer, read from the encoder GGUF's metadata |
 | `QwenTextEncoder.swift`, `Kernels/text.metal` | the text encoder: Qwen3-VL-8B's text decoder on the GPU, diffusers' prompt template |
 | `QwenPipeline.swift` | text to image: noise, Turbo's 8 flow-Euler steps (`planner::TURBO_SIGMAS`), VAE, PNG; models kept loaded for the server |
-| `EngineServer.swift`, `HTTPServer.swift` | `serve`: sd-server's `/sdcpp/v1` API (capabilities, img_gen, jobs, cancel) and its log lines |
+| `EngineServer.swift`, `HTTPServer.swift` | `serve`: sd-server's `/sdcpp/v1` API (capabilities, img_gen, jobs, cancel, text_gen) and its log lines |
+| `QwenTextGeneration.swift`, `Kernels/decode.metal` | Prompt+: the text encoder's LLM writes, K/V cache, products on the Q4_K / Q6_K blocks, sd.cpp's sampler |
 | `Chip.swift` | this Mac's chip, GPU family, cores and memory; each unit's estimated speed against the M2 Pro's |
 | `NeuralAccelerators.swift`, `Kernels/metal4/na_matmul.metal` | the GPU's rows of a product on Metal 4 tensor operations (the M5's neural accelerators) |
 | `Bench.swift` | `bench`: the report testers paste in GitHub |
@@ -248,7 +249,8 @@ Engine's programs, are not pipelines an archive holds. Only an M2 Pro has been m
 `kokon-engine-mac serve` answers sd-server's `/sdcpp/v1` API (capabilities, img_gen, jobs/{id}, cancel), so
 qls-core, the app, remote access and MCP use it as they use sd-server; it prints the log lines qls-core's
 `ProgressParser` reads. Text to image only for now: reference images, masks, LoRAs and second passes are refused
-with 400 (qls-core says so before submitting), upscaling falls back to Lanczos, Prompt+ is off. A running image
+with 400 (qls-core says so before submitting), upscaling falls back to Lanczos. Prompt+ works on text-to-image prompts
+(`text_gen`, below); with images (edits, Compose) it needs the vision tower. A running image
 cancels within a DiT layer (sd-server answers 409 and qls-core restarts it). A new prompt length rebuilds the DiT's
 working memory in ~0.5 s.
 
@@ -257,6 +259,39 @@ files' mappings. Through the API (`tools/api_check.py`, M2 Pro 16 GB, 1024², 20
 operations and tiles (below): **first image 67.0 s, the next ones 63.9–64.5 s, peak 5.0 GB** (before it: 71.1 s, 73.7 s,
 peak 9.6 GB). Keeping the compiled VAE between images now costs only 1.7 GB, but it did not pay on 16 GB: its decode
 3.2 s instead of 4.0, the images 68.4–70.3 s (with the DiT kept too 70.8 / 68.3 s; single runs in a row, not alternated).
+
+**Prompt+ (`POST /sdcpp/v1/text_gen`)**: the text encoder's LLM writes the prompt, as Kokon's sd.cpp does, on the same
+Qwen3-VL Q4_K_M file (`QwenTextGeneration.swift`, `Kernels/decode.metal`): sd.cpp's chat template and stop tokens, its
+sampler step for step (presence penalty, top-k, temperature, top-p, one draw from mt19937_64: a seed writes the same
+text where no two logits nearly tie), its stream of whole UTF-8 characters, its Server-Sent Events, and a dropped
+connection stops it. The prompt runs through the encoder's forward, which keeps each layer's K and V in an fp16 cache
+(144 KB a token); then each token reads every weight once, so the decode's matrix-vector products read the Q4_K and
+Q6_K blocks where they lie in the mapped file. Text and image generation take turns on the GPU.
+
+Against transformers (`check-textgen` + `tools/reference_text_generation.py`: the engine writes greedily, transformers'
+fp32 decoder layers then run once on the prompt and those tokens; 68-token prompt, 48 tokens, M2 Pro, 2026-10-25): the
+prompt's ids identical, the first token's logits within 3.2e-6, the next ones within 4.6e-4 (the fp16 cache: with an fp32
+cache every step within 3.2e-6), the greedy choice the same at all 48 (one near-tie at 0.04 among them).
+
+```bash
+.build/release/kokon-engine-mac check-textgen <encoder.gguf> ~/kokon-bench/ref/textgen-cat     # writes engine.json
+~/kokon-bench/venv-oracle/bin/python -I tools/reference_text_generation.py <encoder.gguf> <processor dir> <text_encoder dir> ~/kokon-bench/ref/textgen-cat
+.build/release/kokon-engine-mac check-textgen <encoder.gguf> ~/kokon-bench/ref/textgen-cat     # compares
+.build/release/kokon-engine-mac time-matvec <encoder.gguf>      # the decode's products alone, GB/s
+```
+
+Speed (M2 Pro 16 GB, 2026-10-25): **a token in 32 ms (31 tokens/s; ~4.9 GB read a token, ~155 GB/s)**; Kokon's
+built-in system prompt and a short request, through the server: 481 prompt tokens, 142 written, 6.6–7.8 s (prefill
+1.8–2.4 s, 26.8–29.5 tokens/s as the cache grows; 8.2 s while the sampler looked the presence penalty up in a set for
+each of the 151 936 tokens, a dense array now as sd.cpp's). The products' kernels (`time-matvec`, GB/s on the file's weights): one lane per 64
+values, one row per SIMD group: Q4_K 25–49, Q6_K 39–53, 10.5 tokens/s; 8 lanes a block with wide loads, 2 rows: Q6_K
+115–182; Q4_K 4 rows: 51–68; its scales and mins unpacked from one 16-byte load without a branch (they were half its
+time): 112–120. One compute encoder per token instead of one per kernel (~500): no change (32.5–34.9 ms against
+31.8–32.5), not kept. Of a 12-token prefill's 2.2–2.5 s, ~2 s is opening the encoder (0.46 s with it warm): when the
+encoder is not kept between images (below 32 GB), the one Prompt+ opened is handed to the next image's encode. Through
+the API at 1024², alternated (`tools/api_check.py --enhance`): the image's text encoder 0.88 s after Prompt+ against
+2.1–2.65 s for a plain image, peak footprint 5.1 GB either way; Prompt+ adds 8.7–9.0 s to an image (75.4–77.2 s against
+65.6–71.3).
 
 ## Per-chip paths
 

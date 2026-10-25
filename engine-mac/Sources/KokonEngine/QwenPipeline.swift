@@ -26,6 +26,40 @@ public final class QwenPipeline {
     /// once per size, or ahead while idle (`QwenVAE.prepare`).
     private var vae: QwenVAE?
 
+    /// **Keep the text encoder and the DiT between images** (the long-lived server): the files stay mapped and the DiT
+    /// keeps its working memory, its Neural Engine programs and its weights' scales for the last image size. Their GPU
+    /// windows are dropped after each use, so while idle the weights are page cache macOS may reclaim, not wired memory.
+    public var keepModels = false
+    /// With `keepModels`, the text encoder's 5 GB mapping too: only from 32 GB (`KOKON_KEEP_ENCODER=1` / `0` to choose).
+    /// On the M2 Pro 16 GB, everything kept made the server's footprint 9–10.8 GB and its second 1024² image 121 s
+    /// instead of 77 (the encoder's pages evicted and read again, 11.7 s; the VAE 26 s; slower steps), 2026-10-25.
+    /// With `keepModels`, what else stays between images, from 32 GB by default: the encoder's mapping
+    /// (`KOKON_KEEP_ENCODER`), the DiT's working memory before the VAE runs (`KOKON_KEEP_DIT`), the compiled VAE
+    /// (`KOKON_KEEP_VAE`); `=1` / `=0` to choose. M2 Pro 16 GB, 1024², server, 2026-10-25: the steps need 1.7 GB of
+    /// footprint, but the compiled VAE keeps 7–8 GB of GPU memory after its decode (peak 10.8 GB during it, the one-shot
+    /// CLI too). With everything kept the second image took 121–129 s instead of 75 (pages evicted and read again, the
+    /// VAE 23–30 s, slower steps); with the VAE dropped after each decode 80.8 s and 2.3 GB while idle. Rebuilding the
+    /// DiT costs 0.4 s, compiling the VAE again ~0.3 s plus its slower first run.
+    public var keepEncoder = QwenPipeline.keep("KOKON_KEEP_ENCODER")
+    public var keepDiT = QwenPipeline.keep("KOKON_KEEP_DIT")
+    public var keepVAE = QwenPipeline.keep("KOKON_KEEP_VAE")
+    static func keep(_ key: String) -> Bool {
+        switch ProcessInfo.processInfo.environment[key] {
+        case "1": return true
+        case "0": return false
+        default: return Chip.current.memoryGB >= 30
+        }
+    }
+    private var encoderFile: GGUFFile?, encoder: QwenTextEncoder?
+    private var ditFile: GGUFFile?, dit: QwenDiT?
+    /// Checked before each step and after each DiT layer: true stops the image (`QwenDiT.Cancelled`).
+    public var cancelled: () -> Bool = { false }
+    /// What the server reports while an image runs.
+    public enum Event { case encoded(tokens: Int, seconds: Double), step(Int, of: Int, seconds: Double), decoding }
+    public var events: ((Event) -> Void)?
+    /// The co-executor's shares for the next evaluation of the kept DiT (`keepModels`).
+    public var shares: String? { dit?.coexecutor?.shares }
+
     public init(encoder: String, dit: String, vae: String) throws {
         encoderPath = encoder
         ditPath = dit
@@ -58,6 +92,14 @@ public final class QwenPipeline {
         var t = DispatchTime.now().uptimeNanoseconds
         let (conditioning, rows): ([Float], Int) = try {
             if let given { return (given, given.count / QwenDiT.dim) }
+            if keepModels && keepEncoder {
+                if encoder == nil {
+                    let file = try GGUFFile(path: encoderPath)
+                    (encoderFile, encoder) = (file, try QwenTextEncoder(file: file, context: context))
+                }
+                defer { encoder!.release() }
+                return try encoder!.conditioning(prompt: prompt)
+            }
             let file = try GGUFFile(path: encoderPath)
             let encoder = try QwenTextEncoder(file: file, context: context)
             defer { encoder.release() }
@@ -65,6 +107,7 @@ public final class QwenPipeline {
         }()
         timings["encode"] = since(t)
         log(String(format: "text encoder: %d tokens in %.2f s", rows, timings["encode"]!))
+        events?(.encoded(tokens: rows, seconds: timings["encode"]!))
 
         // 2. Noise, packed: token y·w + x holds the 64 channels of cell (y, x).
         let start = noise ?? Noise.philox(seed: seed, count: channels * h * w)   // sd.cpp's, value for value
@@ -77,26 +120,43 @@ public final class QwenPipeline {
         t = DispatchTime.now().uptimeNanoseconds
         let sequence = try QwenSequence.textToImage(text: rows, target: .init(height: h, width: w))
         try {
-            let file = try GGUFFile(path: ditPath)
+            let file = try ditFile ?? GGUFFile(path: ditPath)
             defer { context.release(file) }
-            let dit = try QwenDiT(file: file, context: context, sequence: sequence)
+            let dit: QwenDiT
+            if keepModels {
+                ditFile = file
+                if self.dit?.sequence != sequence {
+                    self.dit = nil   // its working memory goes before the new one's is taken
+                    self.dit = try QwenDiT(file: file, context: context, sequence: sequence)
+                }
+                dit = self.dit!
+            } else {
+                dit = try QwenDiT(file: file, context: context, sequence: sequence)
+            }
+            dit.cancelled = cancelled
+            defer { dit.cancelled = { false } }
             try dit.prepareModulation([0] + sigmas.dropLast())
             timings["dit load"] = since(t)
             for i in 0..<(sigmas.count - 1) {
+                if cancelled() { throw QwenDiT.Cancelled() }
                 let stepStart = DispatchTime.now().uptimeNanoseconds
                 let velocity = try dit.forward(encoder: conditioning, target: x, sigma: sigmas[i])
                 let dt = sigmas[i + 1] - sigmas[i]
                 for j in x.indices { x[j] += dt * velocity[j] }
                 timings["step \(i + 1)"] = since(stepStart)
                 log(String(format: "step %d/%d (σ %.4f): %.2f s", i + 1, sigmas.count - 1, sigmas[i], timings["step \(i + 1)"]!))
+                events?(.step(i + 1, of: sigmas.count - 1, seconds: timings["step \(i + 1)"]!))
                 step?(i, x)
             }
         }()
 
         // 4. The image.
+        if !keepDiT { dit = nil }   // its working memory goes before the VAE's
         t = DispatchTime.now().uptimeNanoseconds
+        events?(.decoding)
         if vae == nil { vae = try QwenVAE(path: vaePath, context: context) }
         let image = try vae!.decode(QwenPipeline.unpack(x, height: h, width: w), height: h, width: w)
+        if !keepVAE { vae = nil }
         timings["vae"] = since(t)
         timings["total"] = since(started)
         log(String(format: "VAE: %.2f s; total %.1f s", timings["vae"]!, timings["total"]!))
@@ -139,17 +199,23 @@ public final class QwenPipeline {
 
     /// Writes interleaved 8-bit RGBA (straight alpha) as a PNG.
     public static func writePNG(_ rgba: [UInt8], width: Int, height: Int, to path: String) throws {
+        try pngData(rgba, width: width, height: height).write(to: URL(fileURLWithPath: path))
+    }
+
+    /// Interleaved 8-bit RGBA (straight alpha) encoded as a PNG.
+    public static func pngData(_ rgba: [UInt8], width: Int, height: Int) throws -> Data {
         let data = Data(rgba) as CFData
+        let out = NSMutableData()
         guard let provider = CGDataProvider(data: data),
               let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
                                   space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                   bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue),
                                   provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent),
-              let destination = CGImageDestinationCreateWithURL(URL(fileURLWithPath: path) as CFURL,
-                                                                UTType.png.identifier as CFString, 1, nil) else {
-            throw MetalContext.Failure.buffer("cannot write \(path)")
+              let destination = CGImageDestinationCreateWithData(out as CFMutableData, UTType.png.identifier as CFString, 1, nil) else {
+            throw MetalContext.Failure.buffer("cannot encode a PNG")
         }
         CGImageDestinationAddImage(destination, image, nil)
-        guard CGImageDestinationFinalize(destination) else { throw MetalContext.Failure.buffer("cannot write \(path)") }
+        guard CGImageDestinationFinalize(destination) else { throw MetalContext.Failure.buffer("cannot encode a PNG") }
+        return out as Data
     }
 }

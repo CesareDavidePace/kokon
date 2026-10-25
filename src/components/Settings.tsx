@@ -583,8 +583,16 @@ export function Settings() {
             <>
               <div className="field">
                 <span>Engine</span>
-                <span>Metal (Apple Silicon GPU, beta)</span>
+                <span>{cfg.macEngine ? "Kokon's Mac engine (experimental)" : "Metal (Apple Silicon GPU, beta)"}</span>
               </div>
+              <div className="field-row">
+                <span>Kokon's Mac engine (experimental)</span>
+                <Switch on={!!cfg.macEngine} onChange={(v) => set({ macEngine: v })} />
+              </div>
+              <span className="muted" style={{ marginTop: -10 }}>
+                Kokon's own engine for Apple Silicon: the GPU, the CPU's matrix unit and the Neural Engine work together, about 4 times faster for new images. Experimental: new images only for now. Edits, LoRAs, Prompt+ and the upscaler need it off.
+              </span>
+              {!cfg.macEngine && (
               <div className="field">
                 <span>Model memory</span>
                 <Seg<TextEncoderPlacement>
@@ -599,6 +607,7 @@ export function Settings() {
                   Keep loaded: every model stays in memory, fastest between steps; needs 24 GB or more. Load when needed: each model (text encoder, image model, decoder) is loaded from the SSD when it runs and released after, so the image model has room to work on 16 GB Macs. It adds a few seconds per image. macOS cannot swap memory the GPU is using, so this is what makes 16 GB work.
                 </span>
               </div>
+              )}
               <label className="field-row">
                 <span>Memory kept free for macOS (GiB)</span>
                 <input className="input" type="number" min={0} max={16} step={0.5} style={{ width: 90 }} value={cfg.vramReserveGib} onChange={(e) => set({ vramReserveGib: Math.max(0, Number(e.target.value) || 0) })} />

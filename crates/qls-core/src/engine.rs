@@ -1093,6 +1093,10 @@ impl Engine {
                 .await
                 .map_err(AppError::internal)??;
             let pipeline::PreparedJob { request: mut sd_req, post } = prepared;
+            if let Some(what) = caps.mac_engine_unsupported(&sd_req) {
+                return Err(AppError::new(ErrorCode::Unsupported, format!("Kokon's Mac engine (experimental) does not do {what} yet."))
+                    .suggest("Turn it off in Settings → Performance to use the standard engine for this."));
+            }
 
             // 4b. Prompt enhancer: rewrites the user's prompt, looking at the references
             // exactly as the image model gets them.

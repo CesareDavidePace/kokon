@@ -17,7 +17,8 @@ let package = Package(
             cSettings: [.define("ACCELERATE_NEW_LAPACK")],
             swiftSettings: [.define("ACCELERATE_NEW_LAPACK")],
             linkerSettings: [.linkedFramework("Accelerate"), .linkedFramework("Metal"),
-                             .linkedFramework("MetalPerformanceShaders"), .linkedFramework("CoreML")]
+                             .linkedFramework("MetalPerformanceShaders"), .linkedFramework("CoreML"),
+                             .linkedFramework("IOKit")]
         ),
         .executableTarget(name: "kokon-engine-mac", dependencies: ["KokonEngine"]),
         .testTarget(name: "KokonEngineTests", dependencies: ["KokonEngine"], resources: [.copy("Fixtures")]),

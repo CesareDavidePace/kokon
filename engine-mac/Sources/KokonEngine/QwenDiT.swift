@@ -65,6 +65,10 @@ public final class QwenDiT {
     private var attentions: [String: GraphAttention] = [:]
     /// Seconds per phase of the last evaluation.
     public private(set) var timings: [String: Double] = [:]
+    /// Checked after each layer is encoded: true stops the evaluation (`Cancelled`) once the GPU has finished what was
+    /// committed, so a cancel takes effect within a layer (~0.25 s at 1024² on the M2 Pro).
+    public var cancelled: () -> Bool = { false }
+    public struct Cancelled: Error {}
 
     public init(file: GGUFFile, context: MetalContext, sequence: QwenSequence) throws {
         self.file = file
@@ -237,6 +241,10 @@ public final class QwenDiT {
                 try finish(commands); probe("layer\(layer)_out", arena.pointer(x), n * d); commands = try begin()
             } else {
                 commands.commit()
+                if cancelled() {
+                    commands.waitUntilCompleted()   // the queue runs in order: everything committed is done
+                    throw Cancelled()
+                }
                 commands = try begin()
             }
         }

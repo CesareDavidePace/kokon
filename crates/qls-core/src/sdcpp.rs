@@ -203,6 +203,9 @@ pub struct Capabilities {
     /// Whether `/sdcpp/v1/text_gen` works with the loaded model (Kokon's engine builds only).
     #[serde(default)]
     pub text_generation: bool,
+    /// The server's own name when it is not sd-server: `kokon-engine-mac` (Kokon's Mac engine).
+    #[serde(default)]
+    pub engine: String,
 }
 
 impl Capabilities {
@@ -211,6 +214,23 @@ impl Capabilities {
     }
     pub fn supports_img_gen(&self) -> bool {
         self.supported_modes.iter().any(|m| m == "img_gen")
+    }
+    /// The server is Kokon's Mac engine (`engine-mac/`), not sd-server.
+    pub fn is_mac_engine(&self) -> bool {
+        self.engine == crate::config::MAC_ENGINE_EXE
+    }
+    /// What in `req` Kokon's Mac engine cannot do yet (it runs text to image only), in the user's words; None when it
+    /// can, and always for sd-server.
+    pub fn mac_engine_unsupported(&self, req: &ImgGenRequest) -> Option<&'static str> {
+        if !self.is_mac_engine() {
+            None
+        } else if !req.ref_images.is_empty() || req.init_image.is_some() || req.mask_image.is_some() {
+            Some("edits")
+        } else if req.hires.as_ref().is_some_and(|h| h.enabled) {
+            Some("second passes")
+        } else {
+            None
+        }
     }
     /// True when `name` is a model-backed upscaler the server can load (hires and,
     /// if `image` is set, the standalone upscale endpoint).
@@ -876,6 +896,29 @@ mod tests {
         assert!((v["sampling"]["presence_penalty"].as_f64().unwrap() - 1.5).abs() < 1e-6);
         let v = serde_json::to_value(TextGenRequest { images: vec!["AAA".into()], ..r }).unwrap();
         assert_eq!(v["images"][0], "AAA");
+    }
+
+    #[test]
+    fn mac_engine_capabilities() {
+        // As `kokon-engine-mac serve` answers (EngineServer.capabilities).
+        let caps: Capabilities = serde_json::from_str(r#"{"engine":"kokon-engine-mac","model":{"name":"q.gguf","path":"/m/q.gguf","stem":"q"},
+            "supported_modes":["img_gen"],"features_by_mode":{"img_gen":{"ref_images":false,"lora":false,"cancel_generating":true}},
+            "upscale":false,"upscalers":[],"text_generation":false}"#).unwrap();
+        assert!(caps.is_mac_engine() && caps.supports_img_gen());
+        assert!(caps.img_feature("cancel_generating") && !caps.img_feature("lora") && !caps.img_feature("ref_images"));
+        assert!(caps.model_matches(std::path::Path::new("/m/q.gguf")));
+        let t2i = ImgGenRequest { prompt: "a fox".into(), width: 1024, height: 1024, ..Default::default() };
+        assert_eq!(caps.mac_engine_unsupported(&t2i), None);
+        let edit = ImgGenRequest { ref_images: vec!["png".into()], ..t2i.clone() };
+        assert_eq!(caps.mac_engine_unsupported(&edit), Some("edits"));
+        let inpaint = ImgGenRequest { mask_image: Some("png".into()), ..t2i.clone() };
+        assert_eq!(caps.mac_engine_unsupported(&inpaint), Some("edits"));
+        let hires = ImgGenRequest { hires: Some(HiresParams { enabled: true, ..Default::default() }), ..t2i.clone() };
+        assert_eq!(caps.mac_engine_unsupported(&hires), Some("second passes"));
+        // sd-server: no engine field, nothing refused here.
+        let sdcpp: Capabilities = serde_json::from_str(r#"{"supported_modes":["img_gen"]}"#).unwrap();
+        assert!(!sdcpp.is_mac_engine());
+        assert_eq!(sdcpp.mac_engine_unsupported(&edit), None);
     }
 
     #[test]

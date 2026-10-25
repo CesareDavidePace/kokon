@@ -1,0 +1,293 @@
+import Foundation
+
+/// **The engine as a long-lived server speaking sd-server's `/sdcpp/v1` API**, so qls-core, the app, remote access
+/// and MCP use it as they use sd-server (crates/qls-core/src/sdcpp.rs is the client):
+///
+///     GET  /sdcpp/v1/capabilities       the model, the modes and limits
+///     POST /sdcpp/v1/img_gen            202 {id, kind, status, created, poll_url}: the job is queued
+///     GET  /sdcpp/v1/jobs/{id}          {status: queued|generating|completed|failed|cancelled, result, error}
+///     POST /sdcpp/v1/jobs/{id}/cancel   200 {status: cancelled}: a running image stops within a DiT layer
+///
+/// Text to image only for now: requests with reference images, a mask, an init image, LoRAs or a second pass are
+/// refused with 400 and say so. Jobs run one at a time; the text encoder, the DiT and the compiled VAE stay loaded
+/// between them (`QwenPipeline.keepModels`).
+///
+/// Progress goes to stdout as sd-server's log lines, the ones qls-core's `ProgressParser` reads (process.rs):
+/// `generate_image WxH`, `sampling using`, `generating image: i/n - seed s`, step bars `| i/n - x.xxs/it`,
+/// `decoding 1 latents`, `generate_image completed in Xs`.
+public final class EngineServer: @unchecked Sendable {
+    public struct Paths: Sendable {
+        public let diffusionModel, vae, textEncoder: String
+        public init(diffusionModel: String, vae: String, textEncoder: String) {
+            self.diffusionModel = diffusionModel
+            self.vae = vae
+            self.textEncoder = textEncoder
+        }
+    }
+
+    final class Job: @unchecked Sendable {
+        let id: String
+        let created: Int
+        let request: ImageRequest
+        var status = "queued"
+        var started: Int?, completed: Int?
+        var images: [String] = []
+        var error: (code: String, message: String)?
+        init(id: String, request: ImageRequest) {
+            self.id = id
+            self.request = request
+            created = Int(Date().timeIntervalSince1970)
+        }
+    }
+
+    /// The fields of `img_gen` the engine reads (sd-server's names), checked.
+    struct ImageRequest: Sendable {
+        let prompt: String
+        let width, height: Int
+        let seed: Int64
+        let batch: Int
+        let sigmas: [Float]
+
+        /// nil and the reason when the engine cannot do it (yet).
+        static func parse(_ body: Data) -> (ImageRequest?, String?) {
+            guard let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else {
+                return (nil, "the body is not a JSON object")
+            }
+            func array(_ key: String) -> [Any] { json[key] as? [Any] ?? [] }
+            if !array("ref_images").isEmpty || json["init_image"] is String || json["mask_image"] is String {
+                return (nil, "Kokon's Mac engine does text to image only for now (no reference images, init image or mask)")
+            }
+            if !array("lora").isEmpty { return (nil, "Kokon's Mac engine does not run LoRAs yet") }
+            if let hires = json["hires"] as? [String: Any], hires["enabled"] as? Bool == true {
+                return (nil, "Kokon's Mac engine has no second pass (hires)")
+            }
+            if let format = json["output_format"] as? String, format != "png" { return (nil, "output_format \(format): png only") }
+            let width = json["width"] as? Int ?? 1024, height = json["height"] as? Int ?? 1024
+            guard width % 32 == 0, height % 32 == 0, width >= 64, height >= 64, width <= 4096, height <= 4096 else {
+                return (nil, "\(width)×\(height): each side must be a multiple of 32 from 64 to 4096")
+            }
+            let sample = json["sample_params"] as? [String: Any] ?? [:]
+            let cfg = (sample["guidance"] as? [String: Any])?["txt_cfg"] as? Double ?? 1
+            guard abs(cfg - 1) < 1e-6 else { return (nil, "txt_cfg \(cfg): Qwen-Image 2.1 Turbo runs at CFG 1 only") }
+            var sigmas = (sample["custom_sigmas"] as? [Any] ?? []).compactMap { ($0 as? NSNumber)?.floatValue }
+            let steps = sample["sample_steps"] as? Int ?? QwenPipeline.turboSigmas.count - 1
+            if sigmas.isEmpty {
+                guard steps == QwenPipeline.turboSigmas.count - 1 else {
+                    return (nil, "\(steps) steps without custom_sigmas: the engine knows Turbo's 8-step schedule only")
+                }
+                sigmas = QwenPipeline.turboSigmas
+            }
+            guard sigmas.count >= 2, sigmas.allSatisfy({ $0 >= 0 && $0 <= 1 }) else { return (nil, "custom_sigmas \(sigmas) out of [0, 1]") }
+            var seed = (json["seed"] as? NSNumber)?.int64Value ?? 42
+            if seed < 0 { seed = Int64.random(in: 0..<(1 << 31)) }
+            let batch = json["batch_count"] as? Int ?? 1
+            guard (1...EngineServer.maxBatch).contains(batch) else { return (nil, "batch_count \(batch): 1 to \(EngineServer.maxBatch)") }
+            return (ImageRequest(prompt: json["prompt"] as? String ?? "", width: width, height: height, seed: seed,
+                                 batch: batch, sigmas: sigmas), nil)
+        }
+    }
+
+    static let maxBatch = 4, maxQueue = 8
+    public let paths: Paths
+    let pipeline: QwenPipeline
+    private var jobs: [String: Job] = [:]
+    private var queue: [Job] = []
+    private var running: Job?
+    private let lock = NSLock()
+    private let wake = DispatchSemaphore(value: 0)
+    /// Lines to stdout (qls-core reads them from the log file it redirects stdout to).
+    public var log: @Sendable (String) -> Void = { line in
+        FileHandle.standardOutput.write(Data((line + "\n").utf8))
+    }
+
+    public init(paths: Paths) throws {
+        self.paths = paths
+        for path in [paths.diffusionModel, paths.vae, paths.textEncoder] where !FileManager.default.fileExists(atPath: path) {
+            throw GGUFFile.Failure.open(path)
+        }
+        pipeline = try QwenPipeline(encoder: paths.textEncoder, dit: paths.diffusionModel, vae: paths.vae)
+        pipeline.keepModels = true
+        pipeline.log = { _ in }
+        let worker = Thread { [self] in work() }
+        worker.name = "kokon.jobs"
+        worker.qualityOfService = .userInitiated
+        worker.start()
+    }
+
+    // MARK: - HTTP
+
+    public func handle(_ request: HTTPServer.Request) -> HTTPServer.Response {
+        let parts = request.path.split(separator: "/").map(String.init)
+        guard parts.count >= 3, parts[0] == "sdcpp", parts[1] == "v1" else { return .error(404, "not found: \(request.path)") }
+        switch (request.method, Array(parts.dropFirst(2))) {
+        case ("GET", ["capabilities"]): return .json(200, capabilities())
+        case ("POST", ["img_gen"]): return submit(request.body)
+        case ("GET", let p) where p.count == 2 && p[0] == "jobs":
+            return lock.withLock { jobs[p[1]].map { .json(200, describe($0)) } ?? .error(404, "unknown job \(p[1])") }
+        case ("POST", let p) where p.count == 3 && p[0] == "jobs" && p[2] == "cancel": return cancel(p[1])
+        case (_, ["upscale"]), (_, ["text_gen"]):
+            return .error(404, "Kokon's Mac engine has no \(parts[2]) endpoint yet")
+        default: return .error(404, "not found: \(request.method) \(request.path)")
+        }
+    }
+
+    func capabilities() -> [String: Any] {
+        let url = URL(fileURLWithPath: paths.diffusionModel)
+        let feature: [String: Any] = ["ref_images": false, "init_image": false, "mask_image": false, "lora": false,
+                                      "hires": false, "custom_sigmas": true, "cancel_generating": true]
+        return [
+            "engine": "kokon-engine-mac",
+            "model": ["name": url.lastPathComponent, "stem": url.deletingPathExtension().lastPathComponent, "path": paths.diffusionModel],
+            "supported_modes": ["img_gen"],
+            "samplers": ["euler"],
+            "schedulers": [String](),
+            "output_formats": ["png"],
+            "limits": ["min_width": 64, "max_width": 4096, "min_height": 64, "max_height": 4096,
+                       "max_batch_count": EngineServer.maxBatch, "max_queue_size": EngineServer.maxQueue],
+            "features_by_mode": ["img_gen": feature],
+            "defaults_by_mode": ["img_gen": ["sample_steps": QwenPipeline.turboSigmas.count - 1, "txt_cfg": 1]],
+            "upscalers": [Any](),
+            "upscale": false,
+            "text_generation": false,
+        ]
+    }
+
+    func submit(_ body: Data) -> HTTPServer.Response {
+        let (parsed, reason) = ImageRequest.parse(body)
+        guard let parsed else { return .error(400, reason ?? "bad request") }
+        return lock.withLock {
+            guard queue.count < EngineServer.maxQueue else { return .error(429, "the queue is full") }
+            let job = Job(id: UUID().uuidString.lowercased(), request: parsed)
+            jobs[job.id] = job
+            queue.append(job)
+            wake.signal()
+            return .json(202, ["id": job.id, "kind": "img_gen", "status": job.status, "created": job.created,
+                               "poll_url": "/sdcpp/v1/jobs/\(job.id)"])
+        }
+    }
+
+    /// A queued job leaves the queue; a running one is marked and stops at the next DiT layer, its result dropped.
+    func cancel(_ id: String) -> HTTPServer.Response {
+        lock.withLock {
+            guard let job = jobs[id] else { return .error(404, "unknown job \(id)") }
+            if job.status == "queued" || job.status == "generating" {
+                queue.removeAll { $0 === job }
+                job.status = "cancelled"
+                job.completed = Int(Date().timeIntervalSince1970)
+            }
+            return .json(200, describe(job))
+        }
+    }
+
+    /// sd-server's job object. Called with the lock held.
+    func describe(_ job: Job) -> [String: Any] {
+        var out: [String: Any] = ["id": job.id, "kind": "img_gen", "status": job.status, "created": job.created,
+                                  "queue_position": queue.firstIndex { $0 === job }.map { $0 + 1 } ?? 0]
+        if let s = job.started { out["started"] = s }
+        if let c = job.completed { out["completed"] = c }
+        if job.status == "completed" {
+            out["result"] = ["output_format": "png",
+                             "images": job.images.enumerated().map { ["index": $0.offset, "b64_json": $0.element] as [String: Any] }]
+        }
+        if let e = job.error { out["error"] = ["code": e.code, "message": e.message] }
+        return out
+    }
+
+    // MARK: - the jobs
+
+    private func work() {
+        while true {
+            wake.wait()
+            guard let job: Job = lock.withLock({
+                guard !queue.isEmpty else { return nil }
+                let job = queue.removeFirst()
+                job.status = "generating"
+                job.started = Int(Date().timeIntervalSince1970)
+                running = job
+                return job
+            }) else { continue }
+            let outcome: Result<[String], Error> = autoreleasepool { Result { try generate(job) } }
+            lock.withLock {
+                running = nil
+                job.completed = Int(Date().timeIntervalSince1970)
+                guard job.status != "cancelled" else { return }
+                switch outcome {
+                case .success(let images):
+                    job.images = images
+                    job.status = "completed"
+                case .failure(let error):
+                    job.status = "failed"
+                    job.error = ("generation_failed", "\(error)")
+                }
+            }
+            if case .failure(let error) = outcome, !(error is QwenDiT.Cancelled) { log("[ERROR  ] engine: \(error)") }
+            // Older finished jobs are forgotten (the client fetched their result long ago).
+            lock.withLock {
+                let finished = jobs.values.filter { $0.completed != nil }.sorted { $0.created < $1.created }
+                for old in finished.dropLast(16) { jobs[old.id] = nil }
+            }
+        }
+    }
+
+    private func generate(_ job: Job) throws -> [String] {
+        let r = job.request
+        let started = DispatchTime.now().uptimeNanoseconds
+        func seconds(since t: UInt64) -> Double { Double(DispatchTime.now().uptimeNanoseconds - t) * 1e-9 }
+        log("[INFO   ] engine-mac - generate_image \(r.width)x\(r.height)")
+        log("[INFO   ] engine-mac - sampling using Euler method")
+        pipeline.cancelled = { [weak self, job] in self?.lock.withLock { job.status == "cancelled" } ?? true }
+        var images: [String] = []
+        for i in 0..<r.batch {
+            let seed = r.seed + Int64(i)
+            var stepStart = DispatchTime.now().uptimeNanoseconds
+            pipeline.events = { [self] event in
+                switch event {
+                case .encoded(let tokens, let s):
+                    log(String(format: "[INFO   ] engine-mac - get_learned_condition completed, %d tokens, taking %.2fs", tokens, s))
+                    log("[INFO   ] engine-mac - generating image: \(i + 1)/\(r.batch) - seed \(seed)")
+                    stepStart = DispatchTime.now().uptimeNanoseconds
+                case .step(let step, let total, let s):
+                    let filled = 50 * step / total
+                    let bar = String(repeating: "=", count: max(0, filled - 1)) + (filled < 50 ? ">" : "=")
+                        + String(repeating: " ", count: 50 - filled)
+                    log(String(format: "  |%@| %d/%d - %.2fs/it", bar, step, total, s))
+                case .decoding:
+                    let m = MemoryUsage.now()
+                    log(String(format: "[INFO   ] engine-mac - sampling completed, taking %.2fs (footprint %.2f GB)", seconds(since: stepStart), m.footprint))
+                    log("[INFO   ] engine-mac - decoding 1 latents")
+                }
+            }
+            let image = try pipeline.textToImage(prompt: r.prompt, width: r.width, height: r.height, seed: UInt64(bitPattern: seed),
+                                                 sigmas: r.sigmas)
+            let png = try QwenPipeline.pngData(QwenPipeline.pixels(image, width: r.width, height: r.height), width: r.width, height: r.height)
+            images.append(png.base64EncodedString())
+            let t = pipeline.timings
+            log(String(format: "[INFO   ] engine-mac - image %d/%d: text encoder %.2fs, DiT ready %.2fs, VAE %.2fs, total %.2fs", i + 1, r.batch,
+                       t["encode"] ?? 0, t["dit load"] ?? 0, t["vae"] ?? 0, t["total"] ?? 0))
+        }
+        pipeline.events = nil
+        let memory = MemoryUsage.now()
+        log(String(format: "[INFO   ] engine-mac - memory: footprint %.2f GB (peak %.2f GB), resident %.2f GB (peak %.2f GB)",
+                   memory.footprint, memory.footprintPeak, memory.resident, memory.residentPeak))
+        log(String(format: "[INFO   ] engine-mac - generate_image completed in %.2fs", seconds(since: started)))
+        return images
+    }
+}
+
+/// This process's memory, GB: the footprint (what macOS charges it: anonymous and wired memory, not the file pages it
+/// can drop) and the resident size (with the mapped model pages in use), now and at their peak.
+public struct MemoryUsage {
+    public let footprint, footprintPeak, resident, residentPeak: Double
+
+    public static func now() -> MemoryUsage {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
+        }
+        guard result == KERN_SUCCESS else { return MemoryUsage(footprint: 0, footprintPeak: 0, resident: 0, residentPeak: 0) }
+        let gb = 1.0 / Double(1 << 30)
+        return MemoryUsage(footprint: Double(info.phys_footprint) * gb, footprintPeak: Double(info.ledger_phys_footprint_peak) * gb,
+                           resident: Double(info.resident_size) * gb, residentPeak: Double(info.resident_size_peak) * gb)
+    }
+}

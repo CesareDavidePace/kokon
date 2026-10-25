@@ -19,6 +19,8 @@ kokon-engine-mac: Kokon's Apple Silicon engine (in development)
   check-noise <philox.bin>                 the seed's noise against sd.cpp's generator (tools/philox_reference.cpp)
   generate <encoder.gguf> <dit.gguf> <vae.safetensors> "<prompt>" [--size WxH] [--seed N] [--out file.png]
                                            text to image, Turbo's 8 steps (default 1024x1024, seed 42, out.png)
+  serve --diffusion-model <dit.gguf> --vae <vae.safetensors> --llm <encoder.gguf> [--listen-ip 127.0.0.1] [--listen-port 1234]
+                                           the engine as a server speaking sd-server's /sdcpp/v1 API (text to image)
   probe                                    this Mac's matrix throughput: GPU, AMX, Neural Engine, together
   probe-attention                          the target's attention at 1024² on the GPU, the Neural Engine, the CPU
 """
@@ -102,6 +104,28 @@ do {
     case "check-noise":
         guard arguments.count == 2 else { fail(usage) }
         try Checks.noise(dump: arguments[1])
+    case "serve":
+        var (ip, port, dit, vae, llm) = ("127.0.0.1", UInt16(1234), "", "", "")
+        var options = arguments.dropFirst().makeIterator()
+        while let option = options.next() {
+            guard let value = options.next() else { fail("\(option) needs a value\n\n" + usage) }
+            switch option {
+            case "--listen-ip": ip = value
+            case "--listen-port": port = UInt16(value) ?? port
+            case "--diffusion-model": dit = value
+            case "--vae": vae = value
+            case "--llm": llm = value
+            case "--llm_vision": break   // edits, later
+            default: fail("unknown option \(option)\n\n" + usage)
+            }
+        }
+        guard !dit.isEmpty, !vae.isEmpty, !llm.isEmpty else { fail("serve needs --diffusion-model, --vae and --llm\n\n" + usage) }
+        setvbuf(stdout, nil, _IOLBF, 0)   // qls-core follows the log file stdout goes to
+        print("kokon-engine-mac (experimental), Qwen-Image 2.1 Turbo")
+        let engine = try EngineServer(paths: .init(diffusionModel: dit, vae: vae, textEncoder: llm))
+        let server = try HTTPServer(host: ip, port: port) { engine.handle($0) }
+        print("[INFO   ] engine-mac - listening on: http://\(ip):\(server.port)")
+        server.run()
     case "probe":
         try Probe.run()
     case "probe-attention":

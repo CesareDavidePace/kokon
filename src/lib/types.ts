@@ -298,6 +298,8 @@ export interface AppConfig {
   /** Shrink the input before upscaling (enlargements under ~2.8x). */
   upscalePrescale: boolean;
   extraServerArgs: string[];
+  /** Kokon's own engine for Apple Silicon instead of sd.cpp's Metal build (experimental, off by default; Metal only). */
+  macEngine?: boolean;
   outputDir: string;
   keepServerRunning: boolean;
   idleUnloadMinutes: number;

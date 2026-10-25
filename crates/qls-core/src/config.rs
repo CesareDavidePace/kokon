@@ -69,6 +69,11 @@ pub enum TextEncoderPlacement {
 }
 
 /// Which stable-diffusion.cpp build runs the model. Each build lives in its own folder, so
+/// Folder of Kokon's Mac engine, in the stable-diffusion.cpp folder (beside `engine-metal`), and its executable
+/// (the engine's kernels and resources are the `KokonEngineMac_KokonEngine.bundle` next to it).
+pub const MAC_ENGINE_DIR: &str = "engine-mac";
+pub const MAC_ENGINE_EXE: &str = "kokon-engine-mac";
+
 /// switching back and forth needs no re-download.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -331,6 +336,11 @@ pub struct AppConfig {
     /// which avoided grid patterns on clean renders in an A/B on 8 images (2026-10-12).
     pub upscale_prescale: bool,
     pub extra_server_args: Vec<String>,
+    /// Kokon's own engine for Apple Silicon (`engine-mac/`, `kokon-engine-mac serve`) instead of sd.cpp's Metal build:
+    /// the GPU, the CPU's matrix unit and the Neural Engine together, ~4x faster text to image on an M2 Pro. Experimental
+    /// and off by default (Settings → Performance); text to image only for now. sd.cpp stays the default, the
+    /// fallback, and the engine on Windows and Linux.
+    pub mac_engine: bool,
     pub output_dir: PathBuf,
     pub keep_server_running: bool,
     /// When no desktop window is attached (e.g. MCP only), unload the model after this
@@ -382,6 +392,7 @@ impl Default for AppConfig {
             upscale_blend: 1.0,
             upscale_prescale: false,
             extra_server_args: vec![],
+            mac_engine: false,
             output_dir: default_output_dir(),
             keep_server_running: false,
             idle_unload_minutes: 15,
@@ -705,6 +716,12 @@ impl AppConfig {
     /// Why the inference server cannot start: the engine or a model file is missing.
     pub fn missing_files_error(&self) -> Option<AppError> {
         let exe = self.server_exe();
+        if !exe.is_file() && self.uses_mac_engine() {
+            return Some(
+                AppError::new(ErrorCode::MissingModel, format!("Kokon's Mac engine was not found in {}.", exe.parent().unwrap_or(&exe).display()))
+                    .suggest("Turn off Kokon's Mac engine in Settings → Performance to use the standard engine."),
+            );
+        }
         if !exe.is_file() {
             return Some(
                 AppError::new(ErrorCode::MissingModel, format!("sd-server was not found in {}.", self.engine_dir().display()))
@@ -776,7 +793,15 @@ impl AppConfig {
     }
 
     pub fn server_exe(&self) -> PathBuf {
+        if self.uses_mac_engine() {
+            return self.sdcpp_dir.join(MAC_ENGINE_DIR).join(MAC_ENGINE_EXE);
+        }
         self.engine_dir().join(if cfg!(windows) { "sd-server.exe" } else { "sd-server" })
+    }
+
+    /// Kokon's Mac engine runs instead of sd-server: chosen in Settings, on the Metal backend only.
+    pub fn uses_mac_engine(&self) -> bool {
+        self.mac_engine && self.gpu_backend == GpuBackend::Metal
     }
 
     /// The configured device when it belongs to the active engine, else its first GPU.

@@ -253,10 +253,10 @@ cancels within a DiT layer (sd-server answers 409 and qls-core restarts it). A n
 working memory in ~0.5 s.
 
 What stays loaded between images depends on the Mac (`QwenPipeline.keep*`): from 32 GB everything; below, only the
-files' mappings, since on the M2 Pro 16 GB the compiled VAE keeps 7–8 GB of GPU memory after a 1024² decode. With
-everything kept there the second image took 121–129 s (pages evicted and read again); now, through the API
-(`tools/api_check.py`, 2026-10-25): **first 1024² image 71.1 s, the next ones 73.7 s**, 1.1 GB of footprint while idle,
-peak 9.6 GB during the VAE's decode (the one-shot CLI peaks the same; a tiled decode is the next step for 16 GB Macs).
+files' mappings. Through the API (`tools/api_check.py`, M2 Pro 16 GB, 1024², 2026-10-25), with the VAE as single
+operations and tiles (below): **first image 67.0 s, the next ones 63.9–64.5 s, peak 5.0 GB** (before it: 71.1 s, 73.7 s,
+peak 9.6 GB). Keeping the compiled VAE between images now costs only 1.7 GB, but it did not pay on 16 GB: its decode
+3.2 s instead of 4.0, the images 68.4–70.3 s (with the DiT kept too 70.8 / 68.3 s; single runs in a row, not alternated).
 
 ## Per-chip paths
 
@@ -301,9 +301,25 @@ MFA's GEMM (libnnc, 48 × 48 blocks, 2 × 2 SIMD groups) was tried against MPS: 
 that macOS 27's run-time compiler refuses (libnnc ships prebuilt metallibs for it), and without them it ran at
 3.6–4.0 TFLOP/s against MPS's 5.1–5.6 at 1472 × 4096 × 4096, so MPS stays.
 
-**VAE decoder** (`check-vae`, against `tools/reference_vae.py`, diffusers fp32): within 1.1e-5; 1024² in 2.75 s. Its
-graph builds and compiles in 0.3 s, but its first run at a size costs ~3.7 s more, GPU time (~1 s of CPU): it cannot
-hide under the DiT, so the pipeline keeps its VAE between images and a long-lived engine pays it once per size.
+**VAE decoder** (`check-vae`, against `tools/reference_vae.py`, diffusers fp32): within 1.0–1.4e-5 at 256² and 768²,
+1 level off at most. As one MPSGraph it took 2.78 s at 1024² (first run 4.5–5.0 s) but **kept 8.5 GB after the decode**
+(peak 9.7 GB): a compiled graph keeps every intermediate tensor (up blocks 1 and 2 alone 2.4 and 4.1 GB). A graph that is
+a single convolution keeps nothing beyond the buffers it is given, so the up blocks now run as single operations: each
+convolution a graph with its bias, skip and shortcut fused and the weights as inputs (as fast as constants, shared across
+sizes), norm + SiLU, nearest 2× and the DupUp shortcut as kernels (`vae.metal`), on pooled buffers, all in one command
+buffer. Up blocks 3–4 and the head run in tiles of 288 (2 × 2 at 1024²) that read 10 pixels beyond their share, their
+reach: the result is the whole graph's (1.2e-7; a 2-pixel halo is 17 levels off). M2 Pro, 1024², `time-vae`, alternated:
+
+| VAE | decode (first) | kept after | peak |
+|---|---|---|---|
+| one graph | 2.78 s (4.5–5.0) | 8.5 GB | 9.7 GB |
+| operations, untiled | 2.70 s (3.5) | 2.25 GB | 6.9 GB |
+| **operations, blocks 3–4 in tiles of 288 (default)** | **3.0 s (3.25)** | **1.67 GB** | **4.6 GB** |
+| operations, tiles of 144 | 3.9 s | 1.47 GB | 3.85 GB |
+| graphs per block, every block tiled | 3.45 s | 3.8–5 GB | 6.25 GB |
+
+The untiled peak grows with the image; the tiles keep it bounded. Buffers the GPU used leave the footprint up to a second
+after their release (`time-vae` waits 1.5 s). `KOKON_VAE_OPS=0`, `KOKON_VAE_SPLIT`, `KOKON_VAE_TILES` to compare.
 fp16 up blocks (norms and the mid block kept fp32) are wrong (2.7e-1) and 3–11× slower only when MPSGraph may place
 them on the Neural Engine (optimization level 1, its default); at level 0 they stay on the GPU and are right but
 gain little: all five 2.43 s against 2.77 at 1024², for 2.7e-3 of diffusers instead of 1.1e-5 (up to ~19 levels off).

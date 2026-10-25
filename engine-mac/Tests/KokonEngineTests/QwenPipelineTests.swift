@@ -36,6 +36,32 @@ final class QwenPipelineTests: XCTestCase {
         XCTAssert(a.allSatisfy(\.isFinite))
     }
 
+    /// The VAE's tiles cover every pixel once, each share at least the halo from a tile edge that is not the image's,
+    /// and every tile has the same size (one compiled graph).
+    func testVAETilesCoverEachPixelOnceWithTheirHalo() {
+        let halo = 16
+        for tile in [40, 96, 288] {
+            for n in [40, 96, 97, 288, 289, 320, 512, 777, 1024, 2048] {
+                let spans = QwenVAE.spans(n, tile: tile, halo: halo)
+                var covered = [Int](repeating: 0, count: n)
+                for s in spans {
+                    let size = min(tile, n)
+                    XCTAssert(s.start >= 0 && s.start + size <= n, "tile \(tile), n \(n): \(s)")
+                    XCTAssert(s.start == 0 || s.core - s.start >= halo, "tile \(tile), n \(n): \(s)")
+                    XCTAssert(s.start + size == n || s.start + size - (s.core + s.length) >= halo, "tile \(tile), n \(n): \(s)")
+                    for p in s.core..<(s.core + s.length) { covered[p] += 1 }
+                }
+                XCTAssertEqual(Set(covered), [1], "tile \(tile), n \(n)")
+            }
+        }
+        XCTAssertEqual(QwenVAE.spans(512, tile: 288, halo: halo).count, 2, "1024²: 2 × 2 tiles")
+        // Each stage's reach (its halo), from the architecture: up block 3 to the end 10 pixels, each up block alone 7.
+        XCTAssertEqual(QwenVAE.Stage(first: 3, end: 5).halo, 10)
+        XCTAssertEqual(QwenVAE.Stage(first: 0, end: 5).halo, 13)
+        XCTAssertEqual((0..<4).map { QwenVAE.Stage(first: $0, end: $0 + 1).halo }, [7, 7, 7, 7])
+        XCTAssertEqual(QwenVAE.Stage(first: 4, end: 5).halo, 7)
+    }
+
     func testPixelsFollowVaeImageProcessor() {
         // One pixel, RGBA planes: −1 → 0, 1 → 255, beyond the range clamped, 0 → 127.5 rounded to even (128).
         let image: [Float] = [-1, 1, 3, 0]

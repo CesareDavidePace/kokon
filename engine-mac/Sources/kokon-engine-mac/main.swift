@@ -8,7 +8,8 @@ kokon-engine-mac: Kokon's Apple Silicon engine (in development)
   check-dequant <file.gguf> [name...]      GPU unpacking against the CPU reference
   check-dit <dit.gguf> <reference dir>     one DiT evaluation against tools/reference_dit.py
   time-dit <dit.gguf> [grid] [text] [runs] DiT evaluations on random inputs (grid 64 = 1024²)
-  check-vae <vae.safetensors> <reference dir> [grid]   the VAE decoder against tools/reference_vae.py
+  check-vae <vae.safetensors> <reference dir> [grid]   the VAE decoder against tools/reference_vae.py, tiles against the whole graph
+  time-vae <vae.safetensors> [grid]                    the VAE decoder's time and memory (64 = 1024²; KOKON_VAE_TILE)
   check-tokenizer <encoder.gguf> <fixture.json>       the tokenizer against tools/reference_tokenizer.py
   check-text <encoder.gguf> <reference dir>           the text encoder against tools/reference_text_encoder.py
   check-generate <encoder.gguf> <dit.gguf> <vae.safetensors> <reference dir> [text reference dir]
@@ -70,6 +71,9 @@ do {
     case "check-vae":
         guard arguments.count >= 3 else { fail(usage) }
         try Checks.vae(path: arguments[1], reference: arguments[2], timeGrid: arguments.count > 3 ? Int(arguments[3]) : nil)
+    case "time-vae":
+        guard arguments.count >= 2 else { fail(usage) }
+        try Checks.timeVAE(path: arguments[1], grid: arguments.count > 2 ? Int(arguments[2]) ?? 64 : 64)
     case "check-tokenizer":
         guard arguments.count == 3 else { fail(usage) }
         try Checks.tokenizer(path: arguments[1], fixture: arguments[2])

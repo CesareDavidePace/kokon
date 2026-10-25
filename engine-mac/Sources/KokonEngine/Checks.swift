@@ -190,7 +190,8 @@ extension Checks {
 }
 
 extension Checks {
-    /// The VAE decoder against `tools/reference_vae.py`, then its time at `grid` (64 = 1024²).
+    /// The VAE decoder against `tools/reference_vae.py` (in tiles when the image needs them), then tiles against the
+    /// whole graph on a random latent of `grid` × 1.4 `grid` (default 40), at the default tile and at a small one.
     public static func vae(path: String, reference directory: String, timeGrid: Int?) throws {
         let meta = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: directory)
             .appendingPathComponent("meta.json"))) as! [String: Any]
@@ -198,30 +199,61 @@ extension Checks {
         let context = try MetalContext()
         let vae = try QwenVAE(path: path, context: context)
         let latent = try reference(directory, "latent"), want = try reference(directory, "image")
-        var started = DispatchTime.now().uptimeNanoseconds
+        let started = DispatchTime.now().uptimeNanoseconds
         let got = try vae.decode(latent, height: grid, width: grid)
         let first = Double(DispatchTime.now().uptimeNanoseconds - started) * 1e-9
         let r = got.withUnsafeBufferPointer { compare($0.baseAddress!, want) }
-        print(String(format: "VAE %d² → %d²: rel %.2e, max |Δ| %.3g%@ (%.2f s with the graph build)", grid, grid * 16,
-                     r.relative, r.maxAbs, r.finite ? "" : " NON-FINITE", first))
-        if let t = timeGrid {
-            started = DispatchTime.now().uptimeNanoseconds
-            try vae.prepare(height: t, width: t)
-            print(String(format: "build and compile %d²: %.2f s", t * 16, Double(DispatchTime.now().uptimeNanoseconds - started) * 1e-9))
-            let random = (0..<(64 * t * t)).map { Float(($0 * 7919) % 1000) / 500 - 1 }
-            func cpu() -> (user: Double, system: Double) {
-                var u = rusage()
-                getrusage(RUSAGE_SELF, &u)
-                return (Double(u.ru_utime.tv_sec) + Double(u.ru_utime.tv_usec) * 1e-6, Double(u.ru_stime.tv_sec) + Double(u.ru_stime.tv_usec) * 1e-6)
-            }
-            for run in 0..<2 {
-                started = DispatchTime.now().uptimeNanoseconds
-                let before = cpu()
-                _ = try vae.decode(random, height: t, width: t)
-                let after = cpu()
-                print(String(format: "decode %d² (run %d): %.2f s (CPU user %.2f s, system %.2f s)", t * 16, run + 1,
-                             Double(DispatchTime.now().uptimeNanoseconds - started) * 1e-9, after.user - before.user, after.system - before.system))
-            }
+        print(String(format: "VAE %d² → %d² (%@): rel %.2e, max |Δ| %.3g, %d levels off at most%@ (%.2f s with the graph build)",
+                     grid, grid * 16, tiles(vae, grid, grid), r.relative, r.maxAbs, levels(got, want, grid * 16, grid * 16),
+                     r.finite ? "" : " NON-FINITE", first))
+        let (h, w) = (timeGrid ?? 40, (timeGrid ?? 40) * 7 / 5)
+        let random = (0..<(64 * h * w)).map { Float(($0 * 7919) % 1000) / 500 - 1 }
+        let (saved, split) = (vae.tiles, vae.split)
+        (vae.tiles, vae.split) = ([], [])
+        let whole = try vae.decode(random, height: h, width: w)
+        for small in [false, true] {
+            // The small tiles: 3–4 times each stage's halo, many seams.
+            vae.split = split
+            vae.tiles = small ? vae.stages.map { $0.stage.halo * 4 } : saved
+            let tiled = try vae.decode(random, height: h, width: w)
+            let r = tiled.withUnsafeBufferPointer { compare($0.baseAddress!, whole) }
+            print(String(format: "%@ against one graph, %d × %d: rel %.2e, max |Δ| %.3g, %d levels off at most",
+                         tiles(vae, h, w), h * 16, w * 16, r.relative, r.maxAbs, levels(tiled, whole, h * 16, w * 16)))
+        }
+        (vae.tiles, vae.split) = (saved, split)
+    }
+
+    static func tiles(_ vae: QwenVAE, _ h: Int, _ w: Int) -> String {
+        vae.stages.map { stage, tile in
+            let scale = QwenVAE.Stage.scale(stage.first)
+            guard tile > 2 * stage.halo, scale * max(h, w) > tile else { return "\(stage)" }
+            let (y, x) = (QwenVAE.spans(scale * h, tile: tile, halo: stage.halo).count,
+                          QwenVAE.spans(scale * w, tile: tile, halo: stage.halo).count)
+            return "\(stage) in \(y)×\(x) tiles of \(tile)"
+        }.joined(separator: ", ")
+    }
+
+    /// The largest difference between two decoded images once made 8-bit.
+    static func levels(_ a: [Float], _ b: [Float], _ height: Int, _ width: Int) -> Int {
+        zip(QwenPipeline.pixels(a, width: width, height: height), QwenPipeline.pixels(b, width: width, height: height))
+            .reduce(0) { max($0, abs(Int($1.0) - Int($1.1))) }
+    }
+
+    /// The decoder's time and memory at `grid` (64 = 1024²) as the pipeline runs it (`KOKON_VAE_TILE` to choose): the
+    /// first decode with its graph builds, then two more; the footprint 1.5 s after each, and the process's peak.
+    public static func timeVAE(path: String, grid: Int) throws {
+        let context = try MetalContext()
+        let vae = try QwenVAE(path: path, context: context)
+        let random = (0..<(64 * grid * grid)).map { Float(($0 * 7919) % 1000) / 500 - 1 }
+        print("VAE \(grid * 16)² in \(tiles(vae, grid, grid)), \(String(format: "footprint %.2f GB", MemoryUsage.now().footprint))")
+        for run in 0..<3 {
+            let started = DispatchTime.now().uptimeNanoseconds
+            try autoreleasepool { _ = try vae.decode(random, height: grid, width: grid) }
+            let seconds = Double(DispatchTime.now().uptimeNanoseconds - started) * 1e-9
+            // Buffers the GPU used leave the footprint within a second of their release.
+            Thread.sleep(forTimeInterval: 1.5)
+            let m = MemoryUsage.now()
+            print(String(format: "decode %d: %.2f s, then footprint %.2f GB (peak %.2f GB)", run + 1, seconds, m.footprint, m.footprintPeak))
         }
     }
 }

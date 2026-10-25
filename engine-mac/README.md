@@ -45,6 +45,7 @@ Windows and Linux.
 | `AttentionProbe.swift` | `probe-attention`: the target's attention on each unit alone |
 | `QwenVAE.swift`, `Safetensors.swift` | the VAE decoder as one MPSGraph, from Kokon's VAE file (Wan 2.2 names) |
 | `QwenVAEEncoder.swift` | the VAE encoder (edits' reference images), checked against diffusers |
+| `QwenVisionTower.swift`, `Kernels/vision.metal` | Qwen3-VL's vision tower from the mmproj GGUF (edits' reference images): patches, 27 blocks, merger and deepstack outputs |
 | `QwenTokenizer.swift` | Qwen's byte-level BPE tokenizer, read from the encoder GGUF's metadata |
 | `QwenTextEncoder.swift`, `Kernels/text.metal` | the text encoder: Qwen3-VL-8B's text decoder on the GPU, diffusers' prompt template |
 | `QwenPipeline.swift` | text to image: noise, Turbo's 8 flow-Euler steps (`planner::TURBO_SIGMAS`), VAE, PNG; models kept loaded for the server |
@@ -386,6 +387,23 @@ and the head as one graph at 1/16 of the image, then the posterior's mode normal
 `check-vae-encoder` against `tools/reference_vae_encoder.py` (diffusers fp32, a smooth random RGBA image, 256 × 192,
 texture-fix VAE, M2 Pro, 2026-10-25): the latent within 6.5e-6. 1024²: 0.59 s an encode, peak 2.4 GB, 0.87 GB kept after
 (its weights); in its own autorelease pool (without one, a loop on a thread without a pool kept 1.5 GB per encode).
+
+**Vision tower** (`QwenVisionTower.swift`; what an edit's reference image becomes in the text encoder's
+`<|image_pad|>` slots): Qwen3-VL's ViT from Kokon's mmproj GGUF (llama.cpp's layout: the Conv3d as one kernel per frame,
+fused q/k/v, `mm.0`/`mm.2` the merger, `v.deepstack.8/16/24`), fp32 on the GPU with the F16 weights unpacked before each
+product. The patches in the processor's 2 × 2 merge-block order, the two frames' kernels summed (both frames are the
+image), the 48 × 48 position table resampled bilinearly, axial 2D RoPE, the 72-dimension heads on the DiT's flash kernel
+zero-padded to 128. Its input is the processor's: alpha over white as PIL's paste, and below 65 536 pixels the processor's
+resize (torchvision's uint8 antialiased bicubic: PIL's kernel with int16 weights, horizontal pass first; bit for bit).
+`check-vision` against `tools/reference_vision.py` (transformers' `Qwen3VLVisionModel`, M2 Pro, 2026-10-25), 320 × 224:
+the pixels within 1.6e-7 (float rounding), the merged rows within 1.35e-5 of torch fp32 and **7.6e-6 of fp64**
+(`--dtype float64`; torch's own fp32 is 1.55e-5 from it), deepstack 3.8–9.4e-6; 256 × 192 (resized to 320 × 224) and
+an RGBA image the same. 1024²: 2.5 s an encode (4 096 patches; the padded heads cost ~1.8× the attention's work).
+
+```bash
+~/kokon-bench/venv-oracle/bin/python -I tools/reference_vision.py <mmproj.gguf> <processor dir> <text_encoder dir> ~/kokon-bench/ref/vision-320 [--dtype float64]
+.build/release/kokon-engine-mac check-vision <mmproj.gguf> ~/kokon-bench/ref/vision-320
+```
 
 Credits: the Neural Engine program technique and the GPU + AMX + Neural Engine split come from
 [Siliconed](https://github.com/gwenn-ha-dev/Siliconed) (Apache-2.0), written again here.

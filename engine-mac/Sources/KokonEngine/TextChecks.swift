@@ -224,3 +224,60 @@ extension Checks {
         }
     }
 }
+
+extension Checks {
+    /// The vision tower against `tools/reference_vision.py` (transformers fp32): its input pixels (the processor's), the
+    /// patches, blocks 0, 8 and 26, the merged rows and the three deepstack outputs; then the time of a 1024² encode.
+    public static func vision(path: String, reference directory: String) throws {
+        let meta = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: directory)
+            .appendingPathComponent("meta.json"))) as! [String: Any]
+        let (w, h) = (meta["width"] as! Int, meta["height"] as! Int)
+        let png = try QwenPipeline.decodeImage(Data(contentsOf: URL(fileURLWithPath: directory).appendingPathComponent("image.png")))
+        let input = QwenVisionTower.pixels(rgba: png.rgba, width: png.width, height: png.height)
+        let grid = meta["grid"] as! [Int]
+        print("image \(png.width)×\(png.height) → \(input.width)×\(input.height)"
+              + (grid == [1, input.height / 16, input.width / 16] ? "" : " (reference grid \(grid))") + ", reference \(w)×\(h)")
+        // The processor's pixel rows: 2 × 2 merge blocks, each patch's 3 × 2 frames × 16 × 16 values.
+        let wantPixels = try reference(directory, "pixels")
+        var pixels = [Float](), (gh, gw) = (input.height / 16, input.width / 16)
+        for by in 0..<(gh / 2) { for bx in 0..<(gw / 2) { for iy in 0..<2 { for ix in 0..<2 {
+            for c in 0..<3 { for _ in 0..<2 { for y in 0..<16 { for x in 0..<16 {
+                pixels.append(input.rgb[(c * input.height + (by * 2 + iy) * 16 + y) * input.width + (bx * 2 + ix) * 16 + x])
+            } } } }
+        } } } }
+        if pixels.count == wantPixels.count {
+            let r = pixels.withUnsafeBufferPointer { compare($0.baseAddress!, wantPixels) }
+            print(String(format: "  pixels: rel %.2e, max |Δ| %.3g", r.relative, r.maxAbs))
+        } else {
+            print("  pixels: \(pixels.count) values, reference \(wantPixels.count)")
+        }
+        let context = try MetalContext()
+        let tower = try QwenVisionTower(file: try GGUFFile(path: path), context: context)
+        var stages: [(String, [Float])] = []
+        let out = try tower.encode(rgb: input.rgb, width: input.width, height: input.height) { name, p, count in
+            stages.append((name, Array(UnsafeBufferPointer(start: p, count: count))))
+        }
+        var worst = 0.0
+        func report(_ name: String, _ got: [Float]) throws {
+            let want = try reference(directory, name)
+            guard want.count == got.count else { print("  \(name): \(got.count) values, reference \(want.count)"); worst = .infinity; return }
+            let r = got.withUnsafeBufferPointer { compare($0.baseAddress!, want) }
+            worst = max(worst, r.relative)
+            print(String(format: "  %@: rel %.2e, max |Δ| %.3g%@", name, r.relative, r.maxAbs, r.finite ? "" : " NON-FINITE"))
+        }
+        for (name, values) in stages { try report(name, values) }
+        try report("merged", out.merged)
+        for (j, d) in out.deepstack.enumerated() { try report("deepstack\(j)", d) }
+        print(String(format: "worst %.2e; encode %.2f s with the probes", worst, tower.seconds))
+        let random = (0..<(3 * 1024 * 1024)).map { i -> Float in
+            let (y, x) = ((i / 1024) % 1024, i % 1024)
+            return sinf(Float(x) * 0.013 + Float(i / (1024 * 1024))) * cosf(Float(y) * 0.021) * 0.9
+        }
+        for run in 1...2 {
+            _ = try tower.encode(rgb: random, width: 1024, height: 1024)
+            Thread.sleep(forTimeInterval: 1.5)
+            let m = MemoryUsage.now()
+            print(String(format: "encode %d at 1024²: %.2f s, footprint after %.2f GB (peak %.2f GB)", run, tower.seconds, m.footprint, m.footprintPeak))
+        }
+    }
+}

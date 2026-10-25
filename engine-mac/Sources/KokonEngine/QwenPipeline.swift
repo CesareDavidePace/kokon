@@ -232,6 +232,44 @@ public final class QwenPipeline {
         try pngData(rgba, width: width, height: height).write(to: URL(fileURLWithPath: path))
     }
 
+    /// An image file (PNG, JPEG…) as interleaved 8-bit RGBA, straight alpha. 8-bit RGB(A) files are read as stored, without
+    /// color management, as PIL reads them for diffusers; other layouts (16-bit, gray, palette) are drawn into an sRGB
+    /// context, premultiplied, and divided back.
+    public static func decodeImage(_ data: Data) throws -> (rgba: [UInt8], width: Int, height: Int) {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            throw MetalContext.Failure.buffer("cannot decode the image")
+        }
+        let (w, h) = (image.width, image.height)
+        var out = [UInt8](repeating: 255, count: w * h * 4)
+        let alpha = image.alphaInfo, order = image.bitmapInfo.intersection(.byteOrderMask)
+        let direct = image.bitsPerComponent == 8 && (order == [] || order == .byteOrderDefault || order == .byteOrder32Big)
+            && image.colorSpace?.model == .rgb
+            && ((image.bitsPerPixel == 32 && [.last, .noneSkipLast].contains(alpha)) || (image.bitsPerPixel == 24 && alpha == .none))
+        if direct, let bytes = image.dataProvider?.data, let p = CFDataGetBytePtr(bytes) {
+            let step = image.bitsPerPixel / 8
+            for y in 0..<h {
+                let row = p + y * image.bytesPerRow
+                for x in 0..<w {
+                    for c in 0..<3 { out[(y * w + x) * 4 + c] = row[x * step + c] }
+                    if alpha == .last { out[(y * w + x) * 4 + 3] = row[x * step + 3] }
+                }
+            }
+            return (out, w, h)
+        }
+        guard let context = CGContext(data: &out, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            throw MetalContext.Failure.buffer("cannot decode the image")
+        }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        for p in 0..<(w * h) where out[p * 4 + 3] != 255 {
+            let a = Int(out[p * 4 + 3])
+            for c in 0..<3 { out[p * 4 + c] = a == 0 ? 0 : UInt8(min(255, (Int(out[p * 4 + c]) * 255 + a / 2) / a)) }
+        }
+        return (out, w, h)
+    }
+
     /// Interleaved 8-bit RGBA (straight alpha) encoded as a PNG.
     public static func pngData(_ rgba: [UInt8], width: Int, height: Int) throws -> Data {
         let data = Data(rgba) as CFData

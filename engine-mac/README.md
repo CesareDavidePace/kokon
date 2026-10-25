@@ -63,5 +63,11 @@ m = 4 096 rows (a 1024² image), TFLOP/s:
 (MPSGraph) 4.1 s, unpacking 0.2 s, the rest 0.3 s. Every product goes to MPS on a multiple of 64 rows: one product
 of 32 rows (the text projection) slowed all later ones to 18.5 s.
 
+**With the AMX and the Neural Engine on the products** (`Coexecution.swift`; rows GPU 1856 / AMX 256 / Neural
+Engine 2048 at 1024²): **11.3 s per evaluation at 1024²**, 8.8 s at 896². The GPU packs the Neural Engine's fp16
+operands straight into its IOSurfaces and unpacks its output, so the CPU only runs the AMX. Accuracy at 896²
+against diffusers fp32: the velocity within 3.6e-4 relative (GPU alone 4.4e-6); running the model in bf16, as
+most tools do, deviates by roughly 1e-2. The attention (4.1 s, GPU only, the other units idle) is next.
+
 Credits: the Neural Engine program technique and the GPU + AMX + Neural Engine split come from
 [Siliconed](https://github.com/gwenn-ha-dev/Siliconed) (Apache-2.0), written again here.

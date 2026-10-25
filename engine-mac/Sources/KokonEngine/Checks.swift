@@ -117,12 +117,18 @@ extension Checks {
             }
         }
         let encoder = random(text * QwenDiT.dim, 8), latent = random(sequence.target * QwenDiT.channels, 2)
-        print("sequence: \(sequence.count) rows (\(sequence.prefix) text, \(sequence.target) target)")
+        print("sequence: \(sequence.count) rows (\(sequence.prefix) text, \(sequence.target) target)"
+              + (dit.coexecutor.map { ", products split \($0.split(m: QwenDiT.padded(sequence.count)))" } ?? ", GPU only"))
         for run in 0..<runs {
             let started = DispatchTime.now().uptimeNanoseconds
             let out = try dit.forward(encoder: encoder, target: latent, sigma: 0.5)
             let seconds = Double(DispatchTime.now().uptimeNanoseconds - started) * 1e-9
             print(String(format: "evaluation %d: %.2f s%@", run + 1, seconds, out.allSatisfy(\.isFinite) ? "" : "  NON-FINITE OUTPUT"))
+            if let c = dit.coexecutor {
+                print(String(format: "  AMX busy %.2f s, Neural Engine busy %.2f s%@", c.amxSeconds, c.aneSeconds,
+                             c.failures.isEmpty ? "" : "; FAILURES: \(c.failures.prefix(3))"))
+                c.resetTimings()
+            }
         }
         dit.profiling = true
         _ = try dit.forward(encoder: encoder, target: latent, sigma: 0.5)
@@ -130,5 +136,46 @@ extension Checks {
         for (kind, seconds) in dit.timings.sorted(by: { $0.value > $1.value }) {
             print(String(format: "  %-24@ %6.2f s", kind as NSString, seconds))
         }
+    }
+}
+
+extension Checks {
+    /// The GPU writes the Neural Engine's operands straight into its surfaces; the product is compared with the CPU.
+    public static func aneSurfaces() throws {
+        let context = try MetalContext()
+        let (rows, k, n) = (512, 512, 256)
+        let product = try NeuralEngineProduct(rows: rows, k: k, n: n)
+        let xb = try product.gpuBuffer(product.x, device: context.device)
+        let wb = try product.gpuBuffer(product.w, device: context.device)
+        var a = [Float](repeating: 0, count: rows * k), w = [Float](repeating: 0, count: k * n)
+        for i in a.indices { a[i] = Float((i * 7919) % 97) / 97 - 0.5 }
+        for i in w.indices { w[i] = Float((i * 104729) % 89) / 89 - 0.5 }
+        let src = try context.scratch((a.count + w.count) * 4, label: "src")
+        src.contents().copyMemory(from: a, byteCount: a.count * 4)
+        (src.contents() + a.count * 4).copyMemory(from: w, byteCount: w.count * 4)
+        let commands = context.queue.makeCommandBuffer()!
+        let encoder = commands.makeComputeCommandEncoder()!
+        encoder.setComputePipelineState(try context.pipeline("pack_half"))
+        for (offset, count, target) in [(0, a.count, xb), (a.count * 4, w.count, wb)] {
+            var c = UInt32(count)
+            encoder.setBuffer(src, offset: offset, index: 0)
+            encoder.setBuffer(target, offset: 0, index: 1)
+            encoder.setBytes(&c, length: 4, index: 2)
+            encoder.dispatchThreads(MTLSize(width: count, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+        }
+        encoder.endEncoding()
+        try MetalContext.finish(commands, "pack")
+        try product.run()
+        var worst: Float = 0, scale: Float = 0
+        product.read { y in
+            for i in 0..<rows {
+                for j in 0..<n {
+                    var s: Float = 0
+                    for l in 0..<k { s += Float(Float16(a[i * k + l])) * Float(Float16(w[l * n + j])) }
+                    worst = max(worst, abs(Float(y[i * n + j]) - s)); scale = max(scale, abs(s))
+                }
+            }
+        }
+        print(String(format: "Neural Engine on GPU-written surfaces: max |Δ| %.4g of max |y| %.4g (fp16 output)", worst, scale))
     }
 }

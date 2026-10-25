@@ -44,6 +44,9 @@ public final class QwenDiT {
     let rope, modulation, qkNorms, textNorm, textIn, textOut, latent, output: Arena.Slice
     private var nextReserve = 0
     private var products: [String: MPSMatrixMultiplication] = [:]
+    /// The AMX and the Neural Engine beside the GPU on the large products (`Coexecution.swift`); nil: GPU alone.
+    /// `KOKON_COEXEC=0` turns it off, `KOKON_ANE=0` / `KOKON_AMX=0` one unit, `KOKON_AMX_SHARE` the AMX's rows.
+    let coexecutor: Coexecutor?
     private var attentions: [String: GraphAttention] = [:]
     /// Seconds per phase of the last evaluation.
     public private(set) var timings: [String: Double] = [:]
@@ -69,6 +72,14 @@ public final class QwenDiT {
         rope = slices.next()!; modulation = slices.next()!; qkNorms = slices.next()!; textNorm = slices.next()!
         textIn = slices.next()!; textOut = slices.next()!; latent = slices.next()!; output = slices.next()!
 
+        let environment = ProcessInfo.processInfo.environment
+        if environment["KOKON_COEXEC"] != "0", sequence.count >= 1024 {
+            coexecutor = try Coexecutor(context: context,
+                                        amxShare: Double(environment["KOKON_AMX_SHARE"] ?? "") ?? 0.0625,
+                                        ane: environment["KOKON_ANE"] != "0", amx: environment["KOKON_AMX"] != "0")
+        } else {
+            coexecutor = nil
+        }
         let table = sequence.ropeTable()
         arena.pointer(rope).update(from: table, count: table.count)
         // Small weights unpacked once on the CPU: the QK norms of every layer, txt_in's norm as (w + 1).
@@ -281,21 +292,33 @@ public final class QwenDiT {
         try gpu("dequant", commands) {
             try dequant.encode(tensor, of: file, into: arena.buffer, outOffset: reserve.offset, transposed: true, commands: $0)
         }
-        let key = "\(m)×\(kk)×\(nn)"
-        let product: MPSMatrixMultiplication
-        if let existing = products[key] { product = existing } else {
-            product = MPSMatrixMultiplication(device: context.device, transposeLeft: false, transposeRight: false,
-                                              resultRows: m, resultColumns: nn, interiorColumns: kk, alpha: 1, beta: 0)
-            products[key] = product
+        // The GPU's rows: all of them, or its share of a split product.
+        func gpuRows(_ rows: Int) throws {
+            let key = "\(rows)×\(kk)×\(nn)"
+            let product: MPSMatrixMultiplication
+            if let existing = products[key] { product = existing } else {
+                product = MPSMatrixMultiplication(device: context.device, transposeLeft: false, transposeRight: false,
+                                                  resultRows: rows, resultColumns: nn, interiorColumns: kk, alpha: 1, beta: 0)
+                products[key] = product
+            }
+            let left = MPSMatrix(buffer: arena.buffer, offset: a.offset + aRow * kk * 4,
+                                 descriptor: MPSMatrixDescriptor(rows: rows, columns: kk, rowBytes: kk * 4, dataType: .float32))
+            let right = MPSMatrix(buffer: arena.buffer, offset: reserve.offset,
+                                  descriptor: MPSMatrixDescriptor(rows: kk, columns: nn, rowBytes: nn * 4, dataType: .float32))
+            let result = MPSMatrix(buffer: arena.buffer, offset: c.offset + cRow * nn * 4,
+                                   descriptor: MPSMatrixDescriptor(rows: rows, columns: nn, rowBytes: nn * 4, dataType: .float32))
+            try gpu(m < 512 ? "products (few rows)" : "products", commands) {
+                product.encode(commandBuffer: $0, leftMatrix: left, rightMatrix: right, resultMatrix: result)
+            }
         }
-        let left = MPSMatrix(buffer: arena.buffer, offset: a.offset + aRow * kk * 4,
-                             descriptor: MPSMatrixDescriptor(rows: m, columns: kk, rowBytes: kk * 4, dataType: .float32))
-        let right = MPSMatrix(buffer: arena.buffer, offset: reserve.offset,
-                              descriptor: MPSMatrixDescriptor(rows: kk, columns: nn, rowBytes: nn * 4, dataType: .float32))
-        let result = MPSMatrix(buffer: arena.buffer, offset: c.offset + cRow * nn * 4,
-                               descriptor: MPSMatrixDescriptor(rows: m, columns: nn, rowBytes: nn * 4, dataType: .float32))
-        try gpu(m < 512 ? "products (few rows)" : "products", commands) {
-            product.encode(commandBuffer: $0, leftMatrix: left, rightMatrix: right, resultMatrix: result)
+        if let coexecutor, !profiling, coexecutor.applies(m: m, k: kk, n: nn) {
+            func operand(_ slice: Arena.Slice, _ row: Int, _ width: Int) -> (MTLBuffer, Int, UnsafeMutablePointer<Float>) {
+                (arena.buffer, slice.offset + row * width * 4, arena.pointer(slice, floatOffset: row * width))
+            }
+            try coexecutor.encode(a: operand(a, aRow, kk), w: operand(reserve, 0, nn), c: operand(c, cRow, nn),
+                                  m: m, k: kk, n: nn, commands: commands, gpuRows: gpuRows)
+        } else {
+            try gpuRows(m)
         }
     }
 

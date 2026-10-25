@@ -1,4 +1,5 @@
 import CoreML
+import Metal
 import CoreVideo
 import Foundation
 
@@ -142,5 +143,23 @@ public final class NeuralEngineProduct: @unchecked Sendable {
         var trailer = [UInt8](repeating: 0, count: 16)
         trailer[0] = 0xf6; trailer[1] = 0x01
         return Data(header + payload + trailer)
+    }
+}
+
+extension NeuralEngineProduct {
+    /// A GPU buffer over a surface's memory, no copy: the GPU writes the Neural Engine's operands in place.
+    /// The surface stays locked for the product's life (unified memory: the lock only pins the address).
+    public func gpuBuffer(_ surface: CVPixelBuffer, device: MTLDevice) throws -> MTLBuffer {
+        CVPixelBufferLockBaseAddress(surface, [])
+        guard let io = CVPixelBufferGetIOSurface(surface)?.takeUnretainedValue(),
+              let base = CVPixelBufferGetBaseAddress(surface) else { throw Failure.surface("no IOSurface") }
+        // The surface reports its exact size (data + 64 bytes); its memory is whole pages.
+        let page = Int(getpagesize())
+        let length = (IOSurfaceGetAllocSize(io) + page - 1) / page * page
+        guard Int(bitPattern: base) % page == 0,
+              let buffer = device.makeBuffer(bytesNoCopy: base, length: length, options: .storageModeShared, deallocator: nil) else {
+            throw Failure.surface("surface memory at \(base) is not page-aligned (\(length) bytes)")
+        }
+        return buffer
     }
 }

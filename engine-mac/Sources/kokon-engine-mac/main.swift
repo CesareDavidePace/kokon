@@ -46,6 +46,8 @@ do {
         let numbers = arguments.dropFirst(2).compactMap { Int($0) }
         try Checks.timeDiT(path: arguments[1], grid: numbers.first ?? 64, text: numbers.dropFirst().first ?? 32,
                            runs: numbers.dropFirst(2).first ?? 3)
+    case "check-ane":
+        try Checks.aneSurfaces()
     case "probe":
         try Probe.run()
     default:

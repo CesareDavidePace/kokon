@@ -37,6 +37,14 @@ final class Coexecutor {
     /// The set of the last product encoded; the weight packed ahead and its set.
     private var currentSet = 0
     private var packedAhead: (weight: String, set: Int)?
+    /// **The Neural Engine's rows packed once per input**: q, k, v read the same rows, and so do gate and proj. Once the
+    /// L of all of an input's readers is known (from their first use), its rows are scaled with one σ, from the largest L
+    /// (the bound holds for each; a power of two less only moves where fp16 flushes, far below the row's values), and
+    /// packed for the first reader only: the others find them in the row surfaces, which both sets share.
+    /// `KOKON_SHARED_ROWS=0`: every product packs its own.
+    let sharedRows = ProcessInfo.processInfo.environment["KOKON_SHARED_ROWS"] != "0"
+    /// The input the row surfaces hold for its readers (A's offset), when packed with their shared σ.
+    private var packedRows: (offset: Int, readers: [String])?
     var balancer: Balancer
     /// The timeline of the last evaluation, once the balancing loop has read it.
     var lastTimeline: [Timeline.Entry] = []
@@ -124,6 +132,7 @@ final class Coexecutor {
         if aneRows > 0 { spareSlots = [aneRows: slots] }   // the last one only: 288 MB of surfaces at 2 048 rows
         (slots, aneRows) = (next, rows)
         packedAhead = nil
+        packedRows = nil
     }
 
     /// Whether a product takes the split: the Neural Engine's tiles need K and N in multiples of 4 096 with at
@@ -156,7 +165,7 @@ final class Coexecutor {
     func encode(weight: String, a: (buffer: MTLBuffer, offset: Int, pointer: UnsafeMutablePointer<Float>),
                 w: (buffer: MTLBuffer, offset: Int, pointer: UnsafeMutablePointer<Float>),
                 c: (buffer: MTLBuffer, offset: Int, pointer: UnsafeMutablePointer<Float>),
-                m: Int, k: Int, n: Int, commands: MTLCommandBuffer,
+                m: Int, k: Int, n: Int, commands: MTLCommandBuffer, readers: [String] = [],
                 castReady: Bool = false, ahead: ((MTLCommandBuffer) throws -> Void)? = nil,
                 gpuRows: (Int, MTLBuffer?) throws -> Void) throws {
         let s = split(m: m, k: k, n: n)
@@ -189,10 +198,16 @@ final class Coexecutor {
         packedAhead = nil
         currentSet = set
         let slots = self.slots[set]
-        if s.ane > 0 {
+        let shared = sharedRows && readers.count > 1 && readers.count <= 3 && readers.contains(weight)
+            && readers.allSatisfy { columnScales[$0] != nil }
+        let packed = shared && packedRows.map { $0.offset == a.offset && $0.readers == readers } ?? false
+        if s.ane > 0, !packed {
             var sh = shape()
+            let bounds = shared ? readers.map { columnScales[$0]! } : [columns]
+            packedRows = shared ? (a.offset, readers) : nil
             try kernel("ane_row_scales") { e in
-                e.setBuffer(a.buffer, offset: a.offset, index: 0); e.setBuffer(columns, offset: state, index: 1)
+                e.setBuffer(a.buffer, offset: a.offset, index: 0)
+                for i in 0..<3 { e.setBuffer(bounds[min(i, bounds.count - 1)], offset: state, index: i == 0 ? 1 : 3 + i) }
                 e.setBuffer(scales, offset: sigma, index: 2)
                 e.setBytes(&sh, length: MemoryLayout<Shape>.stride, index: 3)
                 e.dispatchThreadgroups(MTLSize(width: s.ane, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))

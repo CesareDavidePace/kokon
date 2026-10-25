@@ -216,6 +216,12 @@ worse). Between operations 0.60 → 0.53 s, but per evaluation, 3 alternated rou
 instead of 66). With the three units at their shared limit, the GPU-alone time moved into the products; what pays
 is fewer bytes moved, as with the fp16 cast above.
 
+**The Neural Engine's rows packed once per input** (`KOKON_SHARED_ROWS=0` for the comparison): q, k and v read the
+same rows, and so do gate and proj, but each product scaled and packed them again with its own σ. From the second
+evaluation on (when every weight's L is known), an input's rows get one σ from the largest L of its readers and are
+packed for the first only. Velocity at 896²: 6.36–7.02e-4 (6.74–6.88e-4 before). 1024², 3 alternated rounds of 4
+evaluations (M2 Pro, 2026-10-25): 7.64 → 7.58 s, between operations 0.65 → 0.60 s.
+
 **1024² image after this pass (M2 Pro, `generate`, 2026-10-25): 67.3–68.0 s** (text encoder 2.0 s, step 1 8.35 s,
 steps 2–8 7.3–7.7 s, VAE 5.0–5.3 s with its first run at the size; 79.9 s at the start of the fp16 work, 76.0 with
 fp16 attention). `MTLBinaryArchive` was not added: the engine's kernels compile from source in 0.1 s at start (macOS

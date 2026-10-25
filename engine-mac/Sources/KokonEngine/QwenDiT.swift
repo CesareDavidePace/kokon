@@ -307,10 +307,11 @@ public final class QwenDiT {
         let band = 5 * d   // the target's modulation row follows the prefix's
         try layerNorm(x, into: normed, rows: rows, prefixMod: 0, targetMod: band,
                       half: halfOutput(count: count, k: d, n: d), commands: commands)
-        try linear(block + "attn.to_q.weight", a: normed, aRow: first, c: q, m: count, cRow: first, next: block + "attn.to_k.weight", commands: commands)
-        try linear(block + "attn.to_k.weight", a: normed, aRow: first, c: k, m: count, cRow: first, next: block + "attn.to_v.weight", commands: commands)
+        let qkv = ["to_q", "to_k", "to_v"].map { block + "attn.\($0).weight" }
+        try linear(qkv[0], a: normed, aRow: first, c: q, m: count, cRow: first, next: qkv[1], readers: qkv, commands: commands)
+        try linear(qkv[1], a: normed, aRow: first, c: k, m: count, cRow: first, next: qkv[2], readers: qkv, commands: commands)
         try mark("norm1", normed)
-        try linear(block + "attn.to_v.weight", a: normed, aRow: first, c: v, m: count, cRow: first, next: block + "attn.to_out.0.weight", commands: commands)
+        try linear(qkv[2], a: normed, aRow: first, c: v, m: count, cRow: first, next: block + "attn.to_out.0.weight", readers: qkv, commands: commands)
         try headNormRope(q, weightOffset: (layer * 2) * QwenDiT.headDim, rows: rows, commands: commands)
         try headNormRope(k, weightOffset: (layer * 2 + 1) * QwenDiT.headDim, rows: rows, commands: commands)
         try mark("q", q); try mark("k", k); try mark("v", v)
@@ -331,8 +332,9 @@ public final class QwenDiT {
         try layerNorm(x, into: normed, rows: rows, prefixMod: 2 * d, targetMod: band + 2 * d,
                       half: halfOutput(count: count, k: d, n: QwenDiT.hidden), commands: commands)
         try mark("norm2", normed)
-        try linear(block + "img_mlp.gate_layer.weight", a: normed, aRow: first, c: h1, m: count, cRow: first, next: block + "img_mlp.proj.weight", commands: commands)
-        try linear(block + "img_mlp.proj.weight", a: normed, aRow: first, c: h2, m: count, cRow: first, next: block + "img_mlp.out.weight", commands: commands)
+        let gateProj = ["gate_layer", "proj"].map { block + "img_mlp.\($0).weight" }
+        try linear(gateProj[0], a: normed, aRow: first, c: h1, m: count, cRow: first, next: gateProj[1], readers: gateProj, commands: commands)
+        try linear(gateProj[1], a: normed, aRow: first, c: h2, m: count, cRow: first, next: block + "img_mlp.out.weight", readers: gateProj, commands: commands)
         try swiglu(first: first, count: count, half: halfOutput(count: count, k: QwenDiT.hidden, n: d), commands: commands)
         try linear(block + "img_mlp.out.weight", a: h1, aRow: first, c: o, m: count, cRow: first,
                    next: layer + 1 < QwenDiT.layers ? "transformer_blocks.\(layer + 1).attn.to_q.weight" : nil, commands: commands)
@@ -394,8 +396,9 @@ public final class QwenDiT {
     /// `aRow`, `cRow`: first row of A and C in their slices. `next`: the weight of the product that follows, unpacked
     /// into the other reserve and packed for the Neural Engine while the AMX and the Neural Engine run this one (the
     /// GPU's ~1.8 ms per 4096 × 4096 weight otherwise ran alone between products).
+    /// `readers`: every weight that reads this same A (q, k, v; gate, proj), so the Neural Engine's rows are packed once.
     func linear(_ name: String, a: Arena.Slice, aRow: Int = 0, c: Arena.Slice, m: Int, cRow: Int = 0,
-                next: String? = nil, commands: MTLCommandBuffer) throws {
+                next: String? = nil, readers: [String] = [], commands: MTLCommandBuffer) throws {
         let tensor = try weight(name)
         let (kk, nn) = (tensor.columns, tensor.rows)
         let m = QwenDiT.padded(m)
@@ -452,7 +455,7 @@ public final class QwenDiT {
             }
             let ready = castInput.map { $0 == (a.offset, aRow, kk) } ?? false
             try coexecutor.encode(weight: name, a: operand(a, aRow, kk), w: operand(reserve, 0, nn), c: operand(c, cRow, nn),
-                                  m: m, k: kk, n: nn, commands: commands, castReady: ready, ahead: ahead, gpuRows: gpuRows)
+                                  m: m, k: kk, n: nn, commands: commands, readers: readers, castReady: ready, ahead: ahead, gpuRows: gpuRows)
             castInput = c.offset == a.offset ? nil : (a.offset, aRow, kk)
         } else {
             try gpuRows(m)

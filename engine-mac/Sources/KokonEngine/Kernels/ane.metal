@@ -91,9 +91,11 @@ template [[host_name("ane_pack_weight")]] kernel void ane_pack_weight<float>(dev
 template [[host_name("ane_pack_weight_h")]] kernel void ane_pack_weight<half>(device const half *, device const float *,
     device half *, constant AneShape &, uint2);
 
-// σ_i of each Neural Engine row. One threadgroup of 256 per row.
+// σ_i of each Neural Engine row, for up to three weights reading the same rows (their L in `state`, `state1`,
+// `state2`; the same buffer again for fewer): the largest L bounds them all. One threadgroup of 256 per row.
 kernel void ane_row_scales(device const float *a [[buffer(0)]], device const float *state [[buffer(1)]],
                            device float *sigma [[buffer(2)]], constant AneShape &s [[buffer(3)]],
+                           device const float *state1 [[buffer(4)]], device const float *state2 [[buffer(5)]],
                            uint i [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]]) {
     threadgroup float shared[8];
     device const float *row = a + (ulong)(s.row0 + i) * s.k;
@@ -105,7 +107,7 @@ kernel void ane_row_scales(device const float *a [[buffer(0)]], device const flo
     if (tid == 0) {
         float peak = 0;
         for (uint q = 0; q < 8; q++) peak = max(peak, shared[q]);
-        float bound = peak * state[0];
+        float bound = peak * max(state[0], max(state1[0], state2[0]));
         sigma[i] = (bound > 0 && isfinite(bound)) ? exp2(floor(log2(32768.0f / bound))) : 1.0f;
     }
 }

@@ -1,6 +1,6 @@
 # Status
 
-**Updated 2026-10-24.** What is in progress, what comes next, and where help is welcome. Kept current at the end
+**Updated 2026-10-25.** What is in progress, what comes next, and where help is welcome. Kept current at the end
 of every task (see [AGENTS.md](../AGENTS.md#keeping-docsstatusmd-current)); GitHub is the source of truth.
 
 ## Current version: [0.11.0](https://github.com/GabrieleLozupone/kokon/releases/tag/v0.11.0) (2026-10-24)
@@ -23,8 +23,9 @@ Windows, macOS (Apple Silicon, 15+) and Linux (`.deb`, `.rpm`). Installed copies
   RX 7000 and RX 9000 cards have them and work well (RX 9070 XT: 1.75 s per step at 1 MP).
 - **LoRA is beta** and tested on Windows only; reports from macOS and Linux are welcome
   ([#33](https://github.com/GabrieleLozupone/kokon/issues/33) has a product-shot test).
-- **Macs are slow** compared with NVIDIA cards (about 4 minutes for 1 MP on an M2 Pro 16 GB). Engine speed-ups are
-  being measured.
+- **Macs are slow** compared with NVIDIA cards (about 4 minutes for 1 MP on an M2 Pro 16 GB). Kokon's own Mac
+  engine is in development (`engine-mac/`, text to image only so far: about 68 s for 1 MP on the same Mac); it is
+  not in the app yet.
 - The Windows installer is not code-signed: SmartScreen or Smart App Control may block it (README FAQ: Unblock).
 - HEIC photos can't be opened on Linux yet.
 

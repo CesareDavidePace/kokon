@@ -245,10 +245,10 @@ public final class QwenDiT {
         let block = "transformer_blocks.\(layer)."
         let band = 5 * d   // the target's modulation row follows the prefix's
         try layerNorm(x, into: normed, rows: n, prefixMod: 0, targetMod: band, commands: commands)
-        try linear(block + "attn.to_q.weight", a: normed, c: q, m: n, commands: commands)
-        try linear(block + "attn.to_k.weight", a: normed, c: k, m: n, commands: commands)
+        try linear(block + "attn.to_q.weight", a: normed, c: q, m: n, next: block + "attn.to_k.weight", commands: commands)
+        try linear(block + "attn.to_k.weight", a: normed, c: k, m: n, next: block + "attn.to_v.weight", commands: commands)
         try mark("norm1", normed)
-        try linear(block + "attn.to_v.weight", a: normed, c: v, m: n, commands: commands)
+        try linear(block + "attn.to_v.weight", a: normed, c: v, m: n, next: block + "attn.to_out.0.weight", commands: commands)
         try headNormRope(q, weightOffset: (layer * 2) * QwenDiT.headDim, rows: n, commands: commands)
         try headNormRope(k, weightOffset: (layer * 2 + 1) * QwenDiT.headDim, rows: n, commands: commands)
         try mark("q", q); try mark("k", k); try mark("v", v)
@@ -257,16 +257,17 @@ public final class QwenDiT {
                        causal: segment.isText, commands: commands)
         }
         try attend(queries: p, count: n - p, keys: n, causal: false, commands: commands)
-        try linear(block + "attn.to_out.0.weight", a: attended, c: o, m: n, commands: commands)
+        try linear(block + "attn.to_out.0.weight", a: attended, c: o, m: n, next: block + "img_mlp.gate_layer.weight", commands: commands)
         try mark("attn_out", o)
         try residual(gate: d, rows: n, commands: commands)
         try mark("res1", x)
         try layerNorm(x, into: normed, rows: n, prefixMod: 2 * d, targetMod: band + 2 * d, commands: commands)
         try mark("norm2", normed)
-        try linear(block + "img_mlp.gate_layer.weight", a: normed, c: h1, m: n, commands: commands)
-        try linear(block + "img_mlp.proj.weight", a: normed, c: h2, m: n, commands: commands)
+        try linear(block + "img_mlp.gate_layer.weight", a: normed, c: h1, m: n, next: block + "img_mlp.proj.weight", commands: commands)
+        try linear(block + "img_mlp.proj.weight", a: normed, c: h2, m: n, next: block + "img_mlp.out.weight", commands: commands)
         try elementwise("swiglu", [(h1, 0), (h2, 0)], count: n * QwenDiT.hidden, commands: commands)
-        try linear(block + "img_mlp.out.weight", a: h1, c: o, m: n, commands: commands)
+        try linear(block + "img_mlp.out.weight", a: h1, c: o, m: n,
+                   next: layer + 1 < QwenDiT.layers ? "transformer_blocks.\(layer + 1).attn.to_q.weight" : nil, commands: commands)
         try mark("mlp", o)
         try residual(gate: 3 * d, rows: n, commands: commands)
     }
@@ -316,21 +317,33 @@ public final class QwenDiT {
         return try file.tensor(QwenDiT.prefix + name)
     }
 
+    /// The weight unpacked (and packed for the Neural Engine) during the product before, and its reserve.
+    private var unpackedAhead: (name: String, reserve: Int)?
+
     /// `C[m, n] = A[m, k] · W` with W the file's Linear `[n, k]`, unpacked to `[k, n]` fp32 in a reserve first.
-    /// `aRow`, `cRow`: first row of A and C in their slices.
+    /// `aRow`, `cRow`: first row of A and C in their slices. `next`: the weight of the product that follows, unpacked
+    /// into the other reserve and packed for the Neural Engine while the AMX and the Neural Engine run this one (the
+    /// GPU's ~1.8 ms per 4096 × 4096 weight otherwise ran alone between products).
     func linear(_ name: String, a: Arena.Slice, aRow: Int = 0, c: Arena.Slice, m: Int, cRow: Int = 0,
-                commands: MTLCommandBuffer) throws {
+                next: String? = nil, commands: MTLCommandBuffer) throws {
         let tensor = try weight(name)
         let (kk, nn) = (tensor.columns, tensor.rows)
         let m = QwenDiT.padded(m)
         guard (aRow + m) * kk * 4 <= a.bytes, (cRow + m) * nn * 4 <= c.bytes else {
             throw MetalContext.Failure.buffer("\(name): no room for \(m) padded rows")
         }
-        let reserve = reserves[nextReserve]
-        nextReserve = (nextReserve + 1) % reserves.count
-        try gpu("dequant", commands) {
-            try dequant.encode(tensor, of: file, into: arena.buffer, outOffset: reserve.offset, transposed: true, commands: $0)
+        let index: Int
+        if let ahead = unpackedAhead, ahead.name == name {
+            index = ahead.reserve
+        } else {
+            index = nextReserve
+            try gpu("dequant", commands) {
+                try dequant.encode(tensor, of: file, into: arena.buffer, outOffset: reserves[index].offset, transposed: true, commands: $0)
+            }
         }
+        unpackedAhead = nil
+        nextReserve = (index + 1) % reserves.count
+        let reserve = reserves[index]
         // The GPU's rows: all of them, or its share of a split product.
         func gpuRows(_ rows: Int) throws {
             let key = "\(rows)×\(kk)×\(nn)"
@@ -354,8 +367,17 @@ public final class QwenDiT {
             func operand(_ slice: Arena.Slice, _ row: Int, _ width: Int) -> (MTLBuffer, Int, UnsafeMutablePointer<Float>) {
                 (arena.buffer, slice.offset + row * width * 4, arena.pointer(slice, floatOffset: row * width))
             }
+            var ahead: ((MTLCommandBuffer) throws -> Void)?
+            if let next {
+                let t = try weight(next), other = nextReserve
+                ahead = { [self] commands in
+                    try dequant.encode(t, of: file, into: arena.buffer, outOffset: reserves[other].offset, transposed: true, commands: commands)
+                    try coexecutor.prepareWeight(next, w: operand(reserves[other], 0, t.rows), k: t.columns, n: t.rows, commands: commands)
+                    unpackedAhead = (next, other)
+                }
+            }
             try coexecutor.encode(weight: name, a: operand(a, aRow, kk), w: operand(reserve, 0, nn), c: operand(c, cRow, nn),
-                                  m: m, k: kk, n: nn, commands: commands, gpuRows: gpuRows)
+                                  m: m, k: kk, n: nn, commands: commands, ahead: ahead, gpuRows: gpuRows)
         } else {
             try gpuRows(m)
         }

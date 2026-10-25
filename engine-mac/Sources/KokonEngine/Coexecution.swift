@@ -29,9 +29,14 @@ final class Coexecutor {
     private(set) var aneRows: Int
     var amxRows: [String: Int] = [:]
     typealias ProductSlot = (product: NeuralEngineProduct, x: MTLBuffer, w: MTLBuffer, y: MTLBuffer)
-    private var slots: [ProductSlot]
+    /// Two sets of the three tile programs, alternating product by product: the next product's weight is packed into
+    /// one set while the Neural Engine reads the other (`prepareWeight`). The sets share their row surfaces.
+    private var slots: [[ProductSlot]]
     /// Programs of other row counts, kept while the balancing loop may come back to them.
-    private var spareSlots: [Int: [ProductSlot]] = [:]
+    private var spareSlots: [Int: [[ProductSlot]]] = [:]
+    /// The set of the last product encoded; the weight packed ahead and its set.
+    private var currentSet = 0
+    private var packedAhead: (weight: String, set: Int)?
     var balancer: Balancer
     /// The timeline of the last evaluation, once the balancing loop has read it.
     var lastTimeline: [Timeline.Entry] = []
@@ -76,27 +81,34 @@ final class Coexecutor {
         }
         (ready, amxDone, aneDone, gpuDone) = (r, a, e, g)
         scales = try context.scratch(rows * 4, label: "ane row scales")
-        slots = []
+        slots = [[], []]
         slots = try productSlots(aneRows)
     }
 
-    /// Three programs of `rows` rows (the tiles of a product, at most 3), compiled and warmed.
-    private func productSlots(_ rows: Int) throws -> [ProductSlot] {
-        guard rows > 0 else { return [] }
+    /// Two sets of three programs of `rows` rows (the tiles of a product, at most 3), compiled and warmed.
+    private func productSlots(_ rows: Int) throws -> [[ProductSlot]] {
+        guard rows > 0 else { return [[], []] }
         let device = context.device
-        return try (0..<3).map { _ in
+        let first: [ProductSlot] = try (0..<3).map { _ in
             let p = try NeuralEngineProduct(rows: rows, k: Coexecutor.tile, n: Coexecutor.tile)
             try p.run()
             return (p, try p.gpuBuffer(p.x, device: device), try p.gpuBuffer(p.w, device: device), try p.gpuBuffer(p.y, device: device))
         }
+        let second: [ProductSlot] = try first.map { f in
+            let p = try NeuralEngineProduct(rows: rows, k: Coexecutor.tile, n: Coexecutor.tile, sharing: f.product)
+            try p.run()
+            return (p, f.x, try p.gpuBuffer(p.w, device: device), f.y)
+        }
+        return [first, second]
     }
 
     /// Moves the Neural Engine to `rows` rows per product; between evaluations only (the GPU must be idle).
     func setAneRows(_ rows: Int) throws {
         guard rows != aneRows else { return }
         let next = try spareSlots.removeValue(forKey: rows) ?? productSlots(rows)
-        if aneRows > 0 { spareSlots = [aneRows: slots] }   // the last one only: 192 MB of surfaces at 2 048 rows
+        if aneRows > 0 { spareSlots = [aneRows: slots] }   // the last one only: 288 MB of surfaces at 2 048 rows
         (slots, aneRows) = (next, rows)
+        packedAhead = nil
     }
 
     /// Whether a product takes the split: the Neural Engine's tiles need K and N in multiples of 4 096 with at
@@ -118,13 +130,14 @@ final class Coexecutor {
     func encode(weight: String, a: (buffer: MTLBuffer, offset: Int, pointer: UnsafeMutablePointer<Float>),
                 w: (buffer: MTLBuffer, offset: Int, pointer: UnsafeMutablePointer<Float>),
                 c: (buffer: MTLBuffer, offset: Int, pointer: UnsafeMutablePointer<Float>),
-                m: Int, k: Int, n: Int, commands: MTLCommandBuffer, gpuRows: (Int) throws -> Void) throws {
+                m: Int, k: Int, n: Int, commands: MTLCommandBuffer,
+                ahead: ((MTLCommandBuffer) throws -> Void)? = nil, gpuRows: (Int) throws -> Void) throws {
         let s = split(m: m, k: k, n: n)
         counter += 1
         let p = counter
         open(p, kind: "\(k)×\(n)", shares: (s.gpu, s.amx, s.ane))
         let (kParts, nParts) = (k / Coexecutor.tile, n / Coexecutor.tile)
-        let (lambda, norm, state, sigma) = (0, n * 4, 2 * n * 4, 0)
+        let (lambda, state, sigma) = (0, 2 * n * 4, 0)
         func shape(kp: Int = 0, np: Int = 0) -> Shape {
             Shape(k: UInt32(k), n: UInt32(n), k0: UInt32(kp * Coexecutor.tile), kPart: UInt32(Coexecutor.tile),
                   n0: UInt32(np * Coexecutor.tile), nPart: UInt32(Coexecutor.tile), row0: UInt32(s.gpu + s.amx),
@@ -138,24 +151,19 @@ final class Coexecutor {
             e.endEncoding()
         }
         // (Read only when the Neural Engine takes rows.)
-        let columns = s.ane > 0 ? try columnScales[weight] ?? context.scratch((2 * n + 16) * 4, label: "λ \(weight)") : scales
+        let columns = s.ane > 0 ? try columnScales(weight, w: w, k: k, n: n, commands: commands) : scales
+        let set: Int
+        if s.ane > 0, let ahead = packedAhead, ahead.weight == weight {
+            set = ahead.set
+        } else {
+            set = 1 - currentSet
+            if s.ane > 0 { try packWeight(w: w, k: k, n: n, columns: columns, set: set, commands: commands) }
+        }
+        packedAhead = nil
+        currentSet = set
+        let slots = self.slots[set]
         if s.ane > 0 {
             var sh = shape()
-            if columnScales[weight] == nil {
-                columnScales[weight] = columns
-                try kernel("ane_columns") { e in
-                    e.setBuffer(w.buffer, offset: w.offset, index: 0)
-                    e.setBuffer(columns, offset: lambda, index: 1); e.setBuffer(columns, offset: norm, index: 2)
-                    e.setBytes(&sh, length: MemoryLayout<Shape>.stride, index: 3)
-                    e.dispatchThreadgroups(MTLSize(width: (n + 63) / 64, height: 1, depth: 1),
-                                           threadsPerThreadgroup: MTLSize(width: 64, height: 16, depth: 1))
-                }
-                try kernel("ane_norm") { e in
-                    e.setBuffer(columns, offset: norm, index: 0); e.setBuffer(columns, offset: state, index: 1)
-                    e.setBytes(&sh, length: MemoryLayout<Shape>.stride, index: 2)
-                    e.dispatchThreadgroups(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 1024, height: 1, depth: 1))
-                }
-            }
             try kernel("ane_row_scales") { e in
                 e.setBuffer(a.buffer, offset: a.offset, index: 0); e.setBuffer(columns, offset: state, index: 1)
                 e.setBuffer(scales, offset: sigma, index: 2)
@@ -166,13 +174,6 @@ final class Coexecutor {
                 for np in 0..<nParts {
                     let slot = slots[kp * nParts + np]
                     var t = shape(kp: kp, np: np)
-                    try kernel("ane_pack_weight") { e in
-                        e.setBuffer(w.buffer, offset: w.offset, index: 0); e.setBuffer(columns, offset: lambda, index: 1)
-                        e.setBuffer(slot.w, offset: 0, index: 2)
-                        e.setBytes(&t, length: MemoryLayout<Shape>.stride, index: 3)
-                        e.dispatchThreads(MTLSize(width: Coexecutor.tile, height: Coexecutor.tile, depth: 1),
-                                          threadsPerThreadgroup: MTLSize(width: 64, height: 4, depth: 1))
-                    }
                     try kernel("ane_pack_rows") { e in
                         e.setBuffer(a.buffer, offset: a.offset, index: 0); e.setBuffer(scales, offset: sigma, index: 1)
                         e.setBuffer(slot.x, offset: 0, index: 2)
@@ -184,6 +185,8 @@ final class Coexecutor {
             }
         }
         if s.amx > 0 || s.ane > 0 { commands.encodeSignalEvent(ready, value: p) }
+        // The next weight's own work while the AMX and the Neural Engine run this product.
+        try ahead?(commands)
         if s.amx > 0 {
             nonisolated(unsafe) let (pa, pw, pc) = (a.pointer + s.gpu * k, w.pointer, c.pointer + s.gpu * n)
             let rows = s.amx
@@ -234,6 +237,66 @@ final class Coexecutor {
         if event.wait(untilSignaledValue: value, timeoutMS: 60_000) { return true }
         fail("\(who): the GPU never reached product \(value)")
         return false
+    }
+
+    func kernel(_ name: String, _ commands: MTLCommandBuffer, _ body: (MTLComputeCommandEncoder) throws -> Void) throws {
+        let e = commands.makeComputeCommandEncoder()!
+        e.label = name
+        e.setComputePipelineState(try context.pipeline(name))
+        try body(e)
+        e.endEncoding()
+    }
+
+    /// The weight's column scales `[λ (n) | norms (n) | L]`, encoded the first time it is used, then kept.
+    func columnScales(_ weight: String, w: (buffer: MTLBuffer, offset: Int, pointer: UnsafeMutablePointer<Float>),
+                      k: Int, n: Int, commands: MTLCommandBuffer) throws -> MTLBuffer {
+        if let c = columnScales[weight] { return c }
+        let columns = try context.scratch((2 * n + 16) * 4, label: "λ \(weight)")
+        columnScales[weight] = columns
+        var sh = Shape(k: UInt32(k), n: UInt32(n), k0: 0, kPart: 0, n0: 0, nPart: 0, row0: 0, rows: 0, kParts: 0)
+        try kernel("ane_columns", commands) { e in
+            e.setBuffer(w.buffer, offset: w.offset, index: 0)
+            e.setBuffer(columns, offset: 0, index: 1); e.setBuffer(columns, offset: n * 4, index: 2)
+            e.setBytes(&sh, length: MemoryLayout<Shape>.stride, index: 3)
+            e.dispatchThreadgroups(MTLSize(width: (n + 63) / 64, height: 1, depth: 1),
+                                   threadsPerThreadgroup: MTLSize(width: 64, height: 16, depth: 1))
+        }
+        try kernel("ane_norm", commands) { e in
+            e.setBuffer(columns, offset: n * 4, index: 0); e.setBuffer(columns, offset: 2 * n * 4, index: 1)
+            e.setBytes(&sh, length: MemoryLayout<Shape>.stride, index: 2)
+            e.dispatchThreadgroups(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 1024, height: 1, depth: 1))
+        }
+        return columns
+    }
+
+    /// The weight's tiles, lifted, into the weight surfaces of `set`.
+    private func packWeight(w: (buffer: MTLBuffer, offset: Int, pointer: UnsafeMutablePointer<Float>), k: Int, n: Int,
+                            columns: MTLBuffer, set: Int, commands: MTLCommandBuffer) throws {
+        let (kParts, nParts) = (k / Coexecutor.tile, n / Coexecutor.tile)
+        for kp in 0..<kParts {
+            for np in 0..<nParts {
+                var t = Shape(k: UInt32(k), n: UInt32(n), k0: UInt32(kp * Coexecutor.tile), kPart: UInt32(Coexecutor.tile),
+                              n0: UInt32(np * Coexecutor.tile), nPart: UInt32(Coexecutor.tile), row0: 0, rows: 0, kParts: UInt32(kParts))
+                try kernel("ane_pack_weight", commands) { e in
+                    e.setBuffer(w.buffer, offset: w.offset, index: 0); e.setBuffer(columns, offset: 0, index: 1)
+                    e.setBuffer(slots[set][kp * nParts + np].w, offset: 0, index: 2)
+                    e.setBytes(&t, length: MemoryLayout<Shape>.stride, index: 3)
+                    e.dispatchThreads(MTLSize(width: Coexecutor.tile, height: Coexecutor.tile, depth: 1),
+                                      threadsPerThreadgroup: MTLSize(width: 64, height: 4, depth: 1))
+                }
+            }
+        }
+    }
+
+    /// Packs the next product's weight (already unpacked to fp32 [k, n] at `w`) into the set the current product does
+    /// not use. Encoded inside the current product, after its release: the set was last read by the product before.
+    func prepareWeight(_ weight: String, w: (buffer: MTLBuffer, offset: Int, pointer: UnsafeMutablePointer<Float>),
+                       k: Int, n: Int, commands: MTLCommandBuffer) throws {
+        guard aneRows > 0, applies(m: rows, k: k, n: n) else { return }
+        let set = 1 - currentSet
+        try packWeight(w: w, k: k, n: n, columns: try columnScales(weight, w: w, k: k, n: n, commands: commands),
+                       set: set, commands: commands)
+        packedAhead = (weight, set)
     }
 
     func resetTimings() { lock.withLock { amxSeconds = 0; aneSeconds = 0 } }

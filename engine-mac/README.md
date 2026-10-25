@@ -156,10 +156,18 @@ is not linear in rows), the Neural Engine's rows (steps of 256, a program set pe
 evaluations; every product's units then finish within ~0.3 ms of each other (before: the GPU 3–15 ms after the
 AMX). `KOKON_BALANCE=0` keeps the starting shares; `KOKON_HEADS=g,a,c` fixes the heads.
 
-**One evaluation at 1024², all three units, unsloth's DiT: 8.8 s** (start of this pass 11.6 s): products ~5.2 s
-(≈11 TFLOP/s across the units, the probe's ceiling), attention 32 × 78 ms, the GPU alone between them ~1 s. The
-Neural Engine's per-column weight scales are kept per weight (computed once), and the modulation of all of the
-pipeline's timesteps is computed once (it was 0.2 s of CPU per evaluation).
+**One evaluation at 1024², all three units, unsloth's DiT: 8.7–8.9 s** (start of this pass 11.6 s): products ~5.3 s
+(≈11 TFLOP/s across the units, the probe's ceiling), attention 32 × 78 ms, the GPU alone between operations 0.6 s
+(`time-dit` prints it by transition). The Neural Engine's per-column weight scales are computed once per weight, the
+next product's weight is unpacked and packed for the Neural Engine while the current one runs (between operations
+1.12 → 0.60 s, the evaluation ~0.1 s faster: the units were already full), and the modulation of all of the
+pipeline's timesteps is computed once (it was 0.2 s of CPU per evaluation). The balanced shares are remembered per
+Mac and shape (`~/Library/Caches/kokon-engine-mac/balance.json`), so the first step starts balanced.
+
+**1024² image, M2 Pro, unsloth's DiT + texture-fix VAE (`generate`), 2026-10-25: 79.9 s** (text encoder 2.0 s, step 1
+10.2 s, steps 2–8 8.8–9.1 s, VAE 5.2 s); at the start of this pass 100.2 s; Kokon's sd.cpp ~4.5 min. With
+`KOKON_ATTENTION=half` (fp16 operands in the flash kernel): 76.0 s, the velocity within 6.0e-4 of fp64 at 256²
+(fp32 kernel 1.0e-5); the two 1024² images differ by 0.25 levels on average, 0.18 % of values by more than 8.
 
 **VAE decoder** (`check-vae`, against `tools/reference_vae.py`, diffusers fp32): within 1.1e-5; 1024² in 2.75 s. Its
 graph builds and compiles in 0.3 s, but its first run at a size costs ~3.7 s more, GPU time (~1 s of CPU): it cannot

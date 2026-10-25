@@ -37,14 +37,15 @@ public final class NeuralEngineProduct: @unchecked Sendable {
         }
     }
 
-    public init(rows: Int, k: Int, n: Int) throws {
+    /// `sharing`: a program of the same shape whose `x` and `y` surfaces this one uses too (its own weight only).
+    public init(rows: Int, k: Int, n: Int, sharing: NeuralEngineProduct? = nil) throws {
         self.rows = rows; self.k = k; self.n = n
         (model, directory) = try NeuralEngineProduct.compile(
             "\(rows)x\(k)x\(n)", program: NeuralEngineProduct.program(rows: rows, k: k, n: n),
             inputs: [("x", [rows, k]), ("w", [k, n])], outputs: [("y", [rows, n])])
-        x = try NeuralEngineProduct.surface(rows: rows, columns: k)
+        x = try sharing?.x ?? NeuralEngineProduct.surface(rows: rows, columns: k)
         w = try NeuralEngineProduct.surface(rows: k, columns: n)
-        y = try NeuralEngineProduct.surface(rows: rows, columns: n)
+        y = try sharing?.y ?? NeuralEngineProduct.surface(rows: rows, columns: n)
         func shape(_ dims: Int...) -> [NSNumber] { dims.map { NSNumber(value: $0) } }
         options = MLPredictionOptions()
         options.outputBackings = ["y": MLMultiArray(pixelBuffer: y, shape: shape(rows, n))]

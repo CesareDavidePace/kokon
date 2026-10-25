@@ -37,6 +37,12 @@ class Weights:
         self.tensors = {t.name.removeprefix(PREFIX): t for t in self.reader.tensors}
 
     def get(self, name):
+        if name not in self.tensors and name.endswith(("img_mlp.gate_layer.weight", "img_mlp.proj.weight")):
+            # ComfyUI's layout (unsloth's GGUFs): one gate_up tensor, gate rows first, as diffusers' single-file
+            # loader splits it.
+            base = name.rsplit("img_mlp.", 1)[0]
+            gate, up = self.get(base + "img_mlp.gate_up.weight").chunk(2, dim=0)
+            return (gate if name.endswith("gate_layer.weight") else up).contiguous()
         t = self.tensors[name]
         values = gguf.quants.dequantize(t.data, t.tensor_type).astype(np.float32)
         shape = [int(d) for d in reversed(t.shape)]  # ggml ne order -> torch order

@@ -277,11 +277,29 @@ public final class QwenDiT {
 
     func elapsed(since start: UInt64) -> Double { Double(DispatchTime.now().uptimeNanoseconds - start) * 1e-9 }
 
+    /// The file's Linear weight `name` (without the prefix). Files in ComfyUI's layout (unsloth's GGUFs) fuse each
+    /// block's `img_mlp.gate_layer` and `img_mlp.proj` into one `img_mlp.gate_up` `[2 · 12288, 4096]`, gate rows
+    /// first (diffusers' single_file_utils and sd.cpp's qwen_image_2_1.hpp split it the same way): each half is
+    /// then a view of the fused tensor's rows, a quantized row being contiguous, so nothing is copied.
+    func weight(_ name: String) throws -> GGUFTensor {
+        if let t = file.tensors[QwenDiT.prefix + name] { return t }
+        for (part, half) in [("img_mlp.gate_layer.weight", 0), ("img_mlp.proj.weight", 1)] where name.hasSuffix(part) {
+            let fused = try file.tensor(QwenDiT.prefix + name.dropLast(part.count) + "img_mlp.gate_up.weight")
+            guard let type = fused.type, fused.dims.count == 2, fused.rows % 2 == 0 else {
+                throw GGUFFile.Failure.unsupported("\(fused.name): \(fused.dims)")
+            }
+            let rows = fused.rows / 2
+            return GGUFTensor(name: QwenDiT.prefix + name, dims: [fused.columns, rows], typeID: fused.typeID,
+                              offset: fused.offset + half * rows * type.bytes(count: fused.columns))
+        }
+        return try file.tensor(QwenDiT.prefix + name)
+    }
+
     /// `C[m, n] = A[m, k] · W` with W the file's Linear `[n, k]`, unpacked to `[k, n]` fp32 in a reserve first.
     /// `aRow`, `cRow`: first row of A and C in their slices.
     func linear(_ name: String, a: Arena.Slice, aRow: Int = 0, c: Arena.Slice, m: Int, cRow: Int = 0,
                 commands: MTLCommandBuffer) throws {
-        let tensor = try file.tensor(QwenDiT.prefix + name)
+        let tensor = try weight(name)
         let (kk, nn) = (tensor.columns, tensor.rows)
         let m = QwenDiT.padded(m)
         guard (aRow + m) * kk * 4 <= a.bytes, (cRow + m) * nn * 4 <= c.bytes else {

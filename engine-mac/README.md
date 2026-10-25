@@ -48,6 +48,9 @@ python3 -m venv ~/kokon-bench/venv-oracle && ~/kokon-bench/venv-oracle/bin/pip i
 ```
 
 256² text-to-image, σ 0.7, 2026-10-25: every stage within 2e-5 relative of diffusers fp32 (velocity 6e-6).
+unsloth's Qwen-Image 2.1 Turbo Q4_K_M (the file Kokon will ship with this engine; ComfyUI layout, each block's MLP
+`gate_up` fused, read as two views): velocity within 7.2e-5, layers 0–1 within 2.4e-6, the gap growing in the last
+layers (not understood yet).
 
 **The text encoder against transformers.** The reference tokenizes with the processor of the official
 Qwen/Qwen-Image-2.1-Turbo repository (`processor/` and `text_encoder/config.json`, a few MB) and runs transformers'

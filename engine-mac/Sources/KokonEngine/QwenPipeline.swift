@@ -21,6 +21,9 @@ public final class QwenPipeline {
     public var log: (String) -> Void = { print($0) }
     /// Seconds per phase of the last run: encode, steps (each), dit load, vae, total.
     public private(set) var timings: [String: Double] = [:]
+    /// Kept between images: its first decode of a size costs ~3.7 s more than the next ones at 1024² (M2 Pro), GPU
+    /// time (~1 s of CPU), so it cannot hide under the DiT; a long-lived engine pays it once per size.
+    private var vae: QwenVAE?
 
     public init(encoder: String, dit: String, vae: String) throws {
         encoderPath = encoder
@@ -35,10 +38,11 @@ public final class QwenPipeline {
     }
 
     /// Text to image at `width` × `height` (multiples of 32). `noise`: a latent `[64, h, w]` to start from instead of
-    /// the seed's; `step`: called after each step with its index and the packed latent `[h·w, 64]`.
+    /// the seed's; `conditioning`: the encoder's output `[T, 4096]` to use instead of encoding `prompt` (the checks);
+    /// `step`: called after each step with its index and the packed latent `[h·w, 64]`.
     /// Returns the decoded image, RGBA `[4, height, width]` in [−1, 1].
     public func textToImage(prompt: String, width: Int, height: Int, seed: UInt64, noise: [Float]? = nil,
-                            sigmas: [Float] = QwenPipeline.turboSigmas,
+                            conditioning given: [Float]? = nil, sigmas: [Float] = QwenPipeline.turboSigmas,
                             step: ((Int, [Float]) -> Void)? = nil) throws -> [Float] {
         guard width % 32 == 0, height % 32 == 0, width >= 64, height >= 64 else {
             throw QwenSequence.Failure.layout("\(width)×\(height): each side must be a multiple of 32, at least 64")
@@ -52,6 +56,7 @@ public final class QwenPipeline {
         // 1. The prompt. The encoder and its 5 GB mapping are gone when this scope ends.
         var t = DispatchTime.now().uptimeNanoseconds
         let (conditioning, rows): ([Float], Int) = try {
+            if let given { return (given, given.count / QwenDiT.dim) }
             let file = try GGUFFile(path: encoderPath)
             let encoder = try QwenTextEncoder(file: file, context: context)
             defer { encoder.release() }
@@ -74,6 +79,7 @@ public final class QwenPipeline {
             let file = try GGUFFile(path: ditPath)
             defer { context.release(file) }
             let dit = try QwenDiT(file: file, context: context, sequence: sequence)
+            try dit.prepareModulation([0] + sigmas.dropLast())
             timings["dit load"] = since(t)
             for i in 0..<(sigmas.count - 1) {
                 let stepStart = DispatchTime.now().uptimeNanoseconds
@@ -88,8 +94,8 @@ public final class QwenPipeline {
 
         // 4. The image.
         t = DispatchTime.now().uptimeNanoseconds
-        let vae = try QwenVAE(path: vaePath, context: context)
-        let image = try vae.decode(QwenPipeline.unpack(x, height: h, width: w), height: h, width: w)
+        if vae == nil { vae = try QwenVAE(path: vaePath, context: context) }
+        let image = try vae!.decode(QwenPipeline.unpack(x, height: h, width: w), height: h, width: w)
         timings["vae"] = since(t)
         timings["total"] = since(started)
         log(String(format: "VAE: %.2f s; total %.1f s", timings["vae"]!, timings["total"]!))

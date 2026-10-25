@@ -11,12 +11,16 @@ kokon-engine-mac: Kokon's Apple Silicon engine (in development)
   check-vae <vae.safetensors> <reference dir> [grid]   the VAE decoder against tools/reference_vae.py
   check-tokenizer <encoder.gguf> <fixture.json>       the tokenizer against tools/reference_tokenizer.py
   check-text <encoder.gguf> <reference dir>           the text encoder against tools/reference_text_encoder.py
-  check-generate <encoder.gguf> <dit.gguf> <vae.safetensors> <reference dir>
+  check-generate <encoder.gguf> <dit.gguf> <vae.safetensors> <reference dir> [text reference dir]
                                            text to image against tools/reference_generate.py, from its noise
+                                           (and from the text reference's conditioning when given)
+  check-steps <dit.gguf> <generate reference dir> <text reference dir>
+                                           each step alone against tools/reference_generate.py (its latents in)
   check-noise <philox.bin>                 the seed's noise against sd.cpp's generator (tools/philox_reference.cpp)
   generate <encoder.gguf> <dit.gguf> <vae.safetensors> "<prompt>" [--size WxH] [--seed N] [--out file.png]
                                            text to image, Turbo's 8 steps (default 1024x1024, seed 42, out.png)
   probe                                    this Mac's matrix throughput: GPU, AMX, Neural Engine, together
+  probe-attention                          the target's attention at 1024² on the GPU, the Neural Engine, the CPU
 """
 
 func fail(_ message: String) -> Never {
@@ -66,8 +70,9 @@ do {
         guard arguments.count == 3 else { fail(usage) }
         try Checks.textEncoder(path: arguments[1], reference: arguments[2])
     case "check-generate":
-        guard arguments.count == 5 else { fail(usage) }
-        try Checks.generate(encoder: arguments[1], dit: arguments[2], vae: arguments[3], reference: arguments[4])
+        guard arguments.count == 5 || arguments.count == 6 else { fail(usage) }
+        try Checks.generate(encoder: arguments[1], dit: arguments[2], vae: arguments[3], reference: arguments[4],
+                            text: arguments.count == 6 ? arguments[5] : nil)
     case "generate":
         guard arguments.count >= 5 else { fail(usage) }
         var (width, height, seed, out) = (1024, 1024, UInt64(42), "out.png")
@@ -91,11 +96,16 @@ do {
         try QwenPipeline.writePNG(QwenPipeline.pixels(image, width: size.width, height: size.height),
                                   width: size.width, height: size.height, to: out)
         print("wrote \(out) (\(size.width)×\(size.height), seed \(seed))")
+    case "check-steps":
+        guard arguments.count == 4 else { fail(usage) }
+        try Checks.steps(dit: arguments[1], reference: arguments[2], text: arguments[3])
     case "check-noise":
         guard arguments.count == 2 else { fail(usage) }
         try Checks.noise(dump: arguments[1])
     case "probe":
         try Probe.run()
+    case "probe-attention":
+        try Probe.attention()
     default:
         fail(usage)
     }

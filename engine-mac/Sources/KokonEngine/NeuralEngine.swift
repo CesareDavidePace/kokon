@@ -39,21 +39,9 @@ public final class NeuralEngineProduct: @unchecked Sendable {
 
     public init(rows: Int, k: Int, n: Int) throws {
         self.rows = rows; self.k = k; self.n = n
-        directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("kokon-ane-\(ProcessInfo.processInfo.processIdentifier)-\(rows)x\(k)x\(n)-\(UUID().uuidString)")
-            .appendingPathExtension("mlmodelc")
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try NeuralEngineProduct.program(rows: rows, k: k, n: n)
-            .write(to: directory.appendingPathComponent("model.mil"), atomically: true, encoding: .utf8)
-        try NeuralEngineProduct.description(rows: rows, k: k, n: n)
-            .write(to: directory.appendingPathComponent("coremldata.bin"))
-        let configuration = MLModelConfiguration()
-        configuration.computeUnits = .cpuAndNeuralEngine
-        do {
-            model = try MLModel(contentsOf: directory, configuration: configuration)
-        } catch {
-            throw Failure.program("\(rows)×\(k)×\(n): \(error.localizedDescription)")
-        }
+        (model, directory) = try NeuralEngineProduct.compile(
+            "\(rows)x\(k)x\(n)", program: NeuralEngineProduct.program(rows: rows, k: k, n: n),
+            inputs: [("x", [rows, k]), ("w", [k, n])], outputs: [("y", [rows, n])])
         x = try NeuralEngineProduct.surface(rows: rows, columns: k)
         w = try NeuralEngineProduct.surface(rows: k, columns: n)
         y = try NeuralEngineProduct.surface(rows: rows, columns: n)
@@ -114,9 +102,29 @@ public final class NeuralEngineProduct: @unchecked Sendable {
         """
     }
 
+    /// Writes `program` and its description as a compiled model in a temporary directory and loads it for the
+    /// CPU and the Neural Engine. `tag` names the directory.
+    static func compile(_ tag: String, program: String, inputs: [(String, [Int])],
+                        outputs: [(String, [Int])]) throws -> (MLModel, URL) {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kokon-ane-\(ProcessInfo.processInfo.processIdentifier)-\(tag)-\(UUID().uuidString)")
+            .appendingPathExtension("mlmodelc")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try program.write(to: directory.appendingPathComponent("model.mil"), atomically: true, encoding: .utf8)
+        try description(inputs: inputs, outputs: outputs).write(to: directory.appendingPathComponent("coremldata.bin"))
+        let configuration = MLModelConfiguration()
+        configuration.computeUnits = .cpuAndNeuralEngine
+        do {
+            return (try MLModel(contentsOf: directory, configuration: configuration), directory)
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw Failure.program("\(tag): \(error.localizedDescription)")
+        }
+    }
+
     /// `coremldata.bin`: a fixed header with the description's length (little-endian u64 at 0x4b), the
-    /// model description as protobuf (inputs `x`, `w`, output `y`, fp16 multi-arrays), a fixed trailer.
-    static func description(rows: Int, k: Int, n: Int) -> Data {
+    /// model description as protobuf (named fp16 multi-arrays in and out), a fixed trailer.
+    static func description(inputs: [(String, [Int])], outputs: [(String, [Int])]) -> Data {
         func varint(_ value: Int) -> [UInt8] {
             var v = UInt64(value), out: [UInt8] = []
             repeat {
@@ -133,7 +141,7 @@ public final class NeuralEngineProduct: @unchecked Sendable {
             let array = field(0x2a, shape + [0x10] + varint(65_552))
             return field(tag, field(0x0a, Array(name.utf8)) + field(0x1a, array))
         }
-        let payload = feature(0x0a, "x", [rows, k]) + feature(0x0a, "w", [k, n]) + feature(0x52, "y", [rows, n])
+        let payload: [UInt8] = inputs.flatMap { feature(0x0a, $0.0, $0.1) } + outputs.flatMap { feature(0x52, $0.0, $0.1) }
             + [0xa2, 0x06, 0x00]
         var header = [UInt8](repeating: 0, count: 0x53)
         header[0] = 0xf6; header[1] = 0x01; header[4] = 0x09; header[0x1c] = 0x07
@@ -150,6 +158,10 @@ extension NeuralEngineProduct {
     /// A GPU buffer over a surface's memory, no copy: the GPU writes the Neural Engine's operands in place.
     /// The surface stays locked for the product's life (unified memory: the lock only pins the address).
     public func gpuBuffer(_ surface: CVPixelBuffer, device: MTLDevice) throws -> MTLBuffer {
+        try NeuralEngineProduct.gpuBuffer(surface, device: device)
+    }
+
+    static func gpuBuffer(_ surface: CVPixelBuffer, device: MTLDevice) throws -> MTLBuffer {
         CVPixelBufferLockBaseAddress(surface, [])
         guard let io = CVPixelBufferGetIOSurface(surface)?.takeUnretainedValue(),
               let base = CVPixelBufferGetBaseAddress(surface) else { throw Failure.surface("no IOSurface") }
@@ -161,5 +173,74 @@ extension NeuralEngineProduct {
             throw Failure.surface("surface memory at \(base) is not page-aligned (\(length) bytes)")
         }
         return buffer
+    }
+}
+
+/// **Attention on the Neural Engine**: `y[h] = softmax(q[h] · k[h]ᵀ) · v[h]` for `heads` heads of 128, fp16, `q`
+/// already scaled by 1/√128. One program per shape, operands in surfaces `[heads · rows, 128]` (heads first),
+/// bound once, as for the product.
+public final class NeuralEngineAttention: @unchecked Sendable {
+    public let heads: Int, queries: Int, keys: Int
+    public static let headDim = 128
+    private let model: MLModel
+    private let features: MLFeatureProvider
+    private let options: MLPredictionOptions
+    public let q: CVPixelBuffer, k: CVPixelBuffer, v: CVPixelBuffer, y: CVPixelBuffer
+    private let directory: URL
+
+    /// Measured on the M2 Pro (`probe-attention`, 4 096 queries × 4 128 keys, 2026-10-25): 4 heads × 1 024 queries a
+    /// run 5.3 ms per head of all queries, 8 × 1 024 5.5, 1 × 4 096 6.5, 8 × 4 096 10.5 (the score matrix grows past
+    /// what the Neural Engine keeps close); MIL's fused `scaled_dot_product_attention` 33 ms per head. Head 0 within
+    /// 2.2e-3 of an exact attention (fp16 scores and probabilities).
+    ///
+    /// `k`, `v`: surfaces of another program of the same heads and keys to share (the query chunks of one head group).
+    public init(heads: Int, queries: Int, keys: Int, sharing: NeuralEngineAttention? = nil) throws {
+        self.heads = heads; self.queries = queries; self.keys = keys
+        let d = NeuralEngineAttention.headDim
+        (model, directory) = try NeuralEngineProduct.compile(
+            "attention-\(heads)x\(queries)x\(keys)", program: NeuralEngineAttention.program(heads: heads, queries: queries, keys: keys),
+            inputs: [("q", [1, heads, queries, d]), ("k", [1, heads, keys, d]), ("v", [1, heads, keys, d])],
+            outputs: [("y", [1, heads, queries, d])])
+        q = try NeuralEngineProduct.surface(rows: heads * queries, columns: d)
+        k = try sharing?.k ?? NeuralEngineProduct.surface(rows: heads * keys, columns: d)
+        v = try sharing?.v ?? NeuralEngineProduct.surface(rows: heads * keys, columns: d)
+        y = try NeuralEngineProduct.surface(rows: heads * queries, columns: d)
+        func shape(_ dims: Int...) -> [NSNumber] { dims.map { NSNumber(value: $0) } }
+        options = MLPredictionOptions()
+        options.outputBackings = ["y": MLMultiArray(pixelBuffer: y, shape: shape(1, heads, queries, d))]
+        features = try MLDictionaryFeatureProvider(dictionary: [
+            "q": MLFeatureValue(multiArray: MLMultiArray(pixelBuffer: q, shape: shape(1, heads, queries, d))),
+            "k": MLFeatureValue(multiArray: MLMultiArray(pixelBuffer: k, shape: shape(1, heads, keys, d))),
+            "v": MLFeatureValue(multiArray: MLMultiArray(pixelBuffer: v, shape: shape(1, heads, keys, d))),
+        ])
+    }
+
+    deinit { try? FileManager.default.removeItem(at: directory) }
+
+    public func run() throws {
+        _ = try model.prediction(from: features, options: options)
+    }
+
+    /// A GPU buffer over one of its surfaces (`NeuralEngineProduct.gpuBuffer`).
+    public func gpuBuffer(_ surface: CVPixelBuffer, device: MTLDevice) throws -> MTLBuffer {
+        try NeuralEngineProduct.gpuBuffer(surface, device: device)
+    }
+
+    static func program(heads h: Int, queries l: Int, keys s: Int) -> String {
+        let d = NeuralEngineAttention.headDim
+        return """
+        program(1.3)
+        [buildInfo = dict<string, string>({{"coremlc-component-MIL", "3600.16.1"}, {"coremlc-version", "3600.25.2"}})]
+        {
+            func main<ios18>(tensor<fp16, [1, \(h), \(l), \(d)]> q, tensor<fp16, [1, \(h), \(s), \(d)]> k, tensor<fp16, [1, \(h), \(s), \(d)]> v) {
+                    bool f = const()[name = string("f"), val = bool(false)];
+                    bool t = const()[name = string("t"), val = bool(true)];
+                    tensor<fp16, [1, \(h), \(l), \(s)]> scores = matmul(transpose_x = f, transpose_y = t, x = q, y = k)[name = string("scores")];
+                    int32 axis = const()[name = string("axis"), val = int32(-1)];
+                    tensor<fp16, [1, \(h), \(l), \(s)]> p = softmax(axis = axis, x = scores)[name = string("p")];
+                    tensor<fp16, [1, \(h), \(l), \(d)]> y = matmul(transpose_x = f, transpose_y = f, x = p, y = v)[name = string("y")];
+                } -> (y);
+        }
+        """
     }
 }

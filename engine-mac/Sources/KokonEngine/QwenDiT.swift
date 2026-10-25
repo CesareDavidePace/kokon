@@ -44,8 +44,9 @@ public final class QwenDiT {
     let rope, modulation, qkNorms, textNorm, textIn, textOut, latent, output: Arena.Slice
     private var nextReserve = 0
     private var products: [String: MPSMatrixMultiplication] = [:]
-    /// The AMX and the Neural Engine beside the GPU on the large products (`Coexecution.swift`); nil: GPU alone.
-    /// `KOKON_COEXEC=0` turns it off, `KOKON_ANE=0` / `KOKON_AMX=0` one unit, `KOKON_AMX_SHARE` the AMX's rows.
+    /// The AMX and the Neural Engine beside the GPU on the large products and the target's attention
+    /// (`Coexecution.swift`, `AttentionSplit.swift`); nil: GPU alone. `KOKON_COEXEC=0` turns it off, `KOKON_ANE=0` /
+    /// `KOKON_AMX=0` one unit, `KOKON_ANE_ATTENTION=1` heads on the Neural Engine too, `KOKON_BALANCE=0` the balancing loop.
     let coexecutor: Coexecutor?
     private var attentions: [String: GraphAttention] = [:]
     /// Seconds per phase of the last evaluation.
@@ -74,11 +75,14 @@ public final class QwenDiT {
 
         let environment = ProcessInfo.processInfo.environment
         if environment["KOKON_COEXEC"] != "0", sequence.count >= 1024 {
-            coexecutor = try Coexecutor(context: context,
-                                        amxShare: Double(environment["KOKON_AMX_SHARE"] ?? "") ?? 0.0625,
-                                        ane: environment["KOKON_ANE"] != "0", amx: environment["KOKON_AMX"] != "0")
+            coexecutor = try Coexecutor(context: context, rows: QwenDiT.padded(sequence.count),
+                                        ane: environment["KOKON_ANE"] != "0", amx: environment["KOKON_AMX"] != "0",
+                                        aneAttention: environment["KOKON_ANE_ATTENTION"] == "1")
         } else {
             coexecutor = nil
+        }
+        if let coexecutor, coexecutor.attentionApplies(queries: sequence.target) {
+            try coexecutor.prepareAttention(queries: sequence.target, keys: sequence.count)
         }
         let table = sequence.ropeTable()
         arena.pointer(rope).update(from: table, count: table.count)
@@ -111,26 +115,38 @@ public final class QwenDiT {
 
     static func silu(_ x: [Float]) -> [Float] { x.map { $0 / (1 + expf(-$0)) } }
 
-    /// `y = W x` for a Linear weight `[out, in]` of the file, unpacked on the CPU.
-    func linearCPU(_ name: String, _ x: [Float]) throws -> [Float] {
+    /// `y = W x` for each `x`, W a Linear weight `[out, in]` of the file unpacked once on the CPU.
+    func linearCPU(_ name: String, _ xs: [[Float]]) throws -> [[Float]] {
         let t = try file.tensor(QwenDiT.prefix + name)
         let w = try Dequant.array(file, t.name)
-        var y = [Float](repeating: 0, count: t.rows)
-        cblas_sgemv(CblasRowMajor, CblasNoTrans, Int32(t.rows), Int32(t.columns), 1, w, Int32(t.columns), x, 1, 0, &y, 1)
-        return y
+        return xs.map { x in
+            var y = [Float](repeating: 0, count: t.rows)
+            cblas_sgemv(CblasRowMajor, CblasNoTrans, Int32(t.rows), Int32(t.columns), 1, w, Int32(t.columns), x, 1, 0, &y, 1)
+            return y
+        }
+    }
+
+    /// The stored modulation rows of each timestep seen (`modulationRows`): unpacking the four weights takes ~0.1 s
+    /// (`modulation.1` is 268 MB in fp32), so the pipeline prepares all its timesteps at once.
+    private var modulationCache: [Float: [Float]] = [:]
+
+    /// Computes and keeps the modulation rows of `timesteps` not yet seen.
+    public func prepareModulation(_ timesteps: [Float]) throws {
+        let missing = Array(Set(timesteps.filter { modulationCache[$0] == nil }))
+        guard !missing.isEmpty else { return }
+        for (t, row) in zip(missing, try modulationRows(timesteps: missing).stored) { modulationCache[t] = row }
     }
 
     /// The temb, block modulation and final scale of each timestep, as stored for the kernels:
     /// `[1 + s₁, tanh g₁, 1 + s₂, tanh g₂, 1 + s_final]`, `dim` floats each.
     public func modulationRows(timesteps: [Float]) throws -> (temb: [[Float]], raw: [[Float]], stored: [[Float]]) {
         let d = QwenDiT.dim
-        var tembs: [[Float]] = [], raws: [[Float]] = [], stored: [[Float]] = []
-        for t in timesteps {
-            let h = QwenDiT.silu(try linearCPU("time_text_embed.timestep_embedder.linear_1.weight", QwenDiT.sinusoid(t)))
-            let temb = try linearCPU("time_text_embed.timestep_embedder.linear_2.weight", h)
-            let active = QwenDiT.silu(temb)
-            let m = try linearCPU("modulation.1.weight", active)
-            let f = try linearCPU("norm_out.linear.weight", active)
+        var raws: [[Float]] = [], stored: [[Float]] = []
+        let h = try linearCPU("time_text_embed.timestep_embedder.linear_1.weight", timesteps.map(QwenDiT.sinusoid)).map(QwenDiT.silu)
+        let tembs = try linearCPU("time_text_embed.timestep_embedder.linear_2.weight", h)
+        let active = tembs.map(QwenDiT.silu)
+        let ms = try linearCPU("modulation.1.weight", active), fs = try linearCPU("norm_out.linear.weight", active)
+        for (m, f) in zip(ms, fs) {
             var row = [Float](repeating: 0, count: 5 * d)
             for j in 0..<d {
                 row[j] = 1 + m[j]
@@ -139,7 +155,7 @@ public final class QwenDiT {
                 row[3 * d + j] = tanhf(m[3 * d + j])
                 row[4 * d + j] = 1 + f[j]
             }
-            tembs.append(temb); raws.append(m); stored.append(row)
+            raws.append(m); stored.append(row)
         }
         return (tembs, raws, stored)
     }
@@ -156,8 +172,8 @@ public final class QwenDiT {
         let d = QwenDiT.dim, n = sequence.count, p = sequence.prefix, s = sequence.target
         let started = DispatchTime.now().uptimeNanoseconds
         timings = [:]
-        let rows = try modulationRows(timesteps: [0, sigma]).stored
-        arena.pointer(modulation).update(from: rows[0] + rows[1], count: 10 * d)
+        try prepareModulation([0, sigma])
+        arena.pointer(modulation).update(from: modulationCache[0]! + modulationCache[sigma]!, count: 10 * d)
         timings["modulation"] = elapsed(since: started)
 
         // Inputs: the text rows gathered in encoder order, the target tokens.
@@ -209,6 +225,7 @@ public final class QwenDiT {
         if let probe { try finish(commands); probe("norm_out", arena.pointer(normed), n * d); commands = try begin() }
         try linear("proj_out.weight", a: normed, aRow: p, c: output, m: s, commands: commands)
         try finish(commands)
+        if let coexecutor, !profiling, balancing { try coexecutor.rebalance() }
         let out = Array(UnsafeBufferPointer(start: arena.pointer(output), count: s * QwenDiT.channels))
         probe?("model_out", arena.pointer(output), s * QwenDiT.channels)
         timings["total"] = elapsed(since: started)
@@ -254,6 +271,9 @@ public final class QwenDiT {
     }
 
     // MARK: - encoders
+
+    /// The balancing loop after each evaluation (`Balancer.swift`); `KOKON_BALANCE=0` keeps the starting shares.
+    public var balancing = ProcessInfo.processInfo.environment["KOKON_BALANCE"] != "0"
 
     /// When set, every operation runs in a command buffer of its own and its GPU time is added to `timings`
     /// under its kind (slower overall: the GPU idles between operations).
@@ -333,7 +353,7 @@ public final class QwenDiT {
             func operand(_ slice: Arena.Slice, _ row: Int, _ width: Int) -> (MTLBuffer, Int, UnsafeMutablePointer<Float>) {
                 (arena.buffer, slice.offset + row * width * 4, arena.pointer(slice, floatOffset: row * width))
             }
-            try coexecutor.encode(a: operand(a, aRow, kk), w: operand(reserve, 0, nn), c: operand(c, cRow, nn),
+            try coexecutor.encode(weight: name, a: operand(a, aRow, kk), w: operand(reserve, 0, nn), c: operand(c, cRow, nn),
                                   m: m, k: kk, n: nn, commands: commands, gpuRows: gpuRows)
         } else {
             try gpuRows(m)
@@ -419,22 +439,22 @@ public final class QwenDiT {
     let graphAttention = ProcessInfo.processInfo.environment["KOKON_ATTENTION"] == "graph"
     struct FlashParams { var queries, keys, causal, stride: UInt32; var scale: Float; var headBase: UInt32 }
 
-    /// Queries `[queries, queries + count)` against keys `[0, keys)`, into the same rows of `attended`.
+    /// Queries `[queries, queries + count)` against keys `[0, keys)`, into the same rows of `attended`. The target's
+    /// queries are cut by heads with the Neural Engine and the CPU when the co-executor runs (`AttentionSplit.swift`).
     func attend(queries: Int, count: Int, keys: Int, causal: Bool, commands: MTLCommandBuffer) throws {
         let row = QwenDiT.dim * 4
-        if !graphAttention {
-            try compute("flash_attention", commands: commands) { e in
-                e.setBuffer(arena.buffer, offset: q.offset + queries * row, index: 0)
-                e.setBuffer(arena.buffer, offset: k.offset, index: 1)
-                e.setBuffer(arena.buffer, offset: v.offset, index: 2)
-                e.setBuffer(arena.buffer, offset: attended.offset + queries * row, index: 3)
-                var params = FlashParams(queries: UInt32(count), keys: UInt32(keys), causal: causal ? 1 : 0,
-                                         stride: UInt32(QwenDiT.dim), scale: 1 / Float(QwenDiT.headDim).squareRoot() * Float(M_LOG2E),
-                                         headBase: 0)
-                e.setBytes(&params, length: MemoryLayout<FlashParams>.stride, index: 4)
-                e.dispatchThreadgroups(MTLSize(width: (count + 63) / 64, height: QwenDiT.heads, depth: 1),
-                                       threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+        if let coexecutor, !profiling, !graphAttention, !causal, coexecutor.attentionApplies(queries: count) {
+            func operand(_ slice: Arena.Slice, _ first: Int) -> Coexecutor.Operand {
+                (arena.buffer, slice.offset + first * row, arena.pointer(slice, floatOffset: first * QwenDiT.dim))
             }
+            try coexecutor.encodeAttention(q: operand(q, queries), k: operand(k, 0), v: operand(v, 0), out: operand(attended, queries),
+                                           queries: count, keys: keys, stride: QwenDiT.dim, commands: commands) { gpuHeads in
+                try flash(queries: queries, count: count, keys: keys, causal: false, heads: gpuHeads, commands: commands)
+            }
+            return
+        }
+        if !graphAttention {
+            try flash(queries: queries, count: count, keys: keys, causal: causal, heads: QwenDiT.heads, commands: commands)
             return
         }
         let key = "\(count)×\(keys)\(causal ? "c" : "")"
@@ -448,6 +468,24 @@ public final class QwenDiT {
         try gpu("attention", commands) {
             attention.encode(commands: $0, q: (b, q.offset + queries * row), k: (b, k.offset), v: (b, v.offset),
                              out: (b, attended.offset + queries * row))
+        }
+    }
+
+    /// `flash_attention` on heads `[0, heads)`.
+    func flash(queries: Int, count: Int, keys: Int, causal: Bool, heads: Int, commands: MTLCommandBuffer) throws {
+        guard heads > 0 else { return }
+        let row = QwenDiT.dim * 4
+        try compute("flash_attention", commands: commands) { e in
+            e.setBuffer(arena.buffer, offset: q.offset + queries * row, index: 0)
+            e.setBuffer(arena.buffer, offset: k.offset, index: 1)
+            e.setBuffer(arena.buffer, offset: v.offset, index: 2)
+            e.setBuffer(arena.buffer, offset: attended.offset + queries * row, index: 3)
+            var params = FlashParams(queries: UInt32(count), keys: UInt32(keys), causal: causal ? 1 : 0,
+                                     stride: UInt32(QwenDiT.dim), scale: 1 / Float(QwenDiT.headDim).squareRoot() * Float(M_LOG2E),
+                                     headBase: 0)
+            e.setBytes(&params, length: MemoryLayout<FlashParams>.stride, index: 4)
+            e.dispatchThreadgroups(MTLSize(width: (count + 63) / 64, height: heads, depth: 1),
+                                   threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
         }
     }
 }

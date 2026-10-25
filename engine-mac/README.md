@@ -10,6 +10,7 @@ cd engine-mac
 swift build -c release
 swift test                                   # no model needed
 .build/release/kokon-engine-mac probe        # this Mac's matrix throughput, ~1 min, no model
+.build/release/kokon-engine-mac probe-attention   # the target's attention at 1024² on the GPU, Neural Engine, CPU
 .build/release/kokon-engine-mac inspect <file.gguf>
 .build/release/kokon-engine-mac check-dequant <file.gguf> [tensor...]
 .build/release/kokon-engine-mac generate <encoder.gguf> <dit.gguf> <vae.safetensors> "a red fox in the snow" \
@@ -27,8 +28,11 @@ swift test                                   # no model needed
 | `Probe.swift` | GPU (MPS), AMX (Accelerate) and Neural Engine (Core ML) on Qwen's product shapes, alone and together |
 | `QwenSequence.swift` | the joint text/image sequence, block-causal segments and RoPE positions |
 | `QwenDiT.swift`, `Kernels/dit.metal`, `Attention.swift`, `Arena.swift` | the DiT: modulation on the CPU, everything per token on the GPU |
-| `Coexecution.swift`, `Kernels/ane.metal` | the AMX and the Neural Engine beside the GPU on the DiT's products |
+| `Coexecution.swift`, `Kernels/ane.metal` | the AMX and the Neural Engine beside the GPU on the DiT's products; the timeline of each split operation |
+| `Balancer.swift` | the balancing loop: each evaluation's timeline sets the next one's rows and heads per unit |
 | `Kernels/attention.metal` | fused block-causal attention |
+| `AttentionSplit.swift`, `CPUAttention.swift` | the target's attention cut by heads: GPU, CPU (AMX + cores), optionally the Neural Engine |
+| `AttentionProbe.swift` | `probe-attention`: the target's attention on each unit alone |
 | `QwenVAE.swift`, `Safetensors.swift` | the VAE decoder as one MPSGraph, from Kokon's VAE file (Wan 2.2 names) |
 | `QwenTokenizer.swift` | Qwen's byte-level BPE tokenizer, read from the encoder GGUF's metadata |
 | `QwenTextEncoder.swift`, `Kernels/text.metal` | the text encoder: Qwen3-VL-8B's text decoder on the GPU, diffusers' prompt template |
@@ -76,10 +80,21 @@ processor) and saves its noise; `check-generate` starts the engine from that noi
 
 ```bash
 ~/kokon-bench/venv-oracle/bin/python -I tools/reference_generate.py <dit.gguf> <vae.safetensors> ~/kokon-bench/ref/text/fox <repo dir> ~/kokon-bench/ref/generate-256   # ~5 min
-.build/release/kokon-engine-mac check-generate <encoder.gguf> <dit.gguf> <vae.safetensors> ~/kokon-bench/ref/generate-256
+.build/release/kokon-engine-mac check-generate <encoder.gguf> <dit.gguf> <vae.safetensors> ~/kokon-bench/ref/generate-256 [~/kokon-bench/ref/text/fox]
+.build/release/kokon-engine-mac check-steps <dit.gguf> ~/kokon-bench/ref/generate-256 ~/kokon-bench/ref/text/fox
 ```
 
-256², 2026-10-25: each step's latent within 6.7e-6 relative, the image within 1.0e-5, 97 of 262 144 8-bit values
+`check-generate` with the text reference starts from its conditioning instead of the engine's encoder;
+`check-steps` runs each step alone on the reference's own latent, so one evaluation's error is not mixed with what
+the trajectory makes of the steps before.
+
+Unsloth's DiT + the texture-fix VAE, 256², fp64 reference (`--dtype float64`), 2026-10-25: each step alone within
+1.4–2.9e-6 of fp64 except step 4 (σ 0.93) at 6.6e-5, an ill-conditioned evaluation (torch's fp32: 2.7e-5 there).
+Along the trajectory the final latent ends within 5.8e-5 (torch fp32 1.2e-5), the image within 7.6e-5, 782 of
+262 144 8-bit values off by 1; with the engine's own text encoder (5e-6 off) the same order. These shift by a few
+times with any change of rounding order (the old flash kernel: 1.9e-5), as torch's fp32 shifts from fp64.
+
+Old uniform Q4_K DiT + original VAE, 256², fp32 reference: each step's latent within 6.7e-6 relative, the image within 1.0e-5, 97 of 262 144 8-bit values
 differ by 1. **First 1024² image (M2 Pro, `generate`): 100.7 s in all**, text encoder 1.7 s, 8 steps of 11.4–12.9 s,
 VAE 5.4 s with its graph build; peak memory 4.1 GB (Kokon's sd.cpp: ~4.5 min).
 
@@ -120,12 +135,37 @@ Engine 2048 at 1024²): **11.3 s per evaluation at 1024²**, 8.8 s at 896². The
 operands straight into its IOSurfaces and unpacks its output, so the CPU only runs the AMX. Accuracy at 896²
 against diffusers fp32: the velocity within 3.6e-4 relative (GPU alone 4.4e-6); running the model in bf16, as
 most tools do, deviates by roughly 1e-2. 
-**Attention** is a fused (flash) kernel of our own (`Kernels/attention.metal`, fp32, online softmax, block-causal
-mask): 4.5 s per 1024² evaluation against MPSGraph's 4.1 s, but without MPSGraph's score matrix (2.2 GB at 1 MP,
-~34 GB at 4 MP). `KOKON_ATTENTION=graph` keeps MPSGraph for comparison. The other units are idle during it: next.
+**Attention** is a fused (flash) kernel of our own (`Kernels/attention.metal`, fp32, online softmax in registers,
+block-causal mask, 64 keys a tile): 120 ms for the target's 32 heads at 1024² alone (2.3 TFLOP/s; the first version
+145 ms, MPSGraph ~128 ms) and without MPSGraph's score matrix (2.2 GB at 1 MP, ~34 GB at 4 MP).
+`KOKON_ATTENTION=graph` keeps MPSGraph for comparison.
 
-**VAE decoder** (`check-vae`, against `tools/reference_vae.py`, diffusers fp32): within 1.1e-5; 1024² in 3.1 s
-(plus ~6 s to build its graph the first time).
+**The target's attention is cut by heads** (`AttentionSplit.swift`) as the products are by rows: GPU heads in the
+flash kernel, CPU heads in `CPUAttention` (AMX for the two products, vvexpf on 8 threads for the softmax, fp32,
+written straight into the GPU's output). `probe-attention`, ms per head alone: GPU 3.8, CPU 6.6, Neural Engine 5.1
+in programs of 4 heads × 1 024 queries (head 0 within 2.2e-3 of exact: fp16). Together at 1024², per layer: GPU
+alone 145 ms; GPU 19 / CPU 13 91 ms at no cost in accuracy; with Neural Engine heads ~1.5 % more, because the GPU's
+heads slow from 4.5 to 6.3–7.0 ms beside it (memory and cache), for 2.5× the velocity error (9.3e-4 against 3.6e-4
+at 896²): Neural Engine heads only with `KOKON_ANE_ATTENTION=1`.
+
+**The balancing loop** (`Balancer.swift`): each evaluation's timeline (when the GPU released each split operation,
+when each unit finished its share) gives each unit's rate per kind of operation beside the others, and the next
+evaluation's shares follow: the AMX's rows per product shape (steps of 64, remembering measured counts: its rate
+is not linear in rows), the Neural Engine's rows (steps of 256, a program set per count), the heads. On the M2 Pro at
+1024² it moves from 1856 / 256 / 2048 rows and 19 / 13 heads to about 1728 / 320–448 / 2048 and 21 / 11 in two
+evaluations; every product's units then finish within ~0.3 ms of each other (before: the GPU 3–15 ms after the
+AMX). `KOKON_BALANCE=0` keeps the starting shares; `KOKON_HEADS=g,a,c` fixes the heads.
+
+**One evaluation at 1024², all three units, unsloth's DiT: 8.8 s** (start of this pass 11.6 s): products ~5.2 s
+(≈11 TFLOP/s across the units, the probe's ceiling), attention 32 × 78 ms, the GPU alone between them ~1 s. The
+Neural Engine's per-column weight scales are kept per weight (computed once), and the modulation of all of the
+pipeline's timesteps is computed once (it was 0.2 s of CPU per evaluation).
+
+**VAE decoder** (`check-vae`, against `tools/reference_vae.py`, diffusers fp32): within 1.1e-5; 1024² in 2.75 s. Its
+graph builds and compiles in 0.3 s, but its first run at a size costs ~3.7 s more, GPU time (~1 s of CPU): it cannot
+hide under the DiT, so the pipeline keeps its VAE between images and a long-lived engine pays it once per size.
+fp16 convolutions (norms and attention kept fp32) were wrong (2.7e-1, an overflow) and 5.7× slower (MPSGraph tries to
+move them to the Neural Engine): the VAE stays fp32.
 
 Credits: the Neural Engine program technique and the GPU + AMX + Neural Engine split come from
 [Siliconed](https://github.com/gwenn-ha-dev/Siliconed) (Apache-2.0), written again here.

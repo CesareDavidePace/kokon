@@ -35,7 +35,12 @@ public final class QwenVAE {
 
     let context: MetalContext
     let file: SafetensorsFile
-    private var graphs: [String: (graph: MPSGraph, input: MPSGraphTensor, output: MPSGraphTensor)] = [:]
+    /// One compiled graph per latent size. Building and compiling the 1024² one takes 0.3 s; its first run then costs
+    /// ~3.7 s more than the next ones (M2 Pro), GPU time with ~1 s of CPU, so the pipeline keeps its VAE between
+    /// images rather than building it beside the DiT. fp16 convolutions (norms and attention in fp32) were wrong
+    /// (2.7e-1: an overflow) and 5.7× slower, MPSGraph trying to move them to the Neural Engine: the VAE stays fp32.
+    private var executables: [String: MPSGraphExecutable] = [:]
+    private let lock = NSLock()
 
     public init(path: String, context: MetalContext) throws {
         file = try SafetensorsFile(path: path)
@@ -48,18 +53,31 @@ public final class QwenVAE {
     /// Decodes a normalized latent `[64, h, w]` (the DiT's packed tokens transposed) into RGBA `[4, 16h, 16w]` in
     /// [−1, 1].
     public func decode(_ latent: [Float], height h: Int, width w: Int) throws -> [Float] {
-        let key = "\(h)×\(w)"
-        let built = try graphs[key] ?? build(height: h, width: w)
-        graphs[key] = built
+        let executable = try prepare(height: h, width: w)
         let input = MPSGraphTensorData(device: MPSGraphDevice(mtlDevice: context.device),
                                        data: latent.withUnsafeBytes { Data($0) },
                                        shape: [1, 64, NSNumber(value: h), NSNumber(value: w)], dataType: .float32)
-        let result = built.graph.run(with: context.queue, feeds: [built.input: input], targetTensors: [built.output],
-                                     targetOperations: nil)
-        guard let data = result[built.output] else { throw MetalContext.Failure.kernel("VAE decode") }
+        guard let data = executable.run(with: context.queue, inputs: [input], results: nil, executionDescriptor: nil).first else {
+            throw MetalContext.Failure.kernel("VAE decode")
+        }
         var out = [Float](repeating: 0, count: 4 * 16 * h * 16 * w)
         out.withUnsafeMutableBytes { data.mpsndarray().readBytes($0.baseAddress!, strideBytes: nil) }
         return out
+    }
+
+    /// Builds and compiles the decoder for an `h` × `w` latent, once.
+    @discardableResult
+    public func prepare(height h: Int, width w: Int) throws -> MPSGraphExecutable {
+        try lock.withLock {
+            let key = "\(h)×\(w)"
+            if let e = executables[key] { return e }
+            let built = try build(height: h, width: w)
+            let shape = MPSGraphShapedType(shape: [1, 64, NSNumber(value: h), NSNumber(value: w)], dataType: .float32)
+            let e = built.graph.compile(with: MPSGraphDevice(mtlDevice: context.device), feeds: [built.input: shape],
+                                        targetTensors: [built.output], targetOperations: nil, compilationDescriptor: nil)
+            executables[key] = e
+            return e
+        }
     }
 
     // MARK: - the graph

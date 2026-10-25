@@ -118,15 +118,17 @@ extension Checks {
         }
         let encoder = random(text * QwenDiT.dim, 8), latent = random(sequence.target * QwenDiT.channels, 2)
         print("sequence: \(sequence.count) rows (\(sequence.prefix) text, \(sequence.target) target)"
-              + (dit.coexecutor.map { ", products split \($0.split(m: QwenDiT.padded(sequence.count)))" } ?? ", GPU only"))
+              + (dit.coexecutor.map { ", products split \($0.split(m: QwenDiT.padded(sequence.count), k: 4096, n: 4096)), attention \($0.heads)" } ?? ", GPU only"))
         for run in 0..<runs {
             let started = DispatchTime.now().uptimeNanoseconds
             let out = try dit.forward(encoder: encoder, target: latent, sigma: 0.5)
             let seconds = Double(DispatchTime.now().uptimeNanoseconds - started) * 1e-9
             print(String(format: "evaluation %d: %.2f s%@", run + 1, seconds, out.allSatisfy(\.isFinite) ? "" : "  NON-FINITE OUTPUT"))
             if let c = dit.coexecutor {
-                print(String(format: "  AMX busy %.2f s, Neural Engine busy %.2f s%@", c.amxSeconds, c.aneSeconds,
+                print(String(format: "  AMX/CPU busy %.2f s, Neural Engine busy %.2f s%@", c.amxSeconds, c.aneSeconds,
                              c.failures.isEmpty ? "" : "; FAILURES: \(c.failures.prefix(3))"))
+                print(Timeline.summary(dit.balancing ? c.lastTimeline : c.timeline.drain()))
+                if dit.balancing { print("  next: \(c.shares)") }
                 c.resetTimings()
             }
         }
@@ -196,12 +198,22 @@ extension Checks {
         print(String(format: "VAE %d² → %d²: rel %.2e, max |Δ| %.3g%@ (%.2f s with the graph build)", grid, grid * 16,
                      r.relative, r.maxAbs, r.finite ? "" : " NON-FINITE", first))
         if let t = timeGrid {
+            started = DispatchTime.now().uptimeNanoseconds
+            try vae.prepare(height: t, width: t)
+            print(String(format: "build and compile %d²: %.2f s", t * 16, Double(DispatchTime.now().uptimeNanoseconds - started) * 1e-9))
             let random = (0..<(64 * t * t)).map { Float(($0 * 7919) % 1000) / 500 - 1 }
+            func cpu() -> (user: Double, system: Double) {
+                var u = rusage()
+                getrusage(RUSAGE_SELF, &u)
+                return (Double(u.ru_utime.tv_sec) + Double(u.ru_utime.tv_usec) * 1e-6, Double(u.ru_stime.tv_sec) + Double(u.ru_stime.tv_usec) * 1e-6)
+            }
             for run in 0..<2 {
                 started = DispatchTime.now().uptimeNanoseconds
+                let before = cpu()
                 _ = try vae.decode(random, height: t, width: t)
-                print(String(format: "decode %d² (run %d): %.2f s", t * 16, run + 1,
-                             Double(DispatchTime.now().uptimeNanoseconds - started) * 1e-9))
+                let after = cpu()
+                print(String(format: "decode %d² (run %d): %.2f s (CPU user %.2f s, system %.2f s)", t * 16, run + 1,
+                             Double(DispatchTime.now().uptimeNanoseconds - started) * 1e-9, after.user - before.user, after.system - before.system))
             }
         }
     }

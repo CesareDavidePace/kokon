@@ -60,7 +60,9 @@ extension Checks {
 extension Checks {
     /// Text to image against `tools/reference_generate.py`, from its noise: each step's latent, the decoded image,
     /// the 8-bit pixels.
-    public static func generate(encoder: String, dit: String, vae: String, reference directory: String) throws {
+    /// `text`: a `reference_text_encoder.py` directory whose conditioning replaces the engine's encoder, to measure
+    /// the DiT and the sampler alone.
+    public static func generate(encoder: String, dit: String, vae: String, reference directory: String, text: String? = nil) throws {
         let meta = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: directory)
             .appendingPathComponent("meta.json"))) as! [String: Any]
         let prompt = meta["prompt"] as! String, grid = meta["grid"] as! [Int]
@@ -71,7 +73,8 @@ extension Checks {
             print(String(format: "  %-12@ rel %.2e   max |Δ| %.3g%@", name as NSString, r.relative, r.maxAbs, r.finite ? "" : "   NON-FINITE"))
         }
         let image = try pipeline.textToImage(prompt: prompt, width: w * 16, height: h * 16, seed: 0,
-                                             noise: try reference(directory, "noise")) { i, latent in
+                                             noise: try reference(directory, "noise"),
+                                             conditioning: try text.map { try reference($0, "conditioning") }) { i, latent in
             latent.withUnsafeBufferPointer { report("latent\(i)", $0.baseAddress!, try! reference(directory, "latent\(i)")) }
         }
         image.withUnsafeBufferPointer { report("image", $0.baseAddress!, try! reference(directory, "image")) }
@@ -93,6 +96,27 @@ extension Checks {
 }
 
 extension Checks {
+    /// Each step of a `reference_generate.py` run on its own: the DiT on the reference's latent before the step (its
+    /// noise for the first), with the text reference's conditioning, against the reference's velocity. A trajectory
+    /// amplifies rounding from step to step; this measures one evaluation's error on real inputs.
+    public static func steps(dit path: String, reference directory: String, text: String) throws {
+        let meta = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: directory)
+            .appendingPathComponent("meta.json"))) as! [String: Any]
+        let grid = meta["grid"] as! [Int], sigmas = (meta["sigmas"] as! [Double]).map(Float.init)
+        let conditioning = try reference(text, "conditioning")
+        let file = try GGUFFile(path: path)
+        let sequence = try QwenSequence.textToImage(text: conditioning.count / QwenDiT.dim,
+                                                    target: .init(height: grid[0], width: grid[1]))
+        let dit = try QwenDiT(file: file, context: try MetalContext(), sequence: sequence)
+        for i in 0..<(sigmas.count - 1) {
+            let input = i == 0 ? QwenPipeline.pack(try reference(directory, "noise"), height: grid[0], width: grid[1])
+                               : try reference(directory, "latent\(i - 1)")
+            let velocity = try dit.forward(encoder: conditioning, target: input, sigma: sigmas[i])
+            let r = velocity.withUnsafeBufferPointer { compare($0.baseAddress!, try! reference(directory, "velocity\(i)")) }
+            print(String(format: "  step %d (σ %.4f): velocity rel %.2e   max |Δ| %.3g", i + 1, sigmas[i], r.relative, r.maxAbs))
+        }
+    }
+
     /// The seed's noise against sd.cpp's own generator (`tools/philox_reference.cpp`): every value, bit for bit.
     public static func noise(dump: String) throws {
         let data = try Data(contentsOf: URL(fileURLWithPath: dump))

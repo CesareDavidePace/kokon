@@ -22,40 +22,81 @@ final class Coexecutor {
 
     static let tile = 4096
     let context: MetalContext
-    let aneRows: Int
-    private let slots: [(product: NeuralEngineProduct, x: MTLBuffer, w: MTLBuffer, y: MTLBuffer)]
-    private let ready: MTLSharedEvent, amxDone: MTLSharedEvent, aneDone: MTLSharedEvent
-    private var counter: UInt64 = 0
-    private let amxWorker = Worker(name: "kokon.amx"), aneWorker = Worker(name: "kokon.ane")
-    /// λ (12 288), lifted norms (12 288), L, σ (aneRows): the Neural Engine's scales.
+    /// The rows of every split product (the DiT's padded sequence).
+    let rows: Int
+    /// The Neural Engine's rows, the same for every product (its programs are compiled per row count), and the
+    /// AMX's per kind of product (`"k×n"`): set by the balancing loop (`Balancer.swift`).
+    private(set) var aneRows: Int
+    var amxRows: [String: Int] = [:]
+    typealias ProductSlot = (product: NeuralEngineProduct, x: MTLBuffer, w: MTLBuffer, y: MTLBuffer)
+    private var slots: [ProductSlot]
+    /// Programs of other row counts, kept while the balancing loop may come back to them.
+    private var spareSlots: [Int: [ProductSlot]] = [:]
+    var balancer: Balancer
+    /// The timeline of the last evaluation, once the balancing loop has read it.
+    var lastTimeline: [Timeline.Entry] = []
+    let ready: MTLSharedEvent, amxDone: MTLSharedEvent, aneDone: MTLSharedEvent
+    /// Signaled after the GPU's own share of each operation, for the timeline only.
+    let gpuDone: MTLSharedEvent
+    let listener = MTLSharedEventListener(dispatchQueue: DispatchQueue(label: "kokon.timeline"))
+    let timeline = Timeline()
+    var counter: UInt64 = 0
+    let amxWorker = Worker(name: "kokon.amx"), aneWorker = Worker(name: "kokon.ane")
+    /// σ of the Neural Engine's rows (`rows` at most).
     private let scales: MTLBuffer
-    /// The share of rows each unit takes; `KOKON_SPLIT=gpu,amx,ane` (fractions) overrides.
-    var amxShare: Double, aneEnabled: Bool, amxEnabled: Bool
+    /// Per weight, its columns' λ, their lifted norms and L (`[λ (n) | norms (n) | L]`): they depend on the weight
+    /// alone, so they are computed the first time it is used and kept (~11 MB for the DiT). Two full reads of every
+    /// weight per evaluation, by only n threads, were most of the GPU's time alone between products.
+    private var columnScales: [String: MTLBuffer] = [:]
+    let aneEnabled: Bool, amxEnabled: Bool
     /// Seconds each worker spent computing (not waiting), and failures (a failure leaves rows unwritten).
-    private(set) var amxSeconds = 0.0, aneSeconds = 0.0
-    private(set) var failures: [String] = []
-    private let lock = NSLock()
+    var amxSeconds = 0.0, aneSeconds = 0.0
+    var failures: [String] = []
+    let lock = NSLock()
+    /// The target's attention cut by heads (`AttentionSplit.swift`), and the Neural Engine's programs for it.
+    var heads: HeadSplit
+    var attentionGroups: [[AttentionSlot]] = []
+    var attentionShape = (queries: 0, keys: 0)
 
-    /// Defaults measured on the M2 Pro 16 GB, 1024² + 32 text rows (`time-dit`, 2026-10-25): AMX 512 rows 12.8 s per
-    /// evaluation (the AMX the slowest, ~35 % under its solo rate beside the others), 256 rows 11.3 s, none 11.8 s;
-    /// GPU alone 16.2 s. A balancing loop per shape replaces the fixed share later.
-    init(context: MetalContext, aneRows: Int = 2048, amxShare: Double = 0.0625, ane: Bool = true, amx: Bool = true) throws {
+    /// Starting shares measured on the M2 Pro 16 GB, 1024² + 32 text rows (`time-dit`, 2026-10-25): 2 048 rows on the
+    /// Neural Engine and 1/16 on the AMX (AMX 512 rows 12.8 s per evaluation, 256 rows 11.3 s, none 11.8 s; GPU alone
+    /// 16.2 s). The balancing loop moves them from the first evaluation on.
+    init(context: MetalContext, rows: Int, ane: Bool = true, amx: Bool = true, aneAttention: Bool = false) throws {
         self.context = context
-        self.aneRows = aneRows
-        self.amxShare = amxShare
+        self.rows = rows
         self.aneEnabled = ane
         self.amxEnabled = amx
+        aneRows = ane ? min(2048, max(0, (rows - 512) / 256 * 256)) : 0
+        heads = HeadSplit.fromEnvironment() ?? HeadSplit.default(ane: ane && aneAttention, cpu: amx)
+        balancer = Balancer(aneAttention: ane && aneAttention)
         let device = context.device
-        guard let r = device.makeSharedEvent(), let a = device.makeSharedEvent(), let e = device.makeSharedEvent() else {
+        guard let r = device.makeSharedEvent(), let a = device.makeSharedEvent(), let e = device.makeSharedEvent(),
+              let g = device.makeSharedEvent() else {
             throw MetalContext.Failure.buffer("shared events")
         }
-        (ready, amxDone, aneDone) = (r, a, e)
-        scales = try context.scratch((2 * 12288 + 16 + aneRows) * 4, label: "ane scales")
-        slots = ane ? try (0..<3).map { _ in
-            let p = try NeuralEngineProduct(rows: aneRows, k: Coexecutor.tile, n: Coexecutor.tile)
-            try p.run()   // compile and warm
+        (ready, amxDone, aneDone, gpuDone) = (r, a, e, g)
+        scales = try context.scratch(rows * 4, label: "ane row scales")
+        slots = []
+        slots = try productSlots(aneRows)
+    }
+
+    /// Three programs of `rows` rows (the tiles of a product, at most 3), compiled and warmed.
+    private func productSlots(_ rows: Int) throws -> [ProductSlot] {
+        guard rows > 0 else { return [] }
+        let device = context.device
+        return try (0..<3).map { _ in
+            let p = try NeuralEngineProduct(rows: rows, k: Coexecutor.tile, n: Coexecutor.tile)
+            try p.run()
             return (p, try p.gpuBuffer(p.x, device: device), try p.gpuBuffer(p.w, device: device), try p.gpuBuffer(p.y, device: device))
-        } : []
+        }
+    }
+
+    /// Moves the Neural Engine to `rows` rows per product; between evaluations only (the GPU must be idle).
+    func setAneRows(_ rows: Int) throws {
+        guard rows != aneRows else { return }
+        let next = try spareSlots.removeValue(forKey: rows) ?? productSlots(rows)
+        if aneRows > 0 { spareSlots = [aneRows: slots] }   // the last one only: 192 MB of surfaces at 2 048 rows
+        (slots, aneRows) = (next, rows)
     }
 
     /// Whether a product takes the split: the Neural Engine's tiles need K and N in multiples of 4 096 with at
@@ -64,24 +105,26 @@ final class Coexecutor {
         m >= 1024 && k % Coexecutor.tile == 0 && n % Coexecutor.tile == 0 && (k / Coexecutor.tile) * (n / Coexecutor.tile) <= 3
     }
 
-    func split(m: Int) -> Split {
-        let ane = aneEnabled && m >= aneRows + 512 ? aneRows : 0
-        let amx = amxEnabled ? Int((Double(m) * amxShare / 256).rounded()) * 256 : 0
+    func split(m: Int, k: Int, n: Int) -> Split {
+        let ane = aneEnabled && m == rows ? aneRows : 0
+        let amx = amxEnabled ? amxRows["\(k)×\(n)"] ?? Int((Double(m) / 16 / 64).rounded()) * 64 : 0
         return Split(gpu: m - ane - amx, amx: amx, ane: ane)
     }
 
     struct Shape { var k, n, k0, kPart, n0, nPart, row0, rows, kParts: UInt32 }
 
-    /// Encodes the split product. `gpuRows` encodes the GPU's own rows `[0, g)` into the command buffer.
-    func encode(a: (buffer: MTLBuffer, offset: Int, pointer: UnsafeMutablePointer<Float>),
+    /// Encodes the split product of the weight named `weight`. `gpuRows` encodes the GPU's own rows `[0, g)` into the
+    /// command buffer.
+    func encode(weight: String, a: (buffer: MTLBuffer, offset: Int, pointer: UnsafeMutablePointer<Float>),
                 w: (buffer: MTLBuffer, offset: Int, pointer: UnsafeMutablePointer<Float>),
                 c: (buffer: MTLBuffer, offset: Int, pointer: UnsafeMutablePointer<Float>),
                 m: Int, k: Int, n: Int, commands: MTLCommandBuffer, gpuRows: (Int) throws -> Void) throws {
-        let s = split(m: m)
+        let s = split(m: m, k: k, n: n)
         counter += 1
         let p = counter
+        open(p, kind: "\(k)×\(n)", shares: (s.gpu, s.amx, s.ane))
         let (kParts, nParts) = (k / Coexecutor.tile, n / Coexecutor.tile)
-        let lambda = 0, norm = 12288 * 4, state = 2 * 12288 * 4, sigma = 2 * 12288 * 4 + 64
+        let (lambda, norm, state, sigma) = (0, n * 4, 2 * n * 4, 0)
         func shape(kp: Int = 0, np: Int = 0) -> Shape {
             Shape(k: UInt32(k), n: UInt32(n), k0: UInt32(kp * Coexecutor.tile), kPart: UInt32(Coexecutor.tile),
                   n0: UInt32(np * Coexecutor.tile), nPart: UInt32(Coexecutor.tile), row0: UInt32(s.gpu + s.amx),
@@ -94,21 +137,26 @@ final class Coexecutor {
             try body(e)
             e.endEncoding()
         }
+        // (Read only when the Neural Engine takes rows.)
+        let columns = s.ane > 0 ? try columnScales[weight] ?? context.scratch((2 * n + 16) * 4, label: "λ \(weight)") : scales
         if s.ane > 0 {
             var sh = shape()
-            try kernel("ane_columns") { e in
-                e.setBuffer(w.buffer, offset: w.offset, index: 0)
-                e.setBuffer(scales, offset: lambda, index: 1); e.setBuffer(scales, offset: norm, index: 2)
-                e.setBytes(&sh, length: MemoryLayout<Shape>.stride, index: 3)
-                e.dispatchThreads(MTLSize(width: n, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
-            }
-            try kernel("ane_norm") { e in
-                e.setBuffer(scales, offset: norm, index: 0); e.setBuffer(scales, offset: state, index: 1)
-                e.setBytes(&sh, length: MemoryLayout<Shape>.stride, index: 2)
-                e.dispatchThreadgroups(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 1024, height: 1, depth: 1))
+            if columnScales[weight] == nil {
+                columnScales[weight] = columns
+                try kernel("ane_columns") { e in
+                    e.setBuffer(w.buffer, offset: w.offset, index: 0)
+                    e.setBuffer(columns, offset: lambda, index: 1); e.setBuffer(columns, offset: norm, index: 2)
+                    e.setBytes(&sh, length: MemoryLayout<Shape>.stride, index: 3)
+                    e.dispatchThreads(MTLSize(width: n, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
+                }
+                try kernel("ane_norm") { e in
+                    e.setBuffer(columns, offset: norm, index: 0); e.setBuffer(columns, offset: state, index: 1)
+                    e.setBytes(&sh, length: MemoryLayout<Shape>.stride, index: 2)
+                    e.dispatchThreadgroups(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 1024, height: 1, depth: 1))
+                }
             }
             try kernel("ane_row_scales") { e in
-                e.setBuffer(a.buffer, offset: a.offset, index: 0); e.setBuffer(scales, offset: state, index: 1)
+                e.setBuffer(a.buffer, offset: a.offset, index: 0); e.setBuffer(columns, offset: state, index: 1)
                 e.setBuffer(scales, offset: sigma, index: 2)
                 e.setBytes(&sh, length: MemoryLayout<Shape>.stride, index: 3)
                 e.dispatchThreadgroups(MTLSize(width: s.ane, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
@@ -118,7 +166,7 @@ final class Coexecutor {
                     let slot = slots[kp * nParts + np]
                     var t = shape(kp: kp, np: np)
                     try kernel("ane_pack_weight") { e in
-                        e.setBuffer(w.buffer, offset: w.offset, index: 0); e.setBuffer(scales, offset: lambda, index: 1)
+                        e.setBuffer(w.buffer, offset: w.offset, index: 0); e.setBuffer(columns, offset: lambda, index: 1)
                         e.setBuffer(slot.w, offset: 0, index: 2)
                         e.setBytes(&t, length: MemoryLayout<Shape>.stride, index: 3)
                         e.dispatchThreads(MTLSize(width: Coexecutor.tile, height: Coexecutor.tile, depth: 1),
@@ -144,7 +192,7 @@ final class Coexecutor {
                 let t = DispatchTime.now().uptimeNanoseconds
                 cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, Int32(rows), Int32(n), Int32(k), 1,
                             pa, Int32(k), pw, Int32(n), 0, pc, Int32(n))
-                lock.withLock { amxSeconds += Double(DispatchTime.now().uptimeNanoseconds - t) * 1e-9 }
+                finished(p, \.amx, since: t)
             }
         }
         if s.ane > 0 {
@@ -154,10 +202,11 @@ final class Coexecutor {
                 guard wait(ready, p, "ANE") else { return }
                 let t = DispatchTime.now().uptimeNanoseconds
                 do { for tile in tiles { try tile.run() } } catch { fail("ANE: \(error)") }
-                lock.withLock { aneSeconds += Double(DispatchTime.now().uptimeNanoseconds - t) * 1e-9 }
+                finished(p, \.ane, since: t)
             }
         }
         try gpuRows(s.gpu)
+        gpuFinished(p, commands)
         if s.amx > 0 { commands.encodeWaitForEvent(amxDone, value: p) }
         if s.ane > 0 {
             commands.encodeWaitForEvent(aneDone, value: p)
@@ -166,7 +215,7 @@ final class Coexecutor {
                 let ys = (0..<3).map { kp in slots[min(kp, kParts - 1) * nParts + np].y }
                 try kernel("ane_unpack") { e in
                     for (i, y) in ys.enumerated() { e.setBuffer(y, offset: 0, index: i) }
-                    e.setBuffer(scales, offset: lambda, index: 3); e.setBuffer(scales, offset: sigma, index: 4)
+                    e.setBuffer(columns, offset: lambda, index: 3); e.setBuffer(scales, offset: sigma, index: 4)
                     e.setBuffer(c.buffer, offset: c.offset, index: 5)
                     e.setBytes(&t, length: MemoryLayout<Shape>.stride, index: 6)
                     e.dispatchThreads(MTLSize(width: Coexecutor.tile, height: s.ane, depth: 1),
@@ -176,17 +225,96 @@ final class Coexecutor {
         }
     }
 
-    private func fail(_ message: String) { lock.withLock { failures.append(message) } }
+    func fail(_ message: String) { lock.withLock { failures.append(message) } }
 
     /// Waits for the GPU to reach `value`; false (and a failure) after a minute, so a broken command buffer never
     /// hangs a worker for good.
-    private func wait(_ event: MTLSharedEvent, _ value: UInt64, _ who: String) -> Bool {
+    func wait(_ event: MTLSharedEvent, _ value: UInt64, _ who: String) -> Bool {
         if event.wait(untilSignaledValue: value, timeoutMS: 60_000) { return true }
         fail("\(who): the GPU never reached product \(value)")
         return false
     }
 
     func resetTimings() { lock.withLock { amxSeconds = 0; aneSeconds = 0 } }
+
+    // MARK: - the timeline
+
+    /// Starts operation `p`'s entry and notes when the GPU releases it (`ready` reaches `p`).
+    func open(_ p: UInt64, kind: String, shares: (gpu: Int, amx: Int, ane: Int)) {
+        timeline.open(p, kind: kind, shares: shares)
+        ready.notify(listener, atValue: p) { [timeline] _, _ in timeline.mark(p, \.released, Timeline.now()) }
+    }
+
+    /// Encodes the GPU's end-of-share signal for operation `p` and notes when it fires.
+    func gpuFinished(_ p: UInt64, _ commands: MTLCommandBuffer) {
+        commands.encodeSignalEvent(gpuDone, value: p)
+        gpuDone.notify(listener, atValue: p) { [timeline] _, _ in timeline.mark(p, \.gpu, Timeline.now()) }
+    }
+
+    /// A worker's share of `p` done: its busy seconds, and its start and end in the timeline.
+    func finished(_ p: UInt64, _ unit: WritableKeyPath<Timeline.Entry, Timeline.Span>, since start: UInt64) {
+        let end = DispatchTime.now().uptimeNanoseconds
+        let seconds = Double(end - start) * 1e-9
+        lock.withLock { if unit == \Timeline.Entry.amx { amxSeconds += seconds } else { aneSeconds += seconds } }
+        timeline.mark(p, unit, Timeline.Span(start: Double(start) * 1e-9, end: Double(end) * 1e-9))
+    }
+}
+
+/// **When each split operation ran on each unit**, from the GPU's release (`ready`) to each unit's end: what the
+/// balancing loop reads. Times are seconds of the uptime clock; the GPU's are noted by an event listener (tens of
+/// microseconds late, against operations of milliseconds).
+final class Timeline: @unchecked Sendable {
+    struct Span { var start = 0.0, end = 0.0; var seconds: Double { end - start } }
+    struct Entry {
+        var kind: String
+        var shares: (gpu: Int, amx: Int, ane: Int)
+        var released = 0.0, gpu = 0.0
+        var amx = Span(), ane = Span()
+        /// Seconds from the release to the end of each unit's share (0 for a unit without one).
+        var walls: (gpu: Double, amx: Double, ane: Double) {
+            (gpu - released, shares.amx > 0 ? amx.end - released : 0, shares.ane > 0 ? ane.end - released : 0)
+        }
+    }
+    private var entries: [UInt64: Entry] = [:]
+    private let lock = NSLock()
+
+    static func now() -> Double { Double(DispatchTime.now().uptimeNanoseconds) * 1e-9 }
+
+    func open(_ p: UInt64, kind: String, shares: (gpu: Int, amx: Int, ane: Int)) {
+        lock.withLock { entries[p] = Entry(kind: kind, shares: shares) }
+    }
+
+    func mark<T>(_ p: UInt64, _ field: WritableKeyPath<Entry, T>, _ value: T) {
+        lock.withLock { entries[p]?[keyPath: field] = value }
+    }
+
+    /// The complete entries, in order, and forgets them all.
+    func drain() -> [Entry] {
+        lock.withLock {
+            defer { entries = [:] }
+            return entries.sorted { $0.key < $1.key }.map(\.value).filter { $0.released > 0 && $0.gpu > 0 }
+        }
+    }
+
+    /// Per kind: operations, mean milliseconds of each unit's share from its own start (GPU: from the release),
+    /// and the mean wall from release to the last unit's end.
+    static func summary(_ entries: [Entry]) -> String {
+        var kinds: [String] = []
+        var groups: [String: [Entry]] = [:]
+        for e in entries {
+            if groups[e.kind] == nil { kinds.append(e.kind) }
+            groups[e.kind, default: []].append(e)
+        }
+        return kinds.map { kind in
+            let g = groups[kind]!, n = Double(g.count), s = g[0].shares
+            func mean(_ f: (Entry) -> Double) -> Double { g.map(f).reduce(0, +) / n * 1e3 }
+            return String(format: "  %-12@ ×%3d  shares %d/%d/%d   GPU %6.2f ms   AMX/CPU %6.2f ms (starts +%.2f)   ANE %6.2f ms (starts +%.2f)   wall %6.2f ms",
+                          kind as NSString, g.count, s.gpu, s.amx, s.ane, mean { $0.gpu - $0.released },
+                          mean { $0.amx.seconds }, mean { $0.shares.amx > 0 ? $0.amx.start - $0.released : 0 },
+                          mean { $0.ane.seconds }, mean { $0.shares.ane > 0 ? $0.ane.start - $0.released : 0 },
+                          mean { max($0.walls.gpu, $0.walls.amx, $0.walls.ane) })
+        }.joined(separator: "\n")
+    }
 }
 
 /// A thread running submitted jobs in order.

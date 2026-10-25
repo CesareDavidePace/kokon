@@ -111,3 +111,30 @@ kernel void ane_unpack(device const half *y0 [[buffer(0)]], device const half *y
     uint j = s.n0 + jj;
     c[(ulong)(s.row0 + i) * s.n + j] = (sum / lambda[j]) / sigma[i];
 }
+
+// Attention heads to and from the Neural Engine's surfaces [heads, rows, 128] fp16 (heads first), from the rows of
+// `stride` floats the products write (head h at columns column0 + 128 h). Surface rows past `valid` are zeros.
+struct HeadsShape {
+    uint stride;
+    uint column0;
+    uint rows;      // rows per head in the surface
+    uint valid;     // of which exist in the fp32 tensor, from row0
+    uint row0;
+    uint heads;
+    float factor;   // q: 1/sqrt(128)
+};
+
+kernel void ane_heads_pack(device const float *src [[buffer(0)]], device half *dst [[buffer(1)]],
+                           constant HeadsShape &s [[buffer(2)]], uint3 g [[thread_position_in_grid]]) {
+    uint c = g.x, r = g.y, h = g.z;
+    if (c >= 128 || r >= s.rows || h >= s.heads) return;
+    float x = r < s.valid ? src[(ulong)(s.row0 + r) * s.stride + s.column0 + h * 128 + c] * s.factor : 0.0f;
+    dst[((ulong)h * s.rows + r) * 128 + c] = half(x);
+}
+
+kernel void ane_heads_unpack(device const half *src [[buffer(0)]], device float *dst [[buffer(1)]],
+                             constant HeadsShape &s [[buffer(2)]], uint3 g [[thread_position_in_grid]]) {
+    uint c = g.x, r = g.y, h = g.z;
+    if (c >= 128 || r >= s.valid || h >= s.heads) return;
+    dst[(ulong)(s.row0 + r) * s.stride + s.column0 + h * 128 + c] = float(src[((ulong)h * s.rows + r) * 128 + c]);
+}

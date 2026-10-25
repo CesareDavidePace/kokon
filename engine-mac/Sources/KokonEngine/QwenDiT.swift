@@ -81,6 +81,7 @@ public final class QwenDiT {
         } else {
             coexecutor = nil
         }
+        if let coexecutor, environment["KOKON_BALANCE"] != "0" { try coexecutor.recall() }
         if let coexecutor, coexecutor.attentionApplies(queries: sequence.target) {
             try coexecutor.prepareAttention(queries: sequence.target, keys: sequence.count)
         }

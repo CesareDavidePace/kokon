@@ -147,7 +147,8 @@ final class Coexecutor {
                     e.setBuffer(w.buffer, offset: w.offset, index: 0)
                     e.setBuffer(columns, offset: lambda, index: 1); e.setBuffer(columns, offset: norm, index: 2)
                     e.setBytes(&sh, length: MemoryLayout<Shape>.stride, index: 3)
-                    e.dispatchThreads(MTLSize(width: n, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
+                    e.dispatchThreadgroups(MTLSize(width: (n + 63) / 64, height: 1, depth: 1),
+                                           threadsPerThreadgroup: MTLSize(width: 64, height: 16, depth: 1))
                 }
                 try kernel("ane_norm") { e in
                     e.setBuffer(columns, offset: norm, index: 0); e.setBuffer(columns, offset: state, index: 1)

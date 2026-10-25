@@ -27,20 +27,31 @@ struct AneShape {
     uint kParts;   // tiles along K (unpack)
 };
 
-// Per column of W [k, n]: λ_j and the lifted column's L1 norm. One thread per column (coalesced rows).
+// Per column of W [k, n]: λ_j and the lifted column's L1 norm. A threadgroup takes 64 columns, 16 row slices of
+// each (coalesced rows), combined in threadgroup memory: one thread per column walking every row took ~8 ms per
+// 4096 × 12288 weight (M2 Pro).
 kernel void ane_columns(device const float *w [[buffer(0)]], device float *lambda [[buffer(1)]],
                         device float *norm [[buffer(2)]], constant AneShape &s [[buffer(3)]],
-                        uint j [[thread_position_in_grid]]) {
-    if (j >= s.n) return;
+                        uint2 tg [[threadgroup_position_in_grid]], uint2 t [[thread_position_in_threadgroup]]) {
+    threadgroup float peaks[16][64], sums[16][64];
+    uint j = tg.x * 64 + t.x;
     float peak = 0, sum = 0;
-    for (uint r = 0; r < s.k; r++) {
-        float v = fabs(w[(ulong)r * s.n + j]);
-        peak = max(peak, v);
-        sum += v;
+    if (j < s.n) {
+        for (uint r = t.y; r < s.k; r += 16) {
+            float v = fabs(w[(ulong)r * s.n + j]);
+            peak = max(peak, v);
+            sum += v;
+        }
     }
-    float l = (peak > 0 && isfinite(peak)) ? exp2(-floor(log2(peak))) : 1.0f;
-    lambda[j] = l;
-    norm[j] = sum * l;
+    peaks[t.y][t.x] = peak;
+    sums[t.y][t.x] = sum;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (t.y == 0 && j < s.n) {
+        for (uint i = 1; i < 16; i++) { peak = max(peak, peaks[i][t.x]); sum += sums[i][t.x]; }
+        float l = (peak > 0 && isfinite(peak)) ? exp2(-floor(log2(peak))) : 1.0f;
+        lambda[j] = l;
+        norm[j] = sum * l;
+    }
 }
 
 // L = max_j norm[j], into state[0]. One threadgroup of 1 024.

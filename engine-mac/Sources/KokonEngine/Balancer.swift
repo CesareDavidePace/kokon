@@ -13,9 +13,12 @@ import Foundation
 /// A new cut is taken only when it is predicted 1.5 % faster, so the shares settle instead of flickering. Rates are
 /// smoothed over evaluations and start from the M2 Pro's, so a unit without a share keeps an estimate. Moving a
 /// share moves which rows go through the Neural Engine's fp16: images stay within its accuracy, not bit for bit.
-struct Balancer {
+///
+/// The shares and rates are remembered per Mac and shape (`Memory`), so the next run starts balanced: at 1024² on the
+/// M2 Pro the first evaluation took ~11.5 s at the starting shares against ~8.9 balanced.
+struct Balancer: Codable {
     /// Rows (heads, for attention) per millisecond.
-    struct Rates { var gpu: Double, amx: Double, ane: Double }
+    struct Rates: Codable { var gpu: Double, amx: Double, ane: Double }
     var rates: [String: Rates]
     /// The AMX's measured rate at each row count tried, per kind: it is not linear in rows (MLP out on the M2 Pro:
     /// 320 rows 31 ms, 384 rows 43 ms), so a measured count beats the extrapolated rate.
@@ -115,11 +118,51 @@ extension Coexecutor {
                 try prepareAttention(queries: attentionShape.queries, keys: attentionShape.keys)
             }
         }
+        remember()
     }
 
     /// The shares the next evaluation takes.
     var shares: String {
         let amx = amxRows.sorted { $0.key < $1.key }.map { "\($0.key) \($0.value)" }.joined(separator: ", ")
         return "products ANE \(aneRows) rows, AMX \(amx.isEmpty ? "default" : amx); attention \(heads)"
+    }
+}
+
+extension Coexecutor {
+    /// What the balancing loop learned, per Mac, shape and units on: `~/Library/Caches/kokon-engine-mac/balance.json`.
+    struct Memory: Codable {
+        var aneRows: Int
+        var amxRows: [String: Int]
+        var heads: [Int]
+        var balancer: Balancer
+
+        static let url = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("kokon-engine-mac/balance.json")
+
+        static func all() -> [String: Memory] {
+            guard let data = try? Data(contentsOf: url) else { return [:] }
+            return (try? JSONDecoder().decode([String: Memory].self, from: data)) ?? [:]
+        }
+    }
+
+    var memoryKey: String {
+        "\(context.device.name) rows \(rows) ane \(aneEnabled) amx \(amxEnabled) ane-attention \(balancer.aneAttention)"
+    }
+
+    /// Takes the remembered shares for this Mac and shape, if any.
+    func recall() throws {
+        guard let m = Memory.all()[memoryKey], m.heads.count == 3, m.heads.reduce(0, +) == QwenDiT.heads else { return }
+        balancer = m.balancer
+        amxRows = m.amxRows
+        if HeadSplit.fromEnvironment() == nil { heads = HeadSplit(gpu: m.heads[0], ane: m.heads[1], cpu: m.heads[2]) }
+        if aneEnabled, m.aneRows >= 1024, m.aneRows <= rows - 512 { try setAneRows(m.aneRows) }
+    }
+
+    /// Writes the current shares (failures only cost the next run its head start).
+    func remember() {
+        var all = Memory.all()
+        all[memoryKey] = Memory(aneRows: aneRows, amxRows: amxRows, heads: [heads.gpu, heads.ane, heads.cpu], balancer: balancer)
+        try? FileManager.default.createDirectory(at: Memory.url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let data = try? JSONEncoder().encode(all) { try? data.write(to: Memory.url, options: .atomic) }
     }
 }

@@ -170,9 +170,11 @@ public final class QwenTextEncoder {
         try compute("swiglu", commands: commands) { e in
             e.setBuffer(b.arena.buffer, offset: b.h1.offset, index: 0)
             e.setBuffer(b.arena.buffer, offset: b.h2.offset, index: 1)
-            var c = UInt32(t * QwenTextEncoder.hidden)
-            e.setBytes(&c, length: 4, index: 2)
-            e.dispatchThreads(MTLSize(width: Int(c), height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+            // The DiT's kernel: every row in fp32, no fp16 copy (buffer 3 is never written then).
+            var params = QwenDiT.SwigluParams(columns: UInt32(QwenTextEncoder.hidden), half: QwenDiT.fullOnly(t))
+            e.setBytes(&params, length: MemoryLayout<QwenDiT.SwigluParams>.stride, index: 2)
+            e.setBuffer(b.arena.buffer, offset: b.h1.offset, index: 3)
+            e.dispatchThreads(MTLSize(width: t * QwenTextEncoder.hidden, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
         }
         try linear(block + "ffn_down.weight", b, a: b.h1, c: b.o, m: t, commands: commands)
         try add(b, b.o, count: t * d, commands: commands)

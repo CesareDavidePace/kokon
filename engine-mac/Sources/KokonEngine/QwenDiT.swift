@@ -48,6 +48,9 @@ public final class QwenDiT {
     /// (`Coexecution.swift`, `AttentionSplit.swift`); nil: GPU alone. `KOKON_COEXEC=0` turns it off, `KOKON_ANE=0` /
     /// `KOKON_AMX=0` one unit, `KOKON_ANE_ATTENTION=1` heads on the Neural Engine too, `KOKON_BALANCE=0` the balancing loop.
     let coexecutor: Coexecutor?
+    /// **Weights unpacked to fp16** (`KOKON_WEIGHTS=fp32`: fp32, for the accuracy checks): half the bytes the unpacking
+    /// writes and every unit reads; the GPU's products are MPS fp32 × fp16 with fp32 accumulation, the AMX's BNNS the same.
+    let halfWeights = ProcessInfo.processInfo.environment["KOKON_WEIGHTS"] != "fp32"
     private var attentions: [String: GraphAttention] = [:]
     /// Seconds per phase of the last evaluation.
     public private(set) var timings: [String: Double] = [:]
@@ -77,7 +80,7 @@ public final class QwenDiT {
         if environment["KOKON_COEXEC"] != "0", sequence.count >= 1024 {
             coexecutor = try Coexecutor(context: context, rows: QwenDiT.padded(sequence.count),
                                         ane: environment["KOKON_ANE"] != "0", amx: environment["KOKON_AMX"] != "0",
-                                        aneAttention: environment["KOKON_ANE_ATTENTION"] == "1")
+                                        aneAttention: environment["KOKON_ANE_ATTENTION"] == "1", halfWeights: halfWeights)
         } else {
             coexecutor = nil
         }
@@ -173,6 +176,7 @@ public final class QwenDiT {
         let d = QwenDiT.dim, n = sequence.count, p = sequence.prefix, s = sequence.target
         let started = DispatchTime.now().uptimeNanoseconds
         timings = [:]
+        castInput = nil
         try prepareModulation([0, sigma])
         arena.pointer(modulation).update(from: modulationCache[0]! + modulationCache[sigma]!, count: 10 * d)
         timings["modulation"] = elapsed(since: started)
@@ -317,10 +321,12 @@ public final class QwenDiT {
         return try file.tensor(QwenDiT.prefix + name)
     }
 
+    /// The input the last split product cast to fp16 (slice offset, first row, k); forgotten by any kernel or attention.
+    private var castInput: (offset: Int, row: Int, k: Int)?
     /// The weight unpacked (and packed for the Neural Engine) during the product before, and its reserve.
     private var unpackedAhead: (name: String, reserve: Int)?
 
-    /// `C[m, n] = A[m, k] · W` with W the file's Linear `[n, k]`, unpacked to `[k, n]` fp32 in a reserve first.
+    /// `C[m, n] = A[m, k] · W` with W the file's Linear `[n, k]`, unpacked to `[k, n]` (fp16, or fp32) in a reserve first.
     /// `aRow`, `cRow`: first row of A and C in their slices. `next`: the weight of the product that follows, unpacked
     /// into the other reserve and packed for the Neural Engine while the AMX and the Neural Engine run this one (the
     /// GPU's ~1.8 ms per 4096 × 4096 weight otherwise ran alone between products).
@@ -338,14 +344,15 @@ public final class QwenDiT {
         } else {
             index = nextReserve
             try gpu("dequant", commands) {
-                try dequant.encode(tensor, of: file, into: arena.buffer, outOffset: reserves[index].offset, transposed: true, commands: $0)
+                try dequant.encode(tensor, of: file, into: arena.buffer, outOffset: reserves[index].offset, transposed: true,
+                                   output: halfWeights ? .f16 : .f32, commands: $0)
             }
         }
         unpackedAhead = nil
         nextReserve = (index + 1) % reserves.count
         let reserve = reserves[index]
         // The GPU's rows: all of them, or its share of a split product.
-        func gpuRows(_ rows: Int) throws {
+        func gpuRows(_ rows: Int, _ half: MTLBuffer? = nil) throws {
             let key = "\(rows)×\(kk)×\(nn)"
             let product: MPSMatrixMultiplication
             if let existing = products[key] { product = existing } else {
@@ -353,10 +360,12 @@ public final class QwenDiT {
                                                   resultRows: rows, resultColumns: nn, interiorColumns: kk, alpha: 1, beta: 0)
                 products[key] = product
             }
-            let left = MPSMatrix(buffer: arena.buffer, offset: a.offset + aRow * kk * 4,
-                                 descriptor: MPSMatrixDescriptor(rows: rows, columns: kk, rowBytes: kk * 4, dataType: .float32))
+            let left = half.map { MPSMatrix(buffer: $0, descriptor: MPSMatrixDescriptor(rows: rows, columns: kk, rowBytes: kk * 2, dataType: .float16)) }
+                ?? MPSMatrix(buffer: arena.buffer, offset: a.offset + aRow * kk * 4,
+                             descriptor: MPSMatrixDescriptor(rows: rows, columns: kk, rowBytes: kk * 4, dataType: .float32))
             let right = MPSMatrix(buffer: arena.buffer, offset: reserve.offset,
-                                  descriptor: MPSMatrixDescriptor(rows: kk, columns: nn, rowBytes: nn * 4, dataType: .float32))
+                                  descriptor: MPSMatrixDescriptor(rows: kk, columns: nn, rowBytes: nn * (halfWeights ? 2 : 4),
+                                                                  dataType: halfWeights ? .float16 : .float32))
             let result = MPSMatrix(buffer: arena.buffer, offset: c.offset + cRow * nn * 4,
                                    descriptor: MPSMatrixDescriptor(rows: rows, columns: nn, rowBytes: nn * 4, dataType: .float32))
             try gpu(m < 512 ? "products (few rows)" : "products", commands) {
@@ -371,19 +380,23 @@ public final class QwenDiT {
             if let next {
                 let t = try weight(next), other = nextReserve
                 ahead = { [self] commands in
-                    try dequant.encode(t, of: file, into: arena.buffer, outOffset: reserves[other].offset, transposed: true, commands: commands)
+                    try dequant.encode(t, of: file, into: arena.buffer, outOffset: reserves[other].offset, transposed: true,
+                                       output: halfWeights ? .f16 : .f32, commands: commands)
                     try coexecutor.prepareWeight(next, w: operand(reserves[other], 0, t.rows), k: t.columns, n: t.rows, commands: commands)
                     unpackedAhead = (next, other)
                 }
             }
+            let ready = castInput.map { $0 == (a.offset, aRow, kk) } ?? false
             try coexecutor.encode(weight: name, a: operand(a, aRow, kk), w: operand(reserve, 0, nn), c: operand(c, cRow, nn),
-                                  m: m, k: kk, n: nn, commands: commands, ahead: ahead, gpuRows: gpuRows)
+                                  m: m, k: kk, n: nn, commands: commands, castReady: ready, ahead: ahead, gpuRows: gpuRows)
+            castInput = c.offset == a.offset ? nil : (a.offset, aRow, kk)
         } else {
             try gpuRows(m)
         }
     }
 
     func compute(_ name: String, commands: MTLCommandBuffer, _ body: (MTLComputeCommandEncoder) throws -> Void) throws {
+        castInput = nil
         try gpu(name, commands) { commands in
             let encoder = commands.makeComputeCommandEncoder()!
             encoder.label = name
@@ -468,6 +481,7 @@ public final class QwenDiT {
     /// Queries `[queries, queries + count)` against keys `[0, keys)`, into the same rows of `attended`. The target's
     /// queries are cut by heads with the Neural Engine and the CPU when the co-executor runs (`AttentionSplit.swift`).
     func attend(queries: Int, count: Int, keys: Int, causal: Bool, commands: MTLCommandBuffer) throws {
+        castInput = nil
         let row = QwenDiT.dim * 4
         if let coexecutor, !profiling, !graphAttention, !causal, coexecutor.attentionApplies(queries: count) {
             func operand(_ slice: Arena.Slice, _ first: Int) -> Coexecutor.Operand {

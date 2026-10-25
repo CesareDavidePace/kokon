@@ -6,7 +6,7 @@ import Metal
 ///
 ///     C[m, n] = A[m, k] · W[k, n]       W already unpacked to fp32 [k, n] (the reserve) by the GPU
 ///       rows [0, g)            GPU, MPS fp32
-///       rows [g, g + a)        AMX, cblas_sgemm fp32 on the same reserve (unified memory)
+///       rows [g, g + a)        AMX, BNNS fp32 on the same reserve (unified memory)
 ///       rows [g + a, m)        Neural Engine, fp16 in tiles of 4 096 × 4 096 (`ane.metal` packs and unpacks)
 ///
 /// GPU timeline per product p: unpack W → pack the Neural Engine's tiles → signal `ready` = p → its own rows →
@@ -54,6 +54,15 @@ final class Coexecutor {
     /// weight per evaluation, by only n threads, were most of the GPU's time alone between products.
     private var columnScales: [String: MTLBuffer] = [:]
     let aneEnabled: Bool, amxEnabled: Bool
+    /// The reserves hold fp16 weights (`QwenDiT.halfWeights`): the AMX and the Neural Engine's packing read them so.
+    let halfWeights: Bool
+    /// **The GPU's and the AMX's rows of A read as fp16**, cast by the GPU into `aHalf` (`KOKON_ACTIVATIONS=fp32`: off).
+    /// With fp16 weights, 1024² on the M2 Pro (`time-dit`, 2026-10-25): 7.46 s per evaluation against 8.0–8.1 (fp32 A)
+    /// and 8.54 with fp32 weights and `cblas_sgemm`; the AMX runs BNNS fp16 × fp16 at ~2.5 TFLOP/s alone against ~1.0
+    /// for `cblas_sgemm`. The velocity at 896² against diffusers: 7.2e-4 (fp32 A 5.7e-4, fp32 weights 5.1e-4; the
+    /// Neural Engine's rows are fp16 in every case).
+    let halfActivations = ProcessInfo.processInfo.environment["KOKON_ACTIVATIONS"] != "fp32"
+    private lazy var aHalf: MTLBuffer? = try? context.scratch(rows * QwenDiT.hidden * 2, label: "A fp16")
     /// Seconds each worker spent computing (not waiting), and failures (a failure leaves rows unwritten).
     var amxSeconds = 0.0, aneSeconds = 0.0
     var failures: [String] = []
@@ -66,8 +75,10 @@ final class Coexecutor {
     /// Starting shares measured on the M2 Pro 16 GB, 1024² + 32 text rows (`time-dit`, 2026-10-25): 2 048 rows on the
     /// Neural Engine and 1/16 on the AMX (AMX 512 rows 12.8 s per evaluation, 256 rows 11.3 s, none 11.8 s; GPU alone
     /// 16.2 s). The balancing loop moves them from the first evaluation on.
-    init(context: MetalContext, rows: Int, ane: Bool = true, amx: Bool = true, aneAttention: Bool = false) throws {
+    init(context: MetalContext, rows: Int, ane: Bool = true, amx: Bool = true, aneAttention: Bool = false,
+         halfWeights: Bool = false) throws {
         self.context = context
+        self.halfWeights = halfWeights
         self.rows = rows
         self.aneEnabled = ane
         self.amxEnabled = amx
@@ -131,7 +142,8 @@ final class Coexecutor {
                 w: (buffer: MTLBuffer, offset: Int, pointer: UnsafeMutablePointer<Float>),
                 c: (buffer: MTLBuffer, offset: Int, pointer: UnsafeMutablePointer<Float>),
                 m: Int, k: Int, n: Int, commands: MTLCommandBuffer,
-                ahead: ((MTLCommandBuffer) throws -> Void)? = nil, gpuRows: (Int) throws -> Void) throws {
+                castReady: Bool = false, ahead: ((MTLCommandBuffer) throws -> Void)? = nil,
+                gpuRows: (Int, MTLBuffer?) throws -> Void) throws {
         let s = split(m: m, k: k, n: n)
         counter += 1
         let p = counter
@@ -184,18 +196,29 @@ final class Coexecutor {
                 }
             }
         }
+        let half = halfActivations ? aHalf : nil
+        // Every row but the Neural Engine's (the same for every product), so the next product on the same A
+        // (`castReady`: q, k, v; gate, proj) reuses the cast whatever its AMX share.
+        if let half, !castReady {
+            var count = UInt32((m - s.ane) * k)
+            try kernel("pack_half") { e in
+                e.setBuffer(a.buffer, offset: a.offset, index: 0); e.setBuffer(half, offset: 0, index: 1)
+                e.setBytes(&count, length: 4, index: 2)
+                e.dispatchThreads(MTLSize(width: Int(count), height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+            }
+        }
         if s.amx > 0 || s.ane > 0 { commands.encodeSignalEvent(ready, value: p) }
         // The next weight's own work while the AMX and the Neural Engine run this product.
         try ahead?(commands)
         if s.amx > 0 {
-            nonisolated(unsafe) let (pa, pw, pc) = (a.pointer + s.gpu * k, w.pointer, c.pointer + s.gpu * n)
+            nonisolated(unsafe) let (pa, pw, pc) = (half.map { UnsafeRawPointer($0.contents() + s.gpu * k * 2) } ?? UnsafeRawPointer(a.pointer + s.gpu * k),
+                                                    UnsafeRawPointer(w.pointer), c.pointer + s.gpu * n)
             let rows = s.amx
             amxWorker.submit { [self] in
                 defer { amxDone.signaledValue = p }
                 guard wait(ready, p, "AMX") else { return }
                 let t = DispatchTime.now().uptimeNanoseconds
-                cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, Int32(rows), Int32(n), Int32(k), 1,
-                            pa, Int32(k), pw, Int32(n), 0, pc, Int32(n))
+                if !CPUProduct.multiply(pa, pw, into: pc, m: rows, k: k, n: n, halfA: half != nil, halfB: halfWeights) { fail("AMX: BNNS refused \(rows)×\(k)×\(n)") }
                 finished(p, \.amx, since: t)
             }
         }
@@ -209,7 +232,7 @@ final class Coexecutor {
                 finished(p, \.ane, since: t)
             }
         }
-        try gpuRows(s.gpu)
+        try gpuRows(s.gpu, half)
         gpuFinished(p, commands)
         if s.amx > 0 { commands.encodeWaitForEvent(amxDone, value: p) }
         if s.ane > 0 {
@@ -254,7 +277,7 @@ final class Coexecutor {
         let columns = try context.scratch((2 * n + 16) * 4, label: "λ \(weight)")
         columnScales[weight] = columns
         var sh = Shape(k: UInt32(k), n: UInt32(n), k0: 0, kPart: 0, n0: 0, nPart: 0, row0: 0, rows: 0, kParts: 0)
-        try kernel("ane_columns", commands) { e in
+        try kernel(halfWeights ? "ane_columns_h" : "ane_columns", commands) { e in
             e.setBuffer(w.buffer, offset: w.offset, index: 0)
             e.setBuffer(columns, offset: 0, index: 1); e.setBuffer(columns, offset: n * 4, index: 2)
             e.setBytes(&sh, length: MemoryLayout<Shape>.stride, index: 3)
@@ -277,7 +300,7 @@ final class Coexecutor {
             for np in 0..<nParts {
                 var t = Shape(k: UInt32(k), n: UInt32(n), k0: UInt32(kp * Coexecutor.tile), kPart: UInt32(Coexecutor.tile),
                               n0: UInt32(np * Coexecutor.tile), nPart: UInt32(Coexecutor.tile), row0: 0, rows: 0, kParts: UInt32(kParts))
-                try kernel("ane_pack_weight", commands) { e in
+                try kernel(halfWeights ? "ane_pack_weight_h" : "ane_pack_weight", commands) { e in
                     e.setBuffer(w.buffer, offset: w.offset, index: 0); e.setBuffer(columns, offset: 0, index: 1)
                     e.setBuffer(slots[set][kp * nParts + np].w, offset: 0, index: 2)
                     e.setBytes(&t, length: MemoryLayout<Shape>.stride, index: 3)

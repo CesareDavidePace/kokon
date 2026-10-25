@@ -29,6 +29,7 @@ swift test                                   # no model needed
 | `QwenSequence.swift` | the joint text/image sequence, block-causal segments and RoPE positions |
 | `QwenDiT.swift`, `Kernels/dit.metal`, `Attention.swift`, `Arena.swift` | the DiT: modulation on the CPU, everything per token on the GPU |
 | `Coexecution.swift`, `Kernels/ane.metal` | the AMX and the Neural Engine beside the GPU on the DiT's products; the timeline of each split operation |
+| `CPUProduct.swift` | the AMX's products: BNNS, fp32 or fp16 operands |
 | `Balancer.swift` | the balancing loop: each evaluation's timeline sets the next one's rows and heads per unit |
 | `Kernels/attention.metal` | fused block-causal attention |
 | `AttentionSplit.swift`, `CPUAttention.swift` | the target's attention cut by heads: GPU, CPU (AMX + cores), optionally the Neural Engine |
@@ -169,6 +170,22 @@ Mac and shape (`~/Library/Caches/kokon-engine-mac/balance.json`), so the first s
 fp16 operands in the flash kernel, **the default since 2026-10-25** (`KOKON_ATTENTION=fp32` for the checks): 76.0 s,
 the velocity within 6.0e-4 of fp64 at 256² (fp32 kernel 1.0e-5; bf16 tools ~1e-2); the two 1024² images differ by 0.25
 levels on average, 0.18 % of values by more than 8. The accuracy figures above are the fp32 kernel's.
+
+**fp16 operands in the products, the default since 2026-10-25** (`KOKON_WEIGHTS=fp32` and `KOKON_ACTIVATIONS=fp32`
+for the checks): the weights are unpacked to fp16 (half the bytes written and read by every unit), the GPU casts
+the GPU's and the AMX's rows of each input to fp16 once (shared by q, k, v and by gate, proj), MPS multiplies fp16 ×
+fp16 into fp32 and the AMX runs BNNS instead of `cblas_sgemm` (alone, on its shares: fp32 1.3–1.9× faster, fp16
+inputs 2–2.7×). The three units share one limit when they run together (memory or power: BNNS in fp32 alone moved
+an evaluation only 8.54 → 8.3–8.5 s), so halving the bytes is what pays. One evaluation at 1024²: **8.54 → 7.45–7.55
+s** (fp16 weights alone 8.0–8.1). The velocity at 896² against diffusers fp32 (old Q4_K file, `dit-t2i-896`): 7.0e-4,
+against 5.1e-4 before (fp16 weights alone 5.7e-4; the Neural Engine's rows were already fp16); 256² end to end
+(GPU only, fp16 weights and attention) against fp64: image within 2.4e-3, at most 13 levels off (fp32 path 7.6e-5).
+The 1024² image against the previous precision: 0.05 levels on average, at most 6. **1024² image: 69.8 s** (text
+encoder 2.0 s, step 1 8.4 s, steps 2–8 7.4–8.0 s, VAE 6.0 s).
+
+MFA's GEMM (libnnc, 48 × 48 blocks, 2 × 2 SIMD groups) was tried against MPS: its async copies are an AIR intrinsic
+that macOS 27's run-time compiler refuses (libnnc ships prebuilt metallibs for it), and without them it ran at
+3.6–4.0 TFLOP/s against MPS's 5.1–5.6 at 1472 × 4096 × 4096, so MPS stays.
 
 **VAE decoder** (`check-vae`, against `tools/reference_vae.py`, diffusers fp32): within 1.1e-5; 1024² in 2.75 s. Its
 graph builds and compiles in 0.3 s, but its first run at a size costs ~3.7 s more, GPU time (~1 s of CPU): it cannot

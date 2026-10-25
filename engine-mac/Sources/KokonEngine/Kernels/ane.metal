@@ -30,7 +30,8 @@ struct AneShape {
 // Per column of W [k, n]: λ_j and the lifted column's L1 norm. A threadgroup takes 64 columns, 16 row slices of
 // each (coalesced rows), combined in threadgroup memory: one thread per column walking every row took ~8 ms per
 // 4096 × 12288 weight (M2 Pro).
-kernel void ane_columns(device const float *w [[buffer(0)]], device float *lambda [[buffer(1)]],
+template <typename T>
+kernel void ane_columns(device const T *w [[buffer(0)]], device float *lambda [[buffer(1)]],
                         device float *norm [[buffer(2)]], constant AneShape &s [[buffer(3)]],
                         uint2 tg [[threadgroup_position_in_grid]], uint2 t [[thread_position_in_threadgroup]]) {
     threadgroup float peaks[16][64], sums[16][64];
@@ -38,7 +39,7 @@ kernel void ane_columns(device const float *w [[buffer(0)]], device float *lambd
     float peak = 0, sum = 0;
     if (j < s.n) {
         for (uint r = t.y; r < s.k; r += 16) {
-            float v = fabs(w[(ulong)r * s.n + j]);
+            float v = fabs(float(w[(ulong)r * s.n + j]));
             peak = max(peak, v);
             sum += v;
         }
@@ -53,6 +54,11 @@ kernel void ane_columns(device const float *w [[buffer(0)]], device float *lambd
         norm[j] = sum * l;
     }
 }
+
+template [[host_name("ane_columns")]] kernel void ane_columns<float>(device const float *, device float *, device float *,
+    constant AneShape &, uint2, uint2);
+template [[host_name("ane_columns_h")]] kernel void ane_columns<half>(device const half *, device float *, device float *,
+    constant AneShape &, uint2, uint2);
 
 // L = max_j norm[j], into state[0]. One threadgroup of 1 024.
 kernel void ane_norm(device const float *norm [[buffer(0)]], device float *state [[buffer(1)]],
@@ -70,15 +76,20 @@ kernel void ane_norm(device const float *norm [[buffer(0)]], device float *state
     }
 }
 
-// One weight tile, lifted, into its surface [kPart, nPart] fp16.
-kernel void ane_pack_weight(device const float *w [[buffer(0)]], device const float *lambda [[buffer(1)]],
+// One weight tile, lifted, into its surface [kPart, nPart] fp16. W fp32 or fp16 (`_h`).
+template <typename T>
+kernel void ane_pack_weight(device const T *w [[buffer(0)]], device const float *lambda [[buffer(1)]],
                             device half *tile [[buffer(2)]], constant AneShape &s [[buffer(3)]],
                             uint2 g [[thread_position_in_grid]]) {
     uint jj = g.x, kk = g.y;
     if (jj >= s.nPart || kk >= s.kPart) return;
     uint j = s.n0 + jj;
-    tile[(ulong)kk * s.nPart + jj] = half(w[(ulong)(s.k0 + kk) * s.n + j] * lambda[j]);
+    tile[(ulong)kk * s.nPart + jj] = half(float(w[(ulong)(s.k0 + kk) * s.n + j]) * lambda[j]);
 }
+template [[host_name("ane_pack_weight")]] kernel void ane_pack_weight<float>(device const float *, device const float *,
+    device half *, constant AneShape &, uint2);
+template [[host_name("ane_pack_weight_h")]] kernel void ane_pack_weight<half>(device const half *, device const float *,
+    device half *, constant AneShape &, uint2);
 
 // σ_i of each Neural Engine row. One threadgroup of 256 per row.
 kernel void ane_row_scales(device const float *a [[buffer(0)]], device const float *state [[buffer(1)]],

@@ -28,6 +28,8 @@ swift test                                   # no model needed
 | `Coexecution.swift`, `Kernels/ane.metal` | the AMX and the Neural Engine beside the GPU on the DiT's products |
 | `Kernels/attention.metal` | fused block-causal attention |
 | `QwenVAE.swift`, `Safetensors.swift` | the VAE decoder as one MPSGraph, from Kokon's VAE file (Wan 2.2 names) |
+| `QwenTokenizer.swift` | Qwen's byte-level BPE tokenizer, read from the encoder GGUF's metadata |
+| `QwenTextEncoder.swift`, `Kernels/text.metal` | the text encoder: Qwen3-VL-8B's text decoder on the GPU, diffusers' prompt template |
 
 Tests check the CPU and GPU unpacking against gguf-py's values (`tools/make_quant_fixtures.py` writes the
 fixture), and the sequence layout against diffusers' rules worked out by hand.
@@ -43,6 +45,22 @@ python3 -m venv ~/kokon-bench/venv-oracle && ~/kokon-bench/venv-oracle/bin/pip i
 ```
 
 256² text-to-image, σ 0.7, 2026-10-25: every stage within 2e-5 relative of diffusers fp32 (velocity 6e-6).
+
+**The text encoder against transformers.** The reference tokenizes with the processor of the official
+Qwen/Qwen-Image-2.1-Turbo repository (`processor/` and `text_encoder/config.json`, a few MB) and runs transformers'
+Qwen3-VL decoder layers in fp32 on the GGUF's weights, one layer at a time; `--sanity` checks the language model
+head answers " Paris" to a factual prompt (it does), so the weights are read right and not only read alike.
+
+```bash
+~/kokon-bench/venv-oracle/bin/pip install torchvision huggingface_hub   # the processor needs torchvision
+~/kokon-bench/venv-oracle/bin/python -I tools/reference_tokenizer.py <processor dir> ~/kokon-bench/ref/text/tokenizer.json
+.build/release/kokon-engine-mac check-tokenizer <encoder.gguf> ~/kokon-bench/ref/text/tokenizer.json
+~/kokon-bench/venv-oracle/bin/python -I tools/reference_text_encoder.py <encoder.gguf> <processor dir> <text_encoder dir> ~/kokon-bench/ref/text/fox --sanity   # ~50 s
+.build/release/kokon-engine-mac check-text <encoder.gguf> ~/kokon-bench/ref/text/fox
+```
+
+2026-10-25: tokenizer identical on 42 cases (accents, CJK, emoji, decomposed Unicode, special tokens in the text);
+conditioning within 5.1e-6 relative (37 tokens) and 5.6e-6 (144 tokens). One encode: 0.45 s (37 tokens), 0.8 s (144).
 
 ## First measurements (M2 Pro 19-core GPU, 16 GB, macOS 27, 2026-10-25, `probe`)
 

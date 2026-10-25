@@ -9,6 +9,8 @@ kokon-engine-mac: Kokon's Apple Silicon engine (in development)
   check-dit <dit.gguf> <reference dir>     one DiT evaluation against tools/reference_dit.py
   time-dit <dit.gguf> [grid] [text] [runs] DiT evaluations on random inputs (grid 64 = 1024²)
   check-vae <vae.safetensors> <reference dir> [grid]   the VAE decoder against tools/reference_vae.py
+  check-tokenizer <encoder.gguf> <fixture.json>       the tokenizer against tools/reference_tokenizer.py
+  check-text <encoder.gguf> <reference dir>           the text encoder against tools/reference_text_encoder.py
   probe                                    this Mac's matrix throughput: GPU, AMX, Neural Engine, together
 """
 
@@ -52,6 +54,12 @@ do {
     case "check-vae":
         guard arguments.count >= 3 else { fail(usage) }
         try Checks.vae(path: arguments[1], reference: arguments[2], timeGrid: arguments.count > 3 ? Int(arguments[3]) : nil)
+    case "check-tokenizer":
+        guard arguments.count == 3 else { fail(usage) }
+        try Checks.tokenizer(path: arguments[1], fixture: arguments[2])
+    case "check-text":
+        guard arguments.count == 3 else { fail(usage) }
+        try Checks.textEncoder(path: arguments[1], reference: arguments[2])
     case "probe":
         try Probe.run()
     default:

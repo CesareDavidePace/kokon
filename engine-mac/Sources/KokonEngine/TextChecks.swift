@@ -56,3 +56,38 @@ extension Checks {
         }
     }
 }
+
+extension Checks {
+    /// Text to image against `tools/reference_generate.py`, from its noise: each step's latent, the decoded image,
+    /// the 8-bit pixels.
+    public static func generate(encoder: String, dit: String, vae: String, reference directory: String) throws {
+        let meta = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: directory)
+            .appendingPathComponent("meta.json"))) as! [String: Any]
+        let prompt = meta["prompt"] as! String, grid = meta["grid"] as! [Int]
+        let (h, w) = (grid[0], grid[1])
+        let pipeline = try QwenPipeline(encoder: encoder, dit: dit, vae: vae)
+        func report(_ name: String, _ got: UnsafePointer<Float>, _ want: [Float]) {
+            let r = compare(got, want)
+            print(String(format: "  %-12@ rel %.2e   max |Δ| %.3g%@", name as NSString, r.relative, r.maxAbs, r.finite ? "" : "   NON-FINITE"))
+        }
+        let image = try pipeline.textToImage(prompt: prompt, width: w * 16, height: h * 16, seed: 0,
+                                             noise: try reference(directory, "noise")) { i, latent in
+            latent.withUnsafeBufferPointer { report("latent\(i)", $0.baseAddress!, try! reference(directory, "latent\(i)")) }
+        }
+        image.withUnsafeBufferPointer { report("image", $0.baseAddress!, try! reference(directory, "image")) }
+        let got = QwenPipeline.pixels(image, width: w * 16, height: h * 16)
+        let want = [UInt8](try Data(contentsOf: URL(fileURLWithPath: directory).appendingPathComponent("pixels.u8")))
+        let channels = want.count / (h * 16 * w * 16)
+        var differ = 0, worst = 0
+        for p in 0..<(h * 16 * w * 16) {
+            for c in 0..<channels {
+                let d = abs(Int(got[p * 4 + c]) - Int(want[p * channels + c]))
+                if d > 0 { differ += 1; worst = max(worst, d) }
+            }
+        }
+        print("pixels: \(differ) of \(want.count) 8-bit values differ, by at most \(worst)")
+        let png = URL(fileURLWithPath: directory).appendingPathComponent("engine.png").path
+        try QwenPipeline.writePNG(got, width: w * 16, height: h * 16, to: png)
+        print("wrote \(png)")
+    }
+}

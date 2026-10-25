@@ -11,6 +11,10 @@ kokon-engine-mac: Kokon's Apple Silicon engine (in development)
   check-vae <vae.safetensors> <reference dir> [grid]   the VAE decoder against tools/reference_vae.py
   check-tokenizer <encoder.gguf> <fixture.json>       the tokenizer against tools/reference_tokenizer.py
   check-text <encoder.gguf> <reference dir>           the text encoder against tools/reference_text_encoder.py
+  check-generate <encoder.gguf> <dit.gguf> <vae.safetensors> <reference dir>
+                                           text to image against tools/reference_generate.py, from its noise
+  generate <encoder.gguf> <dit.gguf> <vae.safetensors> "<prompt>" [--size WxH] [--seed N] [--out file.png]
+                                           text to image, Turbo's 8 steps (default 1024x1024, seed 42, out.png)
   probe                                    this Mac's matrix throughput: GPU, AMX, Neural Engine, together
 """
 
@@ -60,6 +64,32 @@ do {
     case "check-text":
         guard arguments.count == 3 else { fail(usage) }
         try Checks.textEncoder(path: arguments[1], reference: arguments[2])
+    case "check-generate":
+        guard arguments.count == 5 else { fail(usage) }
+        try Checks.generate(encoder: arguments[1], dit: arguments[2], vae: arguments[3], reference: arguments[4])
+    case "generate":
+        guard arguments.count >= 5 else { fail(usage) }
+        var (width, height, seed, out) = (1024, 1024, UInt64(42), "out.png")
+        var options = arguments.dropFirst(5).makeIterator()
+        while let option = options.next() {
+            guard let value = options.next() else { fail(usage) }
+            switch option {
+            case "--size":
+                let parts = value.split(separator: "x").compactMap { Int($0) }
+                guard parts.count == 2 else { fail("--size takes WxH, e.g. 1024x768") }
+                (width, height) = (parts[0], parts[1])
+            case "--seed": seed = UInt64(value) ?? seed
+            case "--out": out = value
+            default: fail(usage)
+            }
+        }
+        let size = QwenPipeline.workingSize(width: width, height: height)
+        if size != (width, height) { print("size \(width)×\(height) → \(size.width)×\(size.height) (multiples of 32)") }
+        let pipeline = try QwenPipeline(encoder: arguments[1], dit: arguments[2], vae: arguments[3])
+        let image = try pipeline.textToImage(prompt: arguments[4], width: size.width, height: size.height, seed: seed)
+        try QwenPipeline.writePNG(QwenPipeline.pixels(image, width: size.width, height: size.height),
+                                  width: size.width, height: size.height, to: out)
+        print("wrote \(out) (\(size.width)×\(size.height), seed \(seed))")
     case "probe":
         try Probe.run()
     default:

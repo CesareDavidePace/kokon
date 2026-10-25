@@ -72,6 +72,74 @@ def layer0_stages(block, x, modulation, rotary_emb, target_token_mask, save):
     save("l0_mlp", block.img_mlp(normed2)[0])
 
 
+class ReferenceDiT:
+    """QwenImage21Transformer2DModel.forward, batch 1, no cache, text-to-image, one block module swapped per layer."""
+
+    def __init__(self, path, layers=32):
+        self.w = w = Weights(path)
+        d, self.layers = 4096, layers
+        self.img_in = torch.nn.Linear(64, d, bias=False)
+        w.load(self.img_in, "img_in.")
+        self.txt_in = QwenImage21TextProjection(d, d, eps=1e-6)
+        w.load(self.txt_in, "txt_in.")
+        self.time_text_embed = QwenImage21TimestepProjEmbeddings(embedding_dim=d)
+        w.load(self.time_text_embed, "time_text_embed.")
+        self.modulation_linear = torch.nn.Linear(d, 4 * d, bias=False)
+        self.modulation_linear.weight.copy_(w.get("modulation.1.weight"))
+        self.norm_out = QwenImage21AdaLayerNormContinuous(d, d, eps=1e-6)
+        w.load(self.norm_out, "norm_out.")
+        self.proj_out = torch.nn.Linear(d, 64, bias=False)
+        w.load(self.proj_out, "proj_out.")
+        self.rope = QwenImage21Rope(theta=10000, axes_dim=[16, 56, 56])
+        self.block = QwenImage21TransformerBlock(d, 32, 128, mlp_ratio=3, eps=1e-6)
+
+    def forward(self, encoder, latent, h, w_, timestep, save=None, progress=True):
+        """`encoder` [1, T, d], `latent` [1, h * w, 64], `timestep` a [1] tensor (σ); returns the target's velocity
+        [1, h * w, 64]. `save(name, tensor)` receives every stage when given."""
+        d, text, tokens = 4096, encoder.shape[1], h * w_
+        img_shapes = [(1, h, w_)]
+        img_mask = torch.tensor([[False] * text + [True] * (tokens // 4)])
+        hidden_states = self.img_in(latent)
+        encoder_hidden_states = self.txt_in(encoder)
+        repeats = torch.where(img_mask, 4, 1)[0]
+        image_pad_mask = torch.repeat_interleave(img_mask[0], repeats)
+        joint = torch.cat([encoder_hidden_states, encoder_hidden_states.new_zeros(1, tokens // 4, d)], dim=1)
+        joint = joint.repeat_interleave(repeats, dim=1)
+        joint[:, image_pad_mask] = hidden_states
+        if save:
+            save("joint_in", joint[0])
+
+        rotary_emb = self.rope(img_shapes, image_pad_mask, device=torch.device("cpu"))
+        image_ids, target_token_mask = QwenImage21Transformer2DModel.build_token_metadata(image_pad_mask, img_shapes)
+        t = torch.cat([timestep, timestep.new_zeros(1)], dim=0)
+        temb = self.time_text_embed(t, hidden_states)
+        modulation = self.modulation_linear(torch.nn.functional.silu(temb))
+        if save:
+            save("rope", torch.view_as_real(rotary_emb).reshape(rotary_emb.shape[0], -1))
+            save("temb", temb)
+            save("modulation", modulation)
+        prefix_len = int((~target_token_mask).sum())
+        segments = _qwenimage21_prefix_segments(image_ids, prefix_len)
+
+        for layer in range(self.layers):
+            self.w.load(self.block, f"transformer_blocks.{layer}.")
+            if layer == 0 and save:
+                layer0_stages(self.block, joint, modulation, rotary_emb, target_token_mask, save)
+            joint = self.block(hidden_states=joint, modulation=modulation, rotary_emb=rotary_emb, attention_mask=None,
+                               target_token_mask=target_token_mask, segments=segments)
+            if save and (layer in (0, 1) or layer == self.layers - 1):
+                save(f"layer{layer}_out", joint[0])
+            if progress:
+                print(f"layer {layer} done", flush=True)
+
+        normed = self.norm_out(joint, temb, target_token_mask)
+        output = self.proj_out(normed)
+        if save:
+            save("norm_out", normed[0])
+            save("model_out", output[0, prefix_len:])
+        return output[:, prefix_len:]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("gguf")
@@ -85,8 +153,6 @@ def main():
     torch.manual_seed(args.seed)
     torch.set_grad_enabled(False)
     os.makedirs(args.out, exist_ok=True)
-    w = Weights(args.gguf)
-    d, heads, head_dim, layers = 4096, 32, 128, args.layers
 
     saved = {}
 
@@ -97,67 +163,14 @@ def main():
 
     # Inputs: the encoder's last layer for T positions (no image slots: text-to-image), the packed latent.
     h = w_ = args.grid
-    tokens = h * w_
-    encoder = torch.randn(1, args.text, d) * 4
-    latent = torch.randn(1, tokens, 64)
-    timestep = torch.tensor([args.sigma], dtype=torch.float32)
+    encoder = torch.randn(1, args.text, 4096) * 4
+    latent = torch.randn(1, h * w_, 64)
     save("in_encoder", encoder[0])
     save("in_latent", latent[0])
-    img_shapes = [(1, h, w_)]
-    img_mask = torch.tensor([[False] * args.text + [True] * (tokens // 4)])
+    dit = ReferenceDiT(args.gguf, layers=args.layers)
+    dit.forward(encoder, latent, h, w_, torch.tensor([args.sigma], dtype=torch.float32), save=save)
 
-    img_in = torch.nn.Linear(64, d, bias=False)
-    w.load(img_in, "img_in.")
-    txt_in = QwenImage21TextProjection(d, d, eps=1e-6)
-    w.load(txt_in, "txt_in.")
-    time_text_embed = QwenImage21TimestepProjEmbeddings(embedding_dim=d)
-    w.load(time_text_embed, "time_text_embed.")
-    modulation_linear = torch.nn.Linear(d, 4 * d, bias=False)
-    modulation_linear.weight.copy_(w.get("modulation.1.weight"))
-    norm_out = QwenImage21AdaLayerNormContinuous(d, d, eps=1e-6)
-    w.load(norm_out, "norm_out.")
-    proj_out = torch.nn.Linear(d, 64, bias=False)
-    w.load(proj_out, "proj_out.")
-    rope = QwenImage21Rope(theta=10000, axes_dim=[16, 56, 56])
-    block = QwenImage21TransformerBlock(d, heads, head_dim, mlp_ratio=3, eps=1e-6)
-
-    # ── QwenImage21Transformer2DModel.forward, batch 1, no cache ──
-    hidden_states = img_in(latent)
-    encoder_hidden_states = txt_in(encoder)
-    repeats = torch.where(img_mask, 4, 1)[0]
-    image_pad_mask = torch.repeat_interleave(img_mask[0], repeats)
-    joint = torch.cat([encoder_hidden_states, encoder_hidden_states.new_zeros(1, tokens // 4, d)], dim=1)
-    joint = joint.repeat_interleave(repeats, dim=1)
-    joint[:, image_pad_mask] = hidden_states
-    save("joint_in", joint[0])
-
-    rotary_emb = rope(img_shapes, image_pad_mask, device=torch.device("cpu"))
-    save("rope", torch.view_as_real(rotary_emb).reshape(rotary_emb.shape[0], -1))
-    image_ids, target_token_mask = QwenImage21Transformer2DModel.build_token_metadata(image_pad_mask, img_shapes)
-    t = torch.cat([timestep, timestep.new_zeros(1)], dim=0)
-    temb = time_text_embed(t, hidden_states)
-    modulation = modulation_linear(torch.nn.functional.silu(temb))
-    save("temb", temb)
-    save("modulation", modulation)
-    prefix_len = int((~target_token_mask).sum())
-    segments = _qwenimage21_prefix_segments(image_ids, prefix_len)
-
-    for layer in range(layers):
-        w.load(block, f"transformer_blocks.{layer}.")
-        if layer == 0:
-            layer0_stages(block, joint, modulation, rotary_emb, target_token_mask, save)
-        joint = block(hidden_states=joint, modulation=modulation, rotary_emb=rotary_emb, attention_mask=None,
-                      target_token_mask=target_token_mask, segments=segments)
-        if layer in (0, 1) or layer == layers - 1:
-            save(f"layer{layer}_out", joint[0])
-        print(f"layer {layer} done", flush=True)
-
-    normed = norm_out(joint, temb, target_token_mask)
-    save("norm_out", normed[0])
-    output = proj_out(normed)
-    save("model_out", output[0, prefix_len:])
-
-    meta = {"grid": [h, w_], "text": args.text, "sigma": args.sigma, "layers": layers, "prefix": prefix_len,
+    meta = {"grid": [h, w_], "text": args.text, "sigma": args.sigma, "layers": args.layers, "prefix": args.text,
             "seed": args.seed, "tensors": saved, "gguf": os.path.basename(args.gguf),
             "diffusers": __import__("diffusers").__version__, "torch": torch.__version__}
     with open(os.path.join(args.out, "meta.json"), "w") as f:

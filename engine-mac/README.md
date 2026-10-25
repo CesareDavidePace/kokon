@@ -12,6 +12,8 @@ swift test                                   # no model needed
 .build/release/kokon-engine-mac probe        # this Mac's matrix throughput, ~1 min, no model
 .build/release/kokon-engine-mac inspect <file.gguf>
 .build/release/kokon-engine-mac check-dequant <file.gguf> [tensor...]
+.build/release/kokon-engine-mac generate <encoder.gguf> <dit.gguf> <vae.safetensors> "a red fox in the snow" \
+    [--size 1024x1024] [--seed 42] [--out out.png]
 ```
 
 ## What is here
@@ -30,6 +32,7 @@ swift test                                   # no model needed
 | `QwenVAE.swift`, `Safetensors.swift` | the VAE decoder as one MPSGraph, from Kokon's VAE file (Wan 2.2 names) |
 | `QwenTokenizer.swift` | Qwen's byte-level BPE tokenizer, read from the encoder GGUF's metadata |
 | `QwenTextEncoder.swift`, `Kernels/text.metal` | the text encoder: Qwen3-VL-8B's text decoder on the GPU, diffusers' prompt template |
+| `QwenPipeline.swift` | text to image: noise, Turbo's 8 flow-Euler steps (`planner::TURBO_SIGMAS`), VAE, PNG |
 
 Tests check the CPU and GPU unpacking against gguf-py's values (`tools/make_quant_fixtures.py` writes the
 fixture), and the sequence layout against diffusers' rules worked out by hand.
@@ -61,6 +64,20 @@ head answers " Paris" to a factual prompt (it does), so the weights are read rig
 
 2026-10-25: tokenizer identical on 42 cases (accents, CJK, emoji, decomposed Unicode, special tokens in the text);
 conditioning within 5.1e-6 relative (37 tokens) and 5.6e-6 (144 tokens). One encode: 0.45 s (37 tokens), 0.8 s (144).
+
+**Text to image against diffusers.** `tools/reference_generate.py` runs QwenImage21Pipeline's loop with the
+references above (diffusers' scheduler on the checkpoint's sigmas, the DiT layer by layer, the VAE, the image
+processor) and saves its noise; `check-generate` starts the engine from that noise:
+
+```bash
+~/kokon-bench/venv-oracle/bin/python -I tools/reference_generate.py <dit.gguf> <vae.safetensors> ~/kokon-bench/ref/text/fox <repo dir> ~/kokon-bench/ref/generate-256   # ~5 min
+.build/release/kokon-engine-mac check-generate <encoder.gguf> <dit.gguf> <vae.safetensors> ~/kokon-bench/ref/generate-256
+```
+
+256², 2026-10-25: each step's latent within 6.7e-6 relative, the image within 1.0e-5, 97 of 262 144 8-bit values
+differ by 1. **First 1024² image (M2 Pro, `generate`): 100.7 s in all**, text encoder 1.7 s, 8 steps of 11.4–12.9 s,
+VAE 5.4 s with its graph build; peak memory 4.1 GB (Kokon's sd.cpp: ~4.5 min). The seed's noise is the engine's
+own (SplitMix64 + Box–Muller), not sd.cpp's: the same seed gives a different image than Kokon today.
 
 ## First measurements (M2 Pro 19-core GPU, 16 GB, macOS 27, 2026-10-25, `probe`)
 

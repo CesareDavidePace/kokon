@@ -44,6 +44,24 @@ def decoder_name(key):
     raise KeyError(key)
 
 
+def load_vae(path):
+    """diffusers' decoder with the weights of Kokon's file (Wan 2.2 names), fp32, eval mode."""
+    vae = AutoencoderKLQwenImage21()  # the defaults are Qwen-Image 2.1's config
+    model = vae.state_dict()
+    converted = {}
+    for key, value in load_file(path).items():
+        name = decoder_name(key)
+        if name is not None:
+            converted[name] = value.float().reshape(model[name].shape)
+    missing, unexpected = vae.load_state_dict(converted, strict=False)
+    missing = [k for k in missing if not k.startswith("encoder.") and "time_conv" not in k and k != "quant_conv.weight"
+               and k != "quant_conv.bias"]
+    assert not missing, f"decoder weights missing: {missing[:10]}"
+    assert not unexpected, f"unexpected: {unexpected[:10]}"
+    vae.eval()
+    return vae
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("vae")
@@ -55,19 +73,7 @@ def main():
     torch.set_grad_enabled(False)
     os.makedirs(args.out, exist_ok=True)
 
-    vae = AutoencoderKLQwenImage21()  # the defaults are Qwen-Image 2.1's config
-    model = vae.state_dict()
-    converted = {}
-    for key, value in load_file(args.vae).items():
-        name = decoder_name(key)
-        if name is not None:
-            converted[name] = value.float().reshape(model[name].shape)
-    missing, unexpected = vae.load_state_dict(converted, strict=False)
-    missing = [k for k in missing if not k.startswith("encoder.") and "time_conv" not in k and k != "quant_conv.weight"
-               and k != "quant_conv.bias"]
-    assert not missing, f"decoder weights missing: {missing[:10]}"
-    assert not unexpected, f"unexpected: {unexpected[:10]}"
-    vae.eval()
+    vae = load_vae(args.vae)
 
     g = args.grid
     latent = torch.randn(1, 64, 1, g, g)  # normalized, as the DiT produces

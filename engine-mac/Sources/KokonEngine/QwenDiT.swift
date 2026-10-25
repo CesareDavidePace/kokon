@@ -458,10 +458,11 @@ public final class QwenDiT {
         }
     }
 
-    /// Attention through `Kernels/attention.metal` (default) or MPSGraph (`KOKON_ATTENTION=graph`, the check);
-    /// `KOKON_ATTENTION=half`: the kernel with fp16 operands (faster, 6e-4 of fp64; not the default until decided).
+    /// Attention through `Kernels/attention.metal` or MPSGraph (`KOKON_ATTENTION=graph`, the check). The kernel takes
+    /// fp16 operands by default (Gabriele 10-25: 76.0 s against 79.9 s per 1024² image, the velocity within 6e-4 of
+    /// fp64 instead of 1e-5); `KOKON_ATTENTION=fp32` keeps the fp32 kernel (the accuracy checks).
     let graphAttention = ProcessInfo.processInfo.environment["KOKON_ATTENTION"] == "graph"
-    let flashKernel = ProcessInfo.processInfo.environment["KOKON_ATTENTION"] == "half" ? "flash_attention_half" : "flash_attention"
+    let flashKernel = ProcessInfo.processInfo.environment["KOKON_ATTENTION"] == "fp32" ? "flash_attention" : "flash_attention_half"
     struct FlashParams { var queries, keys, causal, stride: UInt32; var scale: Float; var headBase: UInt32 }
 
     /// Queries `[queries, queries + count)` against keys `[0, keys)`, into the same rows of `attended`. The target's

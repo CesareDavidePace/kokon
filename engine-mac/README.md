@@ -166,8 +166,9 @@ Mac and shape (`~/Library/Caches/kokon-engine-mac/balance.json`), so the first s
 
 **1024² image, M2 Pro, unsloth's DiT + texture-fix VAE (`generate`), 2026-10-25: 79.9 s** (text encoder 2.0 s, step 1
 10.2 s, steps 2–8 8.8–9.1 s, VAE 5.2 s); at the start of this pass 100.2 s; Kokon's sd.cpp ~4.5 min. With
-`KOKON_ATTENTION=half` (fp16 operands in the flash kernel): 76.0 s, the velocity within 6.0e-4 of fp64 at 256²
-(fp32 kernel 1.0e-5); the two 1024² images differ by 0.25 levels on average, 0.18 % of values by more than 8.
+fp16 operands in the flash kernel, **the default since 2026-10-25** (`KOKON_ATTENTION=fp32` for the checks): 76.0 s,
+the velocity within 6.0e-4 of fp64 at 256² (fp32 kernel 1.0e-5; bf16 tools ~1e-2); the two 1024² images differ by 0.25
+levels on average, 0.18 % of values by more than 8. The accuracy figures above are the fp32 kernel's.
 
 **VAE decoder** (`check-vae`, against `tools/reference_vae.py`, diffusers fp32): within 1.1e-5; 1024² in 2.75 s. Its
 graph builds and compiles in 0.3 s, but its first run at a size costs ~3.7 s more, GPU time (~1 s of CPU): it cannot

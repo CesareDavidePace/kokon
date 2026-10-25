@@ -150,9 +150,9 @@ kernel void flash_attention(device const float *q [[buffer(0)]], device const fl
 }
 
 // The same with q, k, v and the probabilities in fp16 (scores, softmax and O accumulated in fp32; K and V tiles of 64
-// keys side by side in 32 KB), `KOKON_ATTENTION=half`: 94 ms against 120 at 1024² (M2 Pro), head 0 within 6.3e-4 of
-// exact, the velocity within 6.0e-4 of fp64 at 256² (fp32 kernel 1.0e-5). Only V and the probabilities in fp16
-// (q·k fp32): 118 ms, 2.2e-4, so not kept. Off until decided.
+// keys side by side in 32 KB), the engine's default (`KOKON_ATTENTION=fp32` for the one above): 94 ms against 120 at
+// 1024² (M2 Pro), head 0 within 6.3e-4 of exact, the velocity within 6.0e-4 of fp64 at 256² (fp32 kernel 1.0e-5).
+// Only V and the probabilities in fp16 (q·k fp32): 118 ms, 2.2e-4, so not kept.
 static inline thread half2 &elementsHalf(thread simdgroup_half8x8 &m) {
     return *(thread half2 *)&m.thread_elements();
 }

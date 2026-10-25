@@ -435,8 +435,10 @@ public final class QwenDiT {
         }
     }
 
-    /// Attention through `Kernels/attention.metal` (default) or MPSGraph (`KOKON_ATTENTION=graph`, the check).
+    /// Attention through `Kernels/attention.metal` (default) or MPSGraph (`KOKON_ATTENTION=graph`, the check);
+    /// `KOKON_ATTENTION=half`: the kernel with fp16 operands (faster, 6e-4 of fp64; not the default until decided).
     let graphAttention = ProcessInfo.processInfo.environment["KOKON_ATTENTION"] == "graph"
+    let flashKernel = ProcessInfo.processInfo.environment["KOKON_ATTENTION"] == "half" ? "flash_attention_half" : "flash_attention"
     struct FlashParams { var queries, keys, causal, stride: UInt32; var scale: Float; var headBase: UInt32 }
 
     /// Queries `[queries, queries + count)` against keys `[0, keys)`, into the same rows of `attended`. The target's
@@ -475,7 +477,7 @@ public final class QwenDiT {
     func flash(queries: Int, count: Int, keys: Int, causal: Bool, heads: Int, commands: MTLCommandBuffer) throws {
         guard heads > 0 else { return }
         let row = QwenDiT.dim * 4
-        try compute("flash_attention", commands: commands) { e in
+        try compute(flashKernel, commands: commands) { e in
             e.setBuffer(arena.buffer, offset: q.offset + queries * row, index: 0)
             e.setBuffer(arena.buffer, offset: k.offset, index: 1)
             e.setBuffer(arena.buffer, offset: v.offset, index: 2)

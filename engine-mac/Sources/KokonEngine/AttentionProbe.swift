@@ -51,10 +51,11 @@ extension Probe {
 
         // The GPU's flash kernel, all heads.
         struct FlashParams { var queries, keys, causal, stride: UInt32; var scale: Float; var headBase: UInt32 }
+        for kernel in ["flash_attention", "flash_attention_half"] {
         let gpu = try best(3) {
             let commands = context.queue.makeCommandBuffer()!
             let e = commands.makeComputeCommandEncoder()!
-            e.setComputePipelineState(try context.pipeline("flash_attention"))
+            e.setComputePipelineState(try context.pipeline(kernel))
             e.setBuffer(qb, offset: offset * stride * 4, index: 0); e.setBuffer(kb, offset: 0, index: 1)
             e.setBuffer(vb, offset: 0, index: 2); e.setBuffer(ob, offset: offset * stride * 4, index: 3)
             var p = FlashParams(queries: UInt32(queries), keys: UInt32(keys), causal: 0, stride: UInt32(stride),
@@ -66,8 +67,9 @@ extension Probe {
             return try MetalContext.finish(commands, "flash")
         }
         let gpuError = error { i, c in f(ob)[(offset + i) * stride + c] }
-        print(String(format: "GPU flash kernel, 32 heads: %.1f ms, %.2f ms/head, %.2f TFLOP/s; head 0 rel %.1e",
+        print(String(format: "GPU %@, 32 heads: %.1f ms, %.2f ms/head, %.2f TFLOP/s; head 0 rel %.1e", kernel,
                      gpu * 1e3, gpu * 1e3 / Double(heads), 4 * Double(queries) * Double(keys) * Double(d) * Double(heads) / gpu / 1e12, gpuError))
+        }
         if ProcessInfo.processInfo.environment["KOKON_PROBE_GPU_ONLY"] == "1" { return }
 
         // The Neural Engine.

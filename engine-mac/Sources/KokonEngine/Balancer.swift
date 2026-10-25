@@ -101,10 +101,11 @@ extension Coexecutor {
         }
 
         if lastTimeline.contains(where: { $0.kind == "attention" }), HeadSplit.fromEnvironment() == nil {
-            let maxAne = aneEnabled && balancer.aneAttention ? QwenDiT.heads : 0
+            // The GPU keeps at least one head (its text segments run there anyway).
+            let maxAne = aneEnabled && balancer.aneAttention ? QwenDiT.heads - Coexecutor.aneHeadGroup : 0
             var best = heads
             for ane in stride(from: 0, through: maxAne, by: Coexecutor.aneHeadGroup) {
-                for cpu in 0...(amxEnabled ? QwenDiT.heads - 1 - ane : 0) where ane + cpu < QwenDiT.heads {
+                for cpu in 0...(amxEnabled ? QwenDiT.heads - 1 - ane : 0) {
                     let h = HeadSplit(gpu: QwenDiT.heads - ane - cpu, ane: ane, cpu: cpu)
                     if balancer.attentionCost(h) < balancer.attentionCost(best) { best = h }
                 }

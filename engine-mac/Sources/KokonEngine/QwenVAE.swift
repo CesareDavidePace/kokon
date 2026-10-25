@@ -35,10 +35,12 @@ public final class QwenVAE {
 
     let context: MetalContext
     let file: SafetensorsFile
-    /// One compiled graph per latent size. Building and compiling the 1024² one takes 0.3 s; its first run then costs
-    /// ~3.7 s more than the next ones (M2 Pro), GPU time with ~1 s of CPU, so the pipeline keeps its VAE between
-    /// images rather than building it beside the DiT. fp16 convolutions (norms and attention in fp32) were wrong
-    /// (2.7e-1: an overflow) and 5.7× slower, MPSGraph trying to move them to the Neural Engine: the VAE stays fp32.
+    /// One compiled graph per latent size, compiled to the end (`waitForCompilationCompletion`): 2.7 s at 1024² (M2
+    /// Pro), mostly the shader compiler, which otherwise ran inside the first decode (6.4 s against 2.75 s; with it
+    /// up front the first decode is 4.15 s). Beside the DiT it slows the steps far more than it saves: the pipeline
+    /// keeps its VAE between images, and an idle engine can prepare ahead. fp16 convolutions (norms and attention in
+    /// fp32) were wrong (2.7e-1: an overflow) and 5.7× slower, MPSGraph trying to move them to the Neural Engine: the
+    /// VAE stays fp32.
     private var executables: [String: MPSGraphExecutable] = [:]
     private let lock = NSLock()
 
@@ -73,8 +75,10 @@ public final class QwenVAE {
             if let e = executables[key] { return e }
             let built = try build(height: h, width: w)
             let shape = MPSGraphShapedType(shape: [1, 64, NSNumber(value: h), NSNumber(value: w)], dataType: .float32)
+            let descriptor = MPSGraphCompilationDescriptor()
+            descriptor.waitForCompilationCompletion = true
             let e = built.graph.compile(with: MPSGraphDevice(mtlDevice: context.device), feeds: [built.input: shape],
-                                        targetTensors: [built.output], targetOperations: nil, compilationDescriptor: nil)
+                                        targetTensors: [built.output], targetOperations: nil, compilationDescriptor: descriptor)
             executables[key] = e
             return e
         }

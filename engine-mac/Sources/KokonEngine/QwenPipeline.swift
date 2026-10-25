@@ -21,8 +21,9 @@ public final class QwenPipeline {
     public var log: (String) -> Void = { print($0) }
     /// Seconds per phase of the last run: encode, steps (each), dit load, vae, total.
     public private(set) var timings: [String: Double] = [:]
-    /// Kept between images: its first decode of a size costs ~3.7 s more than the next ones at 1024² (M2 Pro), GPU
-    /// time (~1 s of CPU), so it cannot hide under the DiT; a long-lived engine pays it once per size.
+    /// Kept between images: its first decode of a size costs ~4 s more than the next ones at 1024² (M2 Pro). Compiled
+    /// beside the DiT (from the second step) it slowed the steps by ~9 s to save 1.9: a long-lived engine pays it
+    /// once per size, or ahead while idle (`QwenVAE.prepare`).
     private var vae: QwenVAE?
 
     public init(encoder: String, dit: String, vae: String) throws {

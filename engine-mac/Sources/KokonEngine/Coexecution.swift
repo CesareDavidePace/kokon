@@ -305,6 +305,19 @@ final class Timeline: @unchecked Sendable {
             if groups[e.kind] == nil { kinds.append(e.kind) }
             groups[e.kind, default: []].append(e)
         }
+        // Between operations: from the last unit's end of one to the GPU's release of the next (the GPU alone:
+        // unpacking, the elementwise kernels, the next weight's unpacking and packing, the waits' latency).
+        var gaps: [String: (count: Int, seconds: Double)] = [:]
+        for (a, b) in zip(entries, entries.dropFirst()) {
+            let end = max(a.gpu, a.shares.amx > 0 ? a.amx.end : 0, a.shares.ane > 0 ? a.ane.end : 0)
+            let key = "\(a.kind) → \(b.kind)"
+            gaps[key] = ((gaps[key]?.count ?? 0) + 1, (gaps[key]?.seconds ?? 0) + max(0, b.released - end))
+        }
+        let between = gaps.sorted { $0.value.seconds > $1.value.seconds }.map {
+            String(format: "    %-26@ ×%3d  %6.2f ms each, %5.2f s", $0.key as NSString, $0.value.count,
+                   $0.value.seconds / Double($0.value.count) * 1e3, $0.value.seconds)
+        }
+        let total = gaps.values.reduce(0) { $0 + $1.seconds }
         return kinds.map { kind in
             let g = groups[kind]!, n = Double(g.count), s = g[0].shares
             func mean(_ f: (Entry) -> Double) -> Double { g.map(f).reduce(0, +) / n * 1e3 }
@@ -313,7 +326,7 @@ final class Timeline: @unchecked Sendable {
                           mean { $0.amx.seconds }, mean { $0.shares.amx > 0 ? $0.amx.start - $0.released : 0 },
                           mean { $0.ane.seconds }, mean { $0.shares.ane > 0 ? $0.ane.start - $0.released : 0 },
                           mean { max($0.walls.gpu, $0.walls.amx, $0.walls.ane) })
-        }.joined(separator: "\n")
+        }.joined(separator: "\n") + String(format: "\n  between operations %.2f s:\n", total) + between.joined(separator: "\n")
     }
 }
 

@@ -24,8 +24,9 @@ Windows, macOS (Apple Silicon, 15+) and Linux (`.deb`, `.rpm`). Installed copies
 - **LoRA is beta** and tested on Windows only; reports from macOS and Linux are welcome
   ([#33](https://github.com/GabrieleLozupone/kokon/issues/33) has a product-shot test).
 - **Macs are slow** compared with NVIDIA cards (about 4 minutes for 1 MP on an M2 Pro 16 GB). Kokon's own Mac
-  engine is in development (`engine-mac/`, text to image only so far: about 68 s for 1 MP on the same Mac); it is
-  not in the app yet.
+  engine is in development on the `macos-optimization` branch (`engine-mac/`, not released): text to image only,
+  about 71–74 s for 1 MP on the same Mac through the app's API, as an experimental switch in Settings → Performance
+  (off by default). Edits, LoRAs, Prompt+ and the upscaler still need the standard engine.
 - The Windows installer is not code-signed: SmartScreen or Smart App Control may block it (README FAQ: Unblock).
 - HEIC photos can't be opened on Linux yet.
 
@@ -37,6 +38,8 @@ Windows, macOS (Apple Silicon, 15+) and Linux (`.deb`, `.rpm`). Installed copies
 - AMD RDNA3/RDNA4 owners who know HIP: compare a ROCm engine with Vulkan
   ([#38](https://github.com/GabrieleLozupone/kokon/issues/38)).
 - Hardware reports: AMD and Intel on Windows and Linux, Linux on NVIDIA outside WSL, Macs other than an M2 Pro.
+  For the Mac engine: `bash engine-mac/tools/bench.sh` on the `macos-optimization` branch prints a report to paste
+  (M1, M3, M4 and M5 Macs are the most useful; see [engine-mac/README.md](../engine-mac/README.md#testing-on-your-mac-bench)).
 - Model proposals that meet the switch rule: [Discussion #35](https://github.com/GabrieleLozupone/kokon/discussions/35).
 
 ## Recently shipped

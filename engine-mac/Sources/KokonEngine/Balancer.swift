@@ -27,11 +27,50 @@ struct Balancer: Codable {
     static let smoothing = 0.5, margin = 0.985
 
     /// Seeds from `time-dit` at 1024² (1856 / 256 / 2048 rows; attention 19 GPU / 13 CPU heads) and `probe-attention`
-    /// (the Neural Engine's heads), M2 Pro, 2026-10-25.
-    init(aneAttention: Bool) {
+    /// (the Neural Engine's heads), M2 Pro, 2026-10-25; on another chip scaled by `Chip.unitScale` (estimates).
+    init(aneAttention: Bool, chip: Chip? = nil) {
         self.aneAttention = aneAttention
         rates = ["4096×4096": Rates(gpu: 149, amx: 28, ane: 172), "4096×12288": Rates(gpu: 48, amx: 9.8, ane: 58),
                  "12288×4096": Rates(gpu: 43.5, amx: 8.8, ane: 57.5), "attention": Rates(gpu: 0.224, amx: 0.142, ane: 0.195)]
+        if let scale = chip?.unitScale {
+            for (kind, r) in rates { rates[kind] = Rates(gpu: r.gpu * scale.gpu, amx: r.amx * scale.amx, ane: r.ane * scale.ane) }
+        }
+    }
+
+    /// The products of one DiT evaluation, by kind: per layer q, k, v, out (4096 × 4096), gate, proj, MLP out.
+    static let evaluationCounts = ["4096×4096": 4 * QwenDiT.layers, "4096×12288": 2 * QwenDiT.layers, "12288×4096": QwenDiT.layers]
+
+    /// The Neural Engine's rows (steps of 256, from 1 024 to `rows` − 512) minimizing the predicted products of an
+    /// evaluation with `counts` products of each kind.
+    func bestAneRows(rows: Int, amx: Bool, counts: [String: Int] = Balancer.evaluationCounts) -> Int? {
+        stride(from: 1024, through: rows - 512, by: 256).min {
+            productCost(rows: rows, ane: $0, amx: amx, counts: counts) < productCost(rows: rows, ane: $1, amx: amx, counts: counts)
+        }
+    }
+
+    /// The AMX's rows of a product of `kind` (a multiple of 64) for `rest` rows shared with the GPU.
+    func amxRows(kind: String, rest: Int) -> Int? {
+        guard let r = rates[kind] else { return nil }
+        // Of the two multiples of 64 around the ideal cut, the one whose slower unit is faster.
+        let ideal = Double(rest) * r.amx / (r.gpu + r.amx)
+        let low = Int(ideal / 64) * 64
+        func time(_ a: Int) -> Double {
+            max(a > 0 ? Double(a) / (amxAt[kind]?[a] ?? r.amx) : 0, Double(rest - a) / r.gpu)
+        }
+        return [low - 64, low, low + 64].filter { $0 >= 0 && $0 <= rest }.min { time($0) < time($1) }
+    }
+
+    /// The cut of the 32 heads whose slowest unit is fastest (the GPU keeps at least one: its text segments run there).
+    func bestHeads(ane: Bool, cpu: Bool) -> HeadSplit {
+        let maxAne = ane && aneAttention ? QwenDiT.heads - Coexecutor.aneHeadGroup : 0
+        var best = HeadSplit(gpu: QwenDiT.heads, ane: 0, cpu: 0)
+        for a in stride(from: 0, through: maxAne, by: Coexecutor.aneHeadGroup) {
+            for c in 0...(cpu ? QwenDiT.heads - 1 - a : 0) {
+                let h = HeadSplit(gpu: QwenDiT.heads - a - c, ane: a, cpu: c)
+                if attentionCost(h) < attentionCost(best) { best = h }
+            }
+        }
+        return best
     }
 
     /// Folds an evaluation's timeline into the rates: per kind, each unit's rows over its seconds.
@@ -87,32 +126,16 @@ extension Coexecutor {
         if !counts.isEmpty {
             if aneEnabled {
                 func cost(_ e: Int) -> Double { balancer.productCost(rows: rows, ane: e, amx: amxEnabled, counts: counts) }
-                let best = stride(from: 1024, through: rows - 512, by: 256).min { cost($0) < cost($1) } ?? aneRows
+                let best = balancer.bestAneRows(rows: rows, amx: amxEnabled, counts: counts) ?? aneRows
                 if cost(best) < cost(aneRows) * Balancer.margin { try setAneRows(best) }
             }
-            for kind in counts.keys {
-                guard amxEnabled, let r = balancer.rates[kind] else { continue }
-                // Of the two multiples of 64 around the ideal cut, the one whose slower unit is faster.
-                let rest = rows - aneRows
-                let ideal = Double(rest) * r.amx / (r.gpu + r.amx)
-                let low = Int(ideal / 64) * 64
-                func time(_ a: Int) -> Double {
-                    max(a > 0 ? Double(a) / (balancer.amxAt[kind]?[a] ?? r.amx) : 0, Double(rest - a) / r.gpu)
-                }
-                amxRows[kind] = [low - 64, low, low + 64].filter { $0 >= 0 }.min { time($0) < time($1) }!
+            for kind in counts.keys where amxEnabled {
+                if let a = balancer.amxRows(kind: kind, rest: rows - aneRows) { amxRows[kind] = a }
             }
         }
 
         if lastTimeline.contains(where: { $0.kind == "attention" }), HeadSplit.fromEnvironment() == nil {
-            // The GPU keeps at least one head (its text segments run there anyway).
-            let maxAne = aneEnabled && balancer.aneAttention ? QwenDiT.heads - Coexecutor.aneHeadGroup : 0
-            var best = heads
-            for ane in stride(from: 0, through: maxAne, by: Coexecutor.aneHeadGroup) {
-                for cpu in 0...(amxEnabled ? QwenDiT.heads - 1 - ane : 0) {
-                    let h = HeadSplit(gpu: QwenDiT.heads - ane - cpu, ane: ane, cpu: cpu)
-                    if balancer.attentionCost(h) < balancer.attentionCost(best) { best = h }
-                }
-            }
+            let best = balancer.bestHeads(ane: aneEnabled, cpu: amxEnabled)
             if balancer.attentionCost(best) < balancer.attentionCost(heads) * Balancer.margin {
                 heads = best
                 try prepareAttention(queries: attentionShape.queries, keys: attentionShape.keys)
@@ -146,14 +169,14 @@ extension Coexecutor {
     }
 
     var memoryKey: String {
-        "\(context.device.name) rows \(rows) ane \(aneEnabled) amx \(amxEnabled) ane-attention \(balancer.aneAttention)"
+        "\(context.device.name) rows \(rows) ane \(aneEnabled)\(aneInt8 ? aneHalfRows ? " w8" : " int8" : "") amx \(amxEnabled) ane-attention \(balancer.aneAttention)"
     }
 
     /// Takes the remembered shares for this Mac and shape, if any.
     func recall() throws {
         guard let m = Memory.all()[memoryKey], m.heads.count == 3, m.heads.reduce(0, +) == QwenDiT.heads else { return }
         balancer = m.balancer
-        amxRows = m.amxRows
+        amxRows = m.amxRows.filter { Balancer.evaluationCounts[$0.key] != nil }   // kinds this engine still runs
         if HeadSplit.fromEnvironment() == nil { heads = HeadSplit(gpu: m.heads[0], ane: m.heads[1], cpu: m.heads[2]) }
         if aneEnabled, m.aneRows >= 1024, m.aneRows <= rows - 512 { try setAneRows(m.aneRows) }
     }

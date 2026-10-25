@@ -21,17 +21,6 @@ struct HeadSplit: CustomStringConvertible {
     var gpu: Int, ane: Int, cpu: Int
     var description: String { "GPU \(gpu) / ANE \(ane) / CPU \(cpu) heads" }
 
-    /// From `time-dit` and `probe-attention` on the M2 Pro (ms per head at 1024² beside the others: GPU 4.5, CPU 7.0;
-    /// the Neural Engine 6.0 and the GPU 6.3 when it runs), the Neural Engine in groups of 4. The balancing loop moves it.
-    static func `default`(ane: Bool, cpu: Bool) -> HeadSplit {
-        switch (ane, cpu) {
-        case (true, true): return HeadSplit(gpu: 14, ane: 8, cpu: 10)
-        case (true, false): return HeadSplit(gpu: 16, ane: 16, cpu: 0)
-        case (false, true): return HeadSplit(gpu: 19, ane: 0, cpu: 13)
-        case (false, false): return HeadSplit(gpu: QwenDiT.heads, ane: 0, cpu: 0)
-        }
-    }
-
     /// `KOKON_HEADS=gpu,ane,cpu` (the Neural Engine's a multiple of 4, the three summing to 32).
     static func fromEnvironment() -> HeadSplit? {
         guard let text = ProcessInfo.processInfo.environment["KOKON_HEADS"] else { return nil }

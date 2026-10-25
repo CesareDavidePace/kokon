@@ -21,6 +21,11 @@ kokon-engine-mac: Kokon's Apple Silicon engine (in development)
                                            text to image, Turbo's 8 steps (default 1024x1024, seed 42, out.png)
   serve --diffusion-model <dit.gguf> --vae <vae.safetensors> --llm <encoder.gguf> [--listen-ip 127.0.0.1] [--listen-port 1234]
                                            the engine as a server speaking sd-server's /sdcpp/v1 API (text to image)
+  bench [--quick] [--out report.md] [--encoder P --dit P --vae P]
+                                           a few minutes: this Mac's paths, speed at 1024², accuracy against the fp32 path;
+                                           prints a report to paste in a GitHub issue (Kokon's model files by default)
+  check-ane8                               the M3/M4 path (int8 Neural Engine program) against the fp16 one
+  check-na                                 the M5 path (Metal 4 tensor operations) against MPS on one product
   probe                                    this Mac's matrix throughput: GPU, AMX, Neural Engine, together
   probe-attention                          the target's attention at 1024² on the GPU, the Neural Engine, the CPU
 """
@@ -126,6 +131,38 @@ do {
         let server = try HTTPServer(host: ip, port: port) { engine.handle($0) }
         print("[INFO   ] engine-mac - listening on: http://\(ip):\(server.port)")
         server.run()
+    case "bench":
+        // bench [--encoder P] [--dit P] [--vae P] [--quick] [--out report.md]; Kokon's files by default.
+        let models = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/KokonData/sdcpp/models/qwen21").path
+        func existing(_ names: [String]) -> String { names.map { models + "/" + $0 }.first { FileManager.default.fileExists(atPath: $0) } ?? models + "/" + names[0] }
+        var encoder = existing(["Qwen3VL-8B-Instruct-Q4_K_M.gguf"])
+        var dit = existing(["qwen-image-2.1-turbo-Q4_K_M.gguf", "qwen-image-2.1-turbo-Q4_K.gguf"])
+        var vae = existing(["texture_fix_vae_for_qwen_image_2.1_bf16.safetensors", "qwen_image_2.1_vae_bf16.safetensors"])
+        var (quick, out): (Bool, String?) = (false, nil)
+        var options = arguments.dropFirst().makeIterator()
+        while let option = options.next() {
+            switch option {
+            case "--quick": quick = true
+            case "--encoder": encoder = options.next() ?? encoder
+            case "--dit": dit = options.next() ?? dit
+            case "--vae": vae = options.next() ?? vae
+            case "--out": out = options.next()
+            default: fail("unknown option \(option)\n\n" + usage)
+            }
+        }
+        for path in [encoder, dit, vae] where !FileManager.default.fileExists(atPath: path) {
+            fail("\(path) not found: install Kokon's models, or pass --encoder, --dit and --vae")
+        }
+        try Bench.run(encoder: encoder, dit: dit, vae: vae, quick: quick, out: out)
+    case "bench-run":
+        guard arguments.count >= 6 else { fail(usage) }
+        try Bench.child(mode: arguments[1], encoder: arguments[2], dit: arguments[3], vae: arguments[4], prefix: arguments[5],
+                        quick: arguments.contains("--quick"))
+    case "check-ane8":
+        try Checks.aneInt8()
+    case "check-na":
+        try Checks.neuralAccelerators()
     case "probe":
         try Probe.run()
     case "probe-attention":

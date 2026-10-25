@@ -15,7 +15,16 @@ swift test                                   # no model needed
 .build/release/kokon-engine-mac check-dequant <file.gguf> [tensor...]
 .build/release/kokon-engine-mac generate <encoder.gguf> <dit.gguf> <vae.safetensors> "a red fox in the snow" \
     [--size 1024x1024] [--seed 42] [--out out.png]
+.build/release/kokon-engine-mac serve --diffusion-model <dit.gguf> --vae <vae.safetensors> --llm <encoder.gguf> \
+    [--listen-port 1234]                     # sd-server's /sdcpp/v1 API, text to image
+.build/release/kokon-engine-mac bench        # a few minutes: speed and accuracy of this Mac's paths, a report
+.build/release/kokon-engine-mac check-na     # the Metal 4 matrix product against MPS
+.build/release/kokon-engine-mac check-ane8   # the int8 Neural Engine programs against the fp16 one
 ```
+
+In the app: `bash tools/install-dev.sh` puts the build where Kokon looks for it, then Settings → Performance →
+"Kokon's Mac engine (experimental)". Off by default; sd.cpp stays the default, the fallback, and the engine on
+Windows and Linux.
 
 ## What is here
 
@@ -37,7 +46,11 @@ swift test                                   # no model needed
 | `QwenVAE.swift`, `Safetensors.swift` | the VAE decoder as one MPSGraph, from Kokon's VAE file (Wan 2.2 names) |
 | `QwenTokenizer.swift` | Qwen's byte-level BPE tokenizer, read from the encoder GGUF's metadata |
 | `QwenTextEncoder.swift`, `Kernels/text.metal` | the text encoder: Qwen3-VL-8B's text decoder on the GPU, diffusers' prompt template |
-| `QwenPipeline.swift` | text to image: noise, Turbo's 8 flow-Euler steps (`planner::TURBO_SIGMAS`), VAE, PNG |
+| `QwenPipeline.swift` | text to image: noise, Turbo's 8 flow-Euler steps (`planner::TURBO_SIGMAS`), VAE, PNG; models kept loaded for the server |
+| `EngineServer.swift`, `HTTPServer.swift` | `serve`: sd-server's `/sdcpp/v1` API (capabilities, img_gen, jobs, cancel) and its log lines |
+| `Chip.swift` | this Mac's chip, GPU family, cores and memory; each unit's estimated speed against the M2 Pro's |
+| `NeuralAccelerators.swift`, `Kernels/metal4/na_matmul.metal` | the GPU's rows of a product on Metal 4 tensor operations (the M5's neural accelerators) |
+| `Bench.swift` | `bench`: the report testers paste in GitHub |
 
 Tests check the CPU and GPU unpacking against gguf-py's values (`tools/make_quant_fixtures.py` writes the
 fixture), and the sequence layout against diffusers' rules worked out by hand.
@@ -179,7 +192,9 @@ inputs 2–2.7×). The three units share one limit when they run together (memor
 an evaluation only 8.54 → 8.3–8.5 s), so halving the bytes is what pays. One evaluation at 1024²: **8.54 → 7.45–7.55
 s** (fp16 weights alone 8.0–8.1). The velocity at 896² against diffusers fp32 (old Q4_K file, `dit-t2i-896`): 7.0e-4,
 against 5.1e-4 before (fp16 weights alone 5.7e-4; the Neural Engine's rows were already fp16); 256² end to end
-(GPU only, fp16 weights and attention) against fp64: image within 2.4e-3, at most 13 levels off (fp32 path 7.6e-5).
+(GPU only, fp16 weights and attention) against fp64: image within 2.4e-3, at most 13 levels off (fp32 path 7.6e-5);
+re-measured at f4a8334 and after this pass (2026-10-25): 6.9e-3, at most 35 levels, the fp32 path 9.6e-5 (914 values
+off by 1), the same at both.
 The 1024² image against the previous precision: 0.05 levels on average, at most 6. **1024² image: 69.8 s** (text
 encoder 2.0 s, step 1 8.4 s, steps 2–8 7.4–8.0 s, VAE 6.0 s).
 
@@ -227,6 +242,60 @@ steps 2–8 7.3–7.7 s, VAE 5.0–5.3 s with its first run at the size; 79.9 s 
 fp16 attention). `MTLBinaryArchive` was not added: the engine's kernels compile from source in 0.1 s at start (macOS
 caches compiled shaders), and the first image's real extra costs, the VAE's first run at a size and the Neural
 Engine's programs, are not pipelines an archive holds. Only an M2 Pro has been measured.
+
+## The engine as a server (`serve`)
+
+`kokon-engine-mac serve` answers sd-server's `/sdcpp/v1` API (capabilities, img_gen, jobs/{id}, cancel), so
+qls-core, the app, remote access and MCP use it as they use sd-server; it prints the log lines qls-core's
+`ProgressParser` reads. Text to image only for now: reference images, masks, LoRAs and second passes are refused
+with 400 (qls-core says so before submitting), upscaling falls back to Lanczos, Prompt+ is off. A running image
+cancels within a DiT layer (sd-server answers 409 and qls-core restarts it). A new prompt length rebuilds the DiT's
+working memory in ~0.5 s.
+
+What stays loaded between images depends on the Mac (`QwenPipeline.keep*`): from 32 GB everything; below, only the
+files' mappings, since on the M2 Pro 16 GB the compiled VAE keeps 7–8 GB of GPU memory after a 1024² decode. With
+everything kept there the second image took 121–129 s (pages evicted and read again); now, through the API
+(`tools/api_check.py`, 2026-10-25): **first 1024² image 71.1 s, the next ones 73.7 s**, 1.1 GB of footprint while idle,
+peak 9.6 GB during the VAE's decode (the one-shot CLI peaks the same; a tiled decode is the next step for 16 GB Macs).
+
+## Per-chip paths
+
+Selected at run time from the GPU family and the chip (`Chip.swift`), each with the M2 path as its fallback and a
+correctness test that runs on any Mac (`PerChipTests`). Only the M2 Pro has measured them; `bench` measures the rest.
+
+- **GPU products on Metal 4 tensor operations** (`na_matmul`, MetalPerformancePrimitives' `matmul2d`; on the M5 they
+  run on the GPU's neural accelerators, before it on the shader cores). Its source compiles at run time on macOS 27,
+  so it is on wherever Metal 4 runs (`KOKON_NA=0` off). M2 Pro: 6.3 TFLOP/s against MPS's 5.6 at 1536 × 4096 × 4096,
+  bit for bit the same result (`check-na`); per evaluation at 1024², 3 alternated rounds: 7.57 → 7.48 s.
+- **int8 products on the Neural Engine** (libnnc's M3/M4 path; `KOKON_ANE_INT8=w8` int8 weights, `=1` int8 weights and
+  rows). Opt-in on every chip, as their error does not depend on the chip. M2 Pro: one 1792 × 4096 × 4096 tile 10.1 ms
+  in fp16, 8.3 ms with int8 weights, 7.0 ms in int8 (`check-ane8`); per evaluation 7.42 → 7.20 / 7.00 s; but the
+  velocity at 896² goes from 7.6e-4 to 1.1e-2 / 4.1e-2 (one int8 scale per 4 096 weights where Q4_K has one per 32;
+  activation rows with outliers). Finer weight scales are the way to try next.
+- **Attention reading K and V straight from memory** (`flash_attention_direct`) on Apple9+ GPUs (M3 and later), as
+  MFA's tables prefer there (`KOKON_ATTENTION_DIRECT=0` off); 142 ms on the M2 Pro against 91, unmeasured on an M3+.
+- **Starting shares per chip**: the balancer's M2 Pro rates scaled by the chip's estimated units (GPU cores × clock,
+  the Neural Engine's published TOPS, performance cores; `Chip.unitScale`), so the first image starts near balanced;
+  the loop measures the real rates from the first evaluation on.
+
+## Testing on your Mac (`bench`)
+
+For anyone with an Apple Silicon Mac, to measure these paths on hardware we do not have (M1, M3, M4, M5, base chips):
+
+```bash
+git clone https://github.com/GabrieleLozupone/kokon.git && cd kokon && git checkout macos-optimization
+bash engine-mac/tools/bench.sh            # ~10 min; --quick: one image per run
+```
+
+It needs the Xcode command line tools and Kokon's model files (Kokon set up once, or `--encoder`, `--dit`, `--vae`),
+and writes `kokon-bench-report.md`: chip, GPU family and cores, memory, macOS, the paths selected, the units' shares,
+time per step and per image at 1024² (image 1 with the loading, image 2 with the engine already running), peak memory, and accuracy at
+512² against the engine's own fp32 GPU path on the same Mac (the first step's velocity and the image, in 8-bit
+levels), then the same with each chip-specific path off (and the int8 path on, on M3 and later). Paste it in the
+GitHub discussion. A row with a path off that is faster than the default means that path should not be on for that
+chip. Close other apps and keep the Mac plugged in: the units share one power and memory limit.
+
+## Tried and not kept, the VAE, credits
 
 MFA's GEMM (libnnc, 48 × 48 blocks, 2 × 2 SIMD groups) was tried against MPS: its async copies are an AIR intrinsic
 that macOS 27's run-time compiler refuses (libnnc ships prebuilt metallibs for it), and without them it ran at

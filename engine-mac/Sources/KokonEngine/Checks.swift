@@ -1,5 +1,7 @@
 import Foundation
 import Metal
+import MetalPerformanceShaders
+import CoreVideo
 
 /// Developer checks on real files, printed (the unit tests use small synthetic files instead).
 public enum Checks {
@@ -221,5 +223,132 @@ extension Checks {
                              Double(DispatchTime.now().uptimeNanoseconds - started) * 1e-9, after.user - before.user, after.system - before.system))
             }
         }
+    }
+}
+
+extension Checks {
+    /// `na_matmul` (Metal 4 tensor operations, the M5's neural accelerators) against MPS on one of the DiT's products,
+    /// fp16 operands, fp32 results: the largest difference and both timings.
+    public static func neuralAccelerators(m: Int = 1536, k: Int = 4096, n: Int = 4096) throws {
+        let context = try MetalContext()
+        print(Chip.current)
+        guard let na = NeuralAccelerators.make(device: context.device) else {
+            print("na_matmul unavailable: \(NeuralAccelerators.unavailable ?? "?")")
+            return
+        }
+        let a = try context.scratch(m * k * 2, label: "A"), b = try context.scratch(k * n * 2, label: "B")
+        let c1 = try context.scratch(m * n * 4, label: "C na"), c2 = try context.scratch(m * n * 4, label: "C mps")
+        var seed: UInt64 = 7
+        for (buffer, count) in [(a, m * k), (b, k * n)] {
+            let p = buffer.contents().assumingMemoryBound(to: Float16.self)
+            for i in 0..<count {
+                seed = seed &* 6364136223846793005 &+ 1442695040888963407
+                p[i] = Float16((Float(seed >> 40) / Float(1 << 24) - 0.5) * (buffer === a ? 4 : 0.05))
+            }
+        }
+        let product = MPSMatrixMultiplication(device: context.device, transposeLeft: false, transposeRight: false,
+                                              resultRows: m, resultColumns: n, interiorColumns: k, alpha: 1, beta: 0)
+        func run(_ body: (MTLCommandBuffer) throws -> Void) throws -> Double {
+            var best = Double.infinity
+            for _ in 0..<5 {
+                let commands = context.queue.makeCommandBuffer()!
+                try body(commands)
+                best = min(best, try MetalContext.finish(commands, "check-na"))
+            }
+            return best
+        }
+        let tNA = try run { try na.encode(a: (a, 0), b: (b, 0), c: (c1, 0), m: m, n: n, k: k, commands: $0) }
+        let tMPS = try run {
+            product.encode(commandBuffer: $0,
+                           leftMatrix: MPSMatrix(buffer: a, descriptor: MPSMatrixDescriptor(rows: m, columns: k, rowBytes: k * 2, dataType: .float16)),
+                           rightMatrix: MPSMatrix(buffer: b, descriptor: MPSMatrixDescriptor(rows: k, columns: n, rowBytes: n * 2, dataType: .float16)),
+                           resultMatrix: MPSMatrix(buffer: c2, descriptor: MPSMatrixDescriptor(rows: m, columns: n, rowBytes: n * 4, dataType: .float32)))
+        }
+        let x = c1.contents().assumingMemoryBound(to: Float.self), y = c2.contents().assumingMemoryBound(to: Float.self)
+        var diff = 0.0, norm = 0.0
+        for i in 0..<(m * n) { diff += Double(x[i] - y[i]) * Double(x[i] - y[i]); norm += Double(y[i]) * Double(y[i]) }
+        let flops = 2.0 * Double(m) * Double(n) * Double(k)
+        print(String(format: "%d×%d×%d: na_matmul %.2f ms (%.1f TFLOP/s), MPS %.2f ms (%.1f TFLOP/s), relative difference %.2e",
+                     m, k, n, tNA * 1e3, flops / tNA / 1e12, tMPS * 1e3, flops / tMPS / 1e12, (diff / norm).squareRoot()))
+    }
+}
+
+extension Checks {
+    /// The int8 Neural Engine program (`NeuralEngineProduct.int8Program`) against the fp16 one on a tile of the DiT's
+    /// products: time per run and the error of each against the exact product of the same fp32 operands.
+    public static func aneInt8(rows: Int = 1792, k: Int = 4096, n: Int = 4096) throws {
+        print(Chip.current)
+        var seed: UInt64 = 5
+        func random(_ count: Int, _ scale: Float) -> [Float] {
+            (0..<count).map { _ in
+                seed = seed &* 6364136223846793005 &+ 1442695040888963407
+                let u = Float(seed >> 40) / Float(1 << 24) - 0.5
+                return u * u * u * 8 * scale   // heavier tails than uniform, as activations
+            }
+        }
+        let a = random(rows * k, 4), w = random(k * n, 0.05)
+        // Exact product of a few rows (all columns) in double.
+        let check = Array(stride(from: 0, to: rows, by: rows / 16))
+        var exact = [Double](repeating: 0, count: check.count * n)
+        for (r, i) in check.enumerated() {
+            for l in 0..<k { let x = Double(a[i * k + l]); if x != 0 { for j in 0..<n { exact[r * n + j] += x * Double(w[l * n + j]) } } }
+        }
+        func error(_ value: (Int, Int) -> Double) -> Double {
+            var d = 0.0, s = 0.0
+            for (r, i) in check.enumerated() { for j in 0..<n { let e = exact[r * n + j]; d += (value(i, j) - e) * (value(i, j) - e); s += e * e } }
+            return (d / s).squareRoot()
+        }
+        func time(_ p: NeuralEngineProduct) throws -> Double {
+            try p.run()
+            var best = Double.infinity
+            for _ in 0..<10 {
+                let t = DispatchTime.now().uptimeNanoseconds
+                try p.run()
+                best = min(best, Double(DispatchTime.now().uptimeNanoseconds - t) * 1e-9)
+            }
+            return best
+        }
+        let flops = 2.0 * Double(rows) * Double(k) * Double(n)
+        // fp16, lifted as the engine does (powers of two: column max of W into [1, 2), rows bounded).
+        let fp16 = try NeuralEngineProduct(rows: rows, k: k, n: n)
+        let columnPeak = (0..<n).map { j in (0..<k).reduce(Float(0)) { max($0, abs(w[$1 * n + j])) } }
+        let lambda = columnPeak.map { $0 > 0 ? exp2(-floor(log2($0))) : 1 }
+        let sigma = (0..<rows).map { i in exp2(floor(log2(32768 / max(1e-30, (0..<k).reduce(Float(0)) { max($0, abs(a[i * k + $1]) ) } * Float(k) * 2)))) }
+        fp16.write(fp16.x) { p in for i in 0..<rows { for l in 0..<k { p[i * k + l] = Float16(a[i * k + l] * sigma[i]) } } }
+        fp16.write(fp16.w) { p in for l in 0..<k { for j in 0..<n { p[l * n + j] = Float16(w[l * n + j] * lambda[j]) } } }
+        let t16 = try time(fp16)
+        var y16 = [Float](repeating: 0, count: rows * n)
+        fp16.read { y in for i in 0..<(rows * n) { y16[i] = Float(y[i]) } }
+        let e16 = error { i, j in Double(y16[i * n + j]) / Double(sigma[i] * lambda[j]) }
+        print(String(format: "fp16 program %d×%d×%d: %.2f ms (%.1f TFLOP/s), relative error %.2e", rows, k, n, t16 * 1e3, flops / t16 / 1e12, e16))
+        // int8: rows and columns quantized by their absmax / 127.
+        let int8 = try NeuralEngineProduct(rows: rows, k: k, n: n, int8: true)
+        let rowScale = (0..<rows).map { i in max(1e-30, (0..<k).reduce(Float(0)) { max($0, abs(a[i * k + $1])) }) / 127 }
+        let columnScale = columnPeak.map { max(1e-30, $0) / 127 }
+        func q(_ v: Float) -> Int8 { Int8(max(-127, min(127, (v).rounded(.toNearestOrEven)))) }
+        for (surface, fill) in [(int8.x, { (p: UnsafeMutablePointer<Int8>) in for i in 0..<rows { for l in 0..<k { p[i * k + l] = q(a[i * k + l] / rowScale[i]) } } }),
+                                (int8.w, { (p: UnsafeMutablePointer<Int8>) in for l in 0..<k { for j in 0..<n { p[l * n + j] = q(w[l * n + j] / columnScale[j]) } } })] {
+            CVPixelBufferLockBaseAddress(surface, [])
+            fill(CVPixelBufferGetBaseAddress(surface)!.assumingMemoryBound(to: Int8.self))
+            CVPixelBufferUnlockBaseAddress(surface, [])
+        }
+        let t8 = try time(int8)
+        var y8 = [Float](repeating: 0, count: rows * n)
+        int8.read { y in for i in 0..<(rows * n) { y8[i] = Float(y[i]) } }
+        let e8 = error { i, j in Double(y8[i * n + j]) * Double(k) * Double(rowScale[i]) * Double(columnScale[j]) }
+        print(String(format: "int8 program %d×%d×%d: %.2f ms (%.1f TOP/s), relative error %.2e", rows, k, n, t8 * 1e3, flops / t8 / 1e12, e8))
+        // int8 weights, fp16 activations: x lifted so |y| = |Σ x w_q| / K <= max|x| · 127 stays under 2^15.
+        let w8 = try NeuralEngineProduct(rows: rows, k: k, n: n, int8: true, halfActivations: true)
+        let lift = (0..<rows).map { i in exp2(floor(log2(32768 / 127 / max(1e-30, (0..<k).reduce(Float(0)) { max($0, abs(a[i * k + $1])) })))) }
+        w8.write(w8.x) { p in for i in 0..<rows { for l in 0..<k { p[i * k + l] = Float16(a[i * k + l] * lift[i]) } } }
+        CVPixelBufferLockBaseAddress(w8.w, [])
+        let pw = CVPixelBufferGetBaseAddress(w8.w)!.assumingMemoryBound(to: Int8.self)
+        for l in 0..<k { for j in 0..<n { pw[l * n + j] = q(w[l * n + j] / columnScale[j]) } }
+        CVPixelBufferUnlockBaseAddress(w8.w, [])
+        let tw = try time(w8)
+        var yw = [Float](repeating: 0, count: rows * n)
+        w8.read { y in for i in 0..<(rows * n) { yw[i] = Float(y[i]) } }
+        let ew = error { i, j in Double(yw[i * n + j]) * Double(k) * Double(columnScale[j]) / Double(lift[i]) }
+        print(String(format: "int8 weights, fp16 activations %d×%d×%d: %.2f ms (%.1f TFLOP/s), relative error %.2e", rows, k, n, tw * 1e3, flops / tw / 1e12, ew))
     }
 }

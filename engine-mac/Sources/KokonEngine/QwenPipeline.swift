@@ -57,8 +57,8 @@ public final class QwenPipeline {
     /// What the server reports while an image runs.
     public enum Event { case encoded(tokens: Int, seconds: Double), step(Int, of: Int, seconds: Double), decoding }
     public var events: ((Event) -> Void)?
-    /// The co-executor's shares for the next evaluation of the kept DiT (`keepModels`).
-    public var shares: String? { dit?.coexecutor?.shares }
+    /// The co-executor's shares after the last image's steps (nil: the GPU alone).
+    public private(set) var shares: String?
 
     public init(encoder: String, dit: String, vae: String) throws {
         encoderPath = encoder
@@ -148,6 +148,7 @@ public final class QwenPipeline {
                 events?(.step(i + 1, of: sigmas.count - 1, seconds: timings["step \(i + 1)"]!))
                 step?(i, x)
             }
+            shares = dit.coexecutor?.shares
         }()
 
         // 4. The image.

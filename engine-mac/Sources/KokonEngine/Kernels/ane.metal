@@ -162,3 +162,119 @@ kernel void ane_heads_unpack(device const half *src [[buffer(0)]], device float 
     if (c >= 128 || r >= s.valid || h >= s.heads) return;
     dst[(ulong)(s.row0 + r) * s.stride + s.column0 + h * 128 + c] = float(src[((ulong)h * s.rows + r) * 128 + c]);
 }
+
+// The int8 products (`NeuralEngineProduct.int8Program`, for the Neural Engines with an int8 path): W quantized per
+// column, s_j = max_k |W_kj| / 127; A per row, t_i = max_k |A_ik| / 127; the program returns y = (A_q · W_q) / K per
+// 4 096 × 4 096 tile; C_ij = K · t_i · s_j · Σ_tiles y_ij in fp32. Following libnnc's row-wise int8 GEMM (ccv, BSD-3).
+
+static inline char quantize8(float v, float scale) { return char(clamp(rint(v / scale), -127.0f, 127.0f)); }
+
+// s_j per column of W [k, n] (as ane_columns: 64 columns, 16 row slices each).
+template <typename T>
+kernel void ane8_columns(device const T *w [[buffer(0)]], device float *scale [[buffer(1)]],
+                         constant AneShape &s [[buffer(2)]],
+                         uint2 tg [[threadgroup_position_in_grid]], uint2 t [[thread_position_in_threadgroup]]) {
+    threadgroup float peaks[16][64];
+    uint j = tg.x * 64 + t.x;
+    float peak = 0;
+    if (j < s.n) {
+        for (uint r = t.y; r < s.k; r += 16) peak = max(peak, fabs(float(w[(ulong)r * s.n + j])));
+    }
+    peaks[t.y][t.x] = peak;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (t.y == 0 && j < s.n) {
+        for (uint i = 1; i < 16; i++) peak = max(peak, peaks[i][t.x]);
+        scale[j] = (peak > 0 && isfinite(peak)) ? peak / 127.0f : 1.0f;
+    }
+}
+template [[host_name("ane8_columns")]] kernel void ane8_columns<float>(device const float *, device float *, constant AneShape &, uint2, uint2);
+template [[host_name("ane8_columns_h")]] kernel void ane8_columns<half>(device const half *, device float *, constant AneShape &, uint2, uint2);
+
+// One weight tile, quantized, into its surface [kPart, nPart] int8.
+template <typename T>
+kernel void ane8_pack_weight(device const T *w [[buffer(0)]], device const float *scale [[buffer(1)]],
+                             device char *tile [[buffer(2)]], constant AneShape &s [[buffer(3)]],
+                             uint2 g [[thread_position_in_grid]]) {
+    uint jj = g.x, kk = g.y;
+    if (jj >= s.nPart || kk >= s.kPart) return;
+    uint j = s.n0 + jj;
+    tile[(ulong)kk * s.nPart + jj] = quantize8(float(w[(ulong)(s.k0 + kk) * s.n + j]), scale[j]);
+}
+template [[host_name("ane8_pack_weight")]] kernel void ane8_pack_weight<float>(device const float *, device const float *, device char *, constant AneShape &, uint2);
+template [[host_name("ane8_pack_weight_h")]] kernel void ane8_pack_weight<half>(device const half *, device const float *, device char *, constant AneShape &, uint2);
+
+// t_i of each Neural Engine row. One threadgroup of 256 per row.
+kernel void ane8_row_scales(device const float *a [[buffer(0)]], device float *scale [[buffer(1)]],
+                            constant AneShape &s [[buffer(2)]],
+                            uint i [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]]) {
+    threadgroup float shared[8];
+    device const float *row = a + (ulong)(s.row0 + i) * s.k;
+    float m = 0;
+    for (uint c = tid; c < s.k; c += 256) m = max(m, fabs(row[c]));
+    m = simd_max(m);
+    if (tid % 32 == 0) shared[tid / 32] = m;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (tid == 0) {
+        float peak = 0;
+        for (uint q = 0; q < 8; q++) peak = max(peak, shared[q]);
+        scale[i] = (peak > 0 && isfinite(peak)) ? peak / 127.0f : 1.0f;
+    }
+}
+
+// The Neural Engine's rows of A, quantized, into a tile's input surface [rows, kPart] int8.
+kernel void ane8_pack_rows(device const float *a [[buffer(0)]], device const float *scale [[buffer(1)]],
+                           device char *x [[buffer(2)]], constant AneShape &s [[buffer(3)]],
+                           uint2 g [[thread_position_in_grid]]) {
+    uint kk = g.x, i = g.y;
+    if (kk >= s.kPart || i >= s.rows) return;
+    x[(ulong)i * s.kPart + kk] = quantize8(a[(ulong)(s.row0 + i) * s.k + s.k0 + kk], scale[i]);
+}
+
+// C rows from the int8 tiles' outputs of one N range (up to 3 along K), scaled back.
+kernel void ane8_unpack(device const half *y0 [[buffer(0)]], device const half *y1 [[buffer(1)]],
+                        device const half *y2 [[buffer(2)]], device const float *columnScale [[buffer(3)]],
+                        device const float *rowScale [[buffer(4)]], device float *c [[buffer(5)]],
+                        constant AneShape &s [[buffer(6)]], uint2 g [[thread_position_in_grid]]) {
+    uint jj = g.x, i = g.y;
+    if (jj >= s.nPart || i >= s.rows) return;
+    ulong at = (ulong)i * s.nPart + jj;
+    float sum = float(y0[at]);
+    if (s.kParts > 1) sum += float(y1[at]);
+    if (s.kParts > 2) sum += float(y2[at]);
+    uint j = s.n0 + jj;
+    c[(ulong)(s.row0 + i) * s.n + j] = sum * float(s.kPart) * rowScale[i] * columnScale[j];
+}
+
+// int8 weights with fp16 rows (W8A16): the rows lifted by σ_i = 2^floor(log2(2^15 / (127 max_k |A_ik|))), since
+// |y| = |Σ_k x_k w_q,kj| / K <= max |x| · 127; then packed by `ane_pack_rows`; C_ij = K s_j Σ_tiles y_ij / σ_i.
+kernel void ane8w_row_scales(device const float *a [[buffer(0)]], device float *sigma [[buffer(1)]],
+                             constant AneShape &s [[buffer(2)]],
+                             uint i [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]]) {
+    threadgroup float shared[8];
+    device const float *row = a + (ulong)(s.row0 + i) * s.k;
+    float m = 0;
+    for (uint c = tid; c < s.k; c += 256) m = max(m, fabs(row[c]));
+    m = simd_max(m);
+    if (tid % 32 == 0) shared[tid / 32] = m;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (tid == 0) {
+        float peak = 0;
+        for (uint q = 0; q < 8; q++) peak = max(peak, shared[q]);
+        float bound = peak * 127.0f;
+        sigma[i] = (bound > 0 && isfinite(bound)) ? exp2(floor(log2(32768.0f / bound))) : 1.0f;
+    }
+}
+
+kernel void ane8w_unpack(device const half *y0 [[buffer(0)]], device const half *y1 [[buffer(1)]],
+                         device const half *y2 [[buffer(2)]], device const float *columnScale [[buffer(3)]],
+                         device const float *sigma [[buffer(4)]], device float *c [[buffer(5)]],
+                         constant AneShape &s [[buffer(6)]], uint2 g [[thread_position_in_grid]]) {
+    uint jj = g.x, i = g.y;
+    if (jj >= s.nPart || i >= s.rows) return;
+    ulong at = (ulong)i * s.nPart + jj;
+    float sum = float(y0[at]);
+    if (s.kParts > 1) sum += float(y1[at]);
+    if (s.kParts > 2) sum += float(y2[at]);
+    uint j = s.n0 + jj;
+    c[(ulong)(s.row0 + i) * s.n + j] = sum * float(s.kPart) * columnScale[j] / sigma[i];
+}

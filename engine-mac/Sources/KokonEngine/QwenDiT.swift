@@ -62,6 +62,9 @@ public final class QwenDiT {
     /// **Weights unpacked to fp16** (`KOKON_WEIGHTS=fp32`: fp32, for the accuracy checks): half the bytes the unpacking
     /// writes and every unit reads; the GPU's products are MPS fp32 × fp16 with fp32 accumulation, the AMX's BNNS the same.
     let halfWeights = ProcessInfo.processInfo.environment["KOKON_WEIGHTS"] != "fp32"
+    /// The split products' GPU rows on the GPU's neural accelerators (M5; `NeuralAccelerators.swift`), else MPS.
+    lazy var accelerators: NeuralAccelerators? = halfWeights && NeuralAccelerators.selected(device: context.device)
+        ? NeuralAccelerators.make(device: context.device) : nil
     private var attentions: [String: GraphAttention] = [:]
     /// Seconds per phase of the last evaluation.
     public private(set) var timings: [String: Double] = [:]
@@ -428,6 +431,11 @@ public final class QwenDiT {
         let reserve = reserves[index]
         // The GPU's rows: all of them, or its share of a split product.
         func gpuRows(_ rows: Int, _ half: MTLBuffer? = nil) throws {
+            if let half, let accelerators, NeuralAccelerators.fits(m: rows, n: nn, k: kk) {
+                try accelerators.encode(a: (half, 0), b: (arena.buffer, reserve.offset), c: (arena.buffer, c.offset + cRow * nn * 4),
+                                        m: rows, n: nn, k: kk, commands: commands)
+                return
+            }
             let key = "\(rows)×\(kk)×\(nn)"
             let product: MPSMatrixMultiplication
             if let existing = products[key] { product = existing } else {
@@ -601,7 +609,15 @@ public final class QwenDiT {
     /// (`probe-attention`, 2026-10-25): 91.0 ms with the packing against 95.2 for `flash_attention_half`, the same
     /// accuracy. Apple9+ GPUs (M3 and later) read the packed K and V straight from memory (`flash_attention_direct`),
     /// as MFA's and libnnc's tables do there; on the M2 Pro that variant takes 142 ms. Not yet measured on an M3+.
-    lazy var packedKernel = context.device.supportsFamily(.apple9) ? "flash_attention_direct" : "flash_attention_packed"
+    lazy var packedKernel = QwenDiT.directAttention(device: context.device) ? "flash_attention_direct" : "flash_attention_packed"
+    /// `flash_attention_direct` on Apple9+ GPUs; `KOKON_ATTENTION_DIRECT=0` / `=1` to choose.
+    static func directAttention(device: MTLDevice) -> Bool {
+        switch ProcessInfo.processInfo.environment["KOKON_ATTENTION_DIRECT"] {
+        case "0": return false
+        case "1": return true
+        default: return device.supportsFamily(.apple9)
+        }
+    }
 
     /// Queries `[queries, queries + count)` against keys `[0, keys)`, into the same rows of `attended`. The target's
     /// queries are cut by heads with the Neural Engine and the CPU when the co-executor runs (`AttentionSplit.swift`).

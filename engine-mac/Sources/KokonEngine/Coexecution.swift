@@ -62,6 +62,23 @@ final class Coexecutor {
     /// weight per evaluation, by only n threads, were most of the GPU's time alone between products.
     private var columnScales: [String: MTLBuffer] = [:]
     let aneEnabled: Bool, amxEnabled: Bool
+    /// **int8 products on the Neural Engine** (`NeuralEngineProduct.int8Program`, `ane8_*` in `ane.metal`), the path
+    /// libnnc (ccv) takes on the M3 and M4: W per column (its scales once per weight, the weight at each use as in
+    /// fp16) and, with `KOKON_ANE_INT8=1`, A per row too; `KOKON_ANE_INT8=w8` keeps the rows fp16. Opt-in on every
+    /// chip: the error does not depend on the chip, and on the M2 Pro (2026-10-25) one 1792 × 4096 × 4096 tile ran
+    /// 7.0 ms in int8, 8.3 ms with int8 weights, 10.1 ms in fp16 (`check-ane8`), but the velocity at 896² went from
+    /// 7.6e-4 to 4.1e-2 (int8) and 1.1e-2 (int8 weights; one scale per 4 096 values where Q4_K has one per 32).
+    /// `bench` measures both on M3 and later. Falls back to fp16 when its programs cannot be built (macOS 26+).
+    private(set) var aneInt8: Bool
+    /// With `aneInt8`, the rows stay fp16 (int8 weights only, W8A16: `KOKON_ANE_INT8=w8`).
+    let aneHalfRows: Bool
+    static func int8Selected(_ chip: Chip) -> Bool {
+        switch ProcessInfo.processInfo.environment["KOKON_ANE_INT8"] {
+        case "1", "w8": return true
+        default: return false
+        }
+    }
+    static var int8Rows: Bool { ProcessInfo.processInfo.environment["KOKON_ANE_INT8"] != "w8" }
     /// The reserves hold fp16 weights (`QwenDiT.halfWeights`): the AMX and the Neural Engine's packing read them so.
     let halfWeights: Bool
     /// **The GPU's and the AMX's rows of A read as fp16**, cast by the GPU into `aHalf` (`KOKON_ACTIVATIONS=fp32`: off).
@@ -83,9 +100,6 @@ final class Coexecutor {
     var attentionGroups: [[AttentionSlot]] = []
     var attentionShape = (queries: 0, keys: 0)
 
-    /// Starting shares measured on the M2 Pro 16 GB, 1024² + 32 text rows (`time-dit`, 2026-10-25): 2 048 rows on the
-    /// Neural Engine and 1/16 on the AMX (AMX 512 rows 12.8 s per evaluation, 256 rows 11.3 s, none 11.8 s; GPU alone
-    /// 16.2 s). The balancing loop moves them from the first evaluation on.
     init(context: MetalContext, rows: Int, maxRows: Int? = nil, ane: Bool = true, amx: Bool = true, aneAttention: Bool = false,
          halfWeights: Bool = false) throws {
         self.context = context
@@ -94,9 +108,16 @@ final class Coexecutor {
         self.maxRows = max(rows, maxRows ?? rows)
         self.aneEnabled = ane
         self.amxEnabled = amx
-        aneRows = ane ? min(2048, max(0, (rows - 512) / 256 * 256)) : 0
-        heads = HeadSplit.fromEnvironment() ?? HeadSplit.default(ane: ane && aneAttention, cpu: amx)
-        balancer = Balancer(aneAttention: ane && aneAttention)
+        aneInt8 = ane && Coexecutor.int8Selected(Chip.current)
+        aneHalfRows = !Coexecutor.int8Rows
+        // The first evaluation's shares from the cost model on this chip's estimated rates (`Chip.unitScale`; on the
+        // M2 Pro its measured ones). Remembered shares replace them (`recall`).
+        balancer = Balancer(aneAttention: ane && aneAttention, chip: Chip.current)
+        aneRows = ane ? balancer.bestAneRows(rows: rows, amx: amx) ?? min(2048, max(0, (rows - 512) / 256 * 256)) : 0
+        if amx {
+            for kind in Balancer.evaluationCounts.keys { amxRows[kind] = balancer.amxRows(kind: kind, rest: rows - aneRows) }
+        }
+        heads = HeadSplit.fromEnvironment() ?? balancer.bestHeads(ane: ane, cpu: amx)
         let device = context.device
         guard let r = device.makeSharedEvent(), let a = device.makeSharedEvent(), let e = device.makeSharedEvent(),
               let g = device.makeSharedEvent() else {
@@ -105,7 +126,13 @@ final class Coexecutor {
         (ready, amxDone, aneDone, gpuDone) = (r, a, e, g)
         scales = try context.scratch(rows * 4, label: "ane row scales")
         slots = [[], []]
-        slots = try productSlots(aneRows)
+        do {
+            slots = try productSlots(aneRows)
+        } catch where aneInt8 {
+            FileHandle.standardError.write(Data("int8 Neural Engine programs unavailable (\(error)); fp16 instead\n".utf8))
+            aneInt8 = false
+            slots = try productSlots(aneRows)
+        }
     }
 
     /// Two sets of three programs of `rows` rows (the tiles of a product, at most 3), compiled and warmed.
@@ -113,12 +140,13 @@ final class Coexecutor {
         guard rows > 0 else { return [[], []] }
         let device = context.device
         let first: [ProductSlot] = try (0..<3).map { _ in
-            let p = try NeuralEngineProduct(rows: rows, k: Coexecutor.tile, n: Coexecutor.tile)
+            let p = try NeuralEngineProduct(rows: rows, k: Coexecutor.tile, n: Coexecutor.tile, int8: aneInt8, halfActivations: aneHalfRows)
             try p.run()
             return (p, try p.gpuBuffer(p.x, device: device), try p.gpuBuffer(p.w, device: device), try p.gpuBuffer(p.y, device: device))
         }
         let second: [ProductSlot] = try first.map { f in
-            let p = try NeuralEngineProduct(rows: rows, k: Coexecutor.tile, n: Coexecutor.tile, sharing: f.product)
+            let p = try NeuralEngineProduct(rows: rows, k: Coexecutor.tile, n: Coexecutor.tile, int8: aneInt8, halfActivations: aneHalfRows,
+                                            sharing: f.product)
             try p.run()
             return (p, f.x, try p.gpuBuffer(p.w, device: device), f.y)
         }
@@ -198,25 +226,34 @@ final class Coexecutor {
         packedAhead = nil
         currentSet = set
         let slots = self.slots[set]
+        // int8 rows are scaled per row alone, so any reader's packing serves the others from the first evaluation.
         let shared = sharedRows && readers.count > 1 && readers.count <= 3 && readers.contains(weight)
-            && readers.allSatisfy { columnScales[$0] != nil }
+            && (aneInt8 || readers.allSatisfy { columnScales[$0] != nil })
         let packed = shared && packedRows.map { $0.offset == a.offset && $0.readers == readers } ?? false
         if s.ane > 0, !packed {
             var sh = shape()
-            let bounds = shared ? readers.map { columnScales[$0]! } : [columns]
+            let bounds = shared && !aneInt8 ? readers.map { columnScales[$0]! } : [columns]   // L: fp16 only
             packedRows = shared ? (a.offset, readers) : nil
-            try kernel("ane_row_scales") { e in
-                e.setBuffer(a.buffer, offset: a.offset, index: 0)
-                for i in 0..<3 { e.setBuffer(bounds[min(i, bounds.count - 1)], offset: state, index: i == 0 ? 1 : 3 + i) }
-                e.setBuffer(scales, offset: sigma, index: 2)
-                e.setBytes(&sh, length: MemoryLayout<Shape>.stride, index: 3)
-                e.dispatchThreadgroups(MTLSize(width: s.ane, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+            if aneInt8 {
+                try kernel(aneHalfRows ? "ane8w_row_scales" : "ane8_row_scales") { e in
+                    e.setBuffer(a.buffer, offset: a.offset, index: 0); e.setBuffer(scales, offset: sigma, index: 1)
+                    e.setBytes(&sh, length: MemoryLayout<Shape>.stride, index: 2)
+                    e.dispatchThreadgroups(MTLSize(width: s.ane, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+                }
+            } else {
+                try kernel("ane_row_scales") { e in
+                    e.setBuffer(a.buffer, offset: a.offset, index: 0)
+                    for i in 0..<3 { e.setBuffer(bounds[min(i, bounds.count - 1)], offset: state, index: i == 0 ? 1 : 3 + i) }
+                    e.setBuffer(scales, offset: sigma, index: 2)
+                    e.setBytes(&sh, length: MemoryLayout<Shape>.stride, index: 3)
+                    e.dispatchThreadgroups(MTLSize(width: s.ane, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+                }
             }
             for kp in 0..<kParts {
                 for np in 0..<nParts {
                     let slot = slots[kp * nParts + np]
                     var t = shape(kp: kp, np: np)
-                    try kernel("ane_pack_rows") { e in
+                    try kernel(aneInt8 && !aneHalfRows ? "ane8_pack_rows" : "ane_pack_rows") { e in
                         e.setBuffer(a.buffer, offset: a.offset, index: 0); e.setBuffer(scales, offset: sigma, index: 1)
                         e.setBuffer(slot.x, offset: 0, index: 2)
                         e.setBytes(&t, length: MemoryLayout<Shape>.stride, index: 3)
@@ -270,7 +307,7 @@ final class Coexecutor {
             for np in 0..<nParts {
                 var t = shape(np: np)
                 let ys = (0..<3).map { kp in slots[min(kp, kParts - 1) * nParts + np].y }
-                try kernel("ane_unpack") { e in
+                try kernel(aneInt8 ? aneHalfRows ? "ane8w_unpack" : "ane8_unpack" : "ane_unpack") { e in
                     for (i, y) in ys.enumerated() { e.setBuffer(y, offset: 0, index: i) }
                     e.setBuffer(columns, offset: lambda, index: 3); e.setBuffer(scales, offset: sigma, index: 4)
                     e.setBuffer(c.buffer, offset: c.offset, index: 5)
@@ -307,6 +344,15 @@ final class Coexecutor {
         let columns = try context.scratch((2 * n + 16) * 4, label: "λ \(weight)")
         columnScales[weight] = columns
         var sh = Shape(k: UInt32(k), n: UInt32(n), k0: 0, kPart: 0, n0: 0, nPart: 0, row0: 0, rows: 0, kParts: 0)
+        if aneInt8 {   // [s (n)]: each column's int8 scale
+            try kernel(halfWeights ? "ane8_columns_h" : "ane8_columns", commands) { e in
+                e.setBuffer(w.buffer, offset: w.offset, index: 0); e.setBuffer(columns, offset: 0, index: 1)
+                e.setBytes(&sh, length: MemoryLayout<Shape>.stride, index: 2)
+                e.dispatchThreadgroups(MTLSize(width: (n + 63) / 64, height: 1, depth: 1),
+                                       threadsPerThreadgroup: MTLSize(width: 64, height: 16, depth: 1))
+            }
+            return columns
+        }
         try kernel(halfWeights ? "ane_columns_h" : "ane_columns", commands) { e in
             e.setBuffer(w.buffer, offset: w.offset, index: 0)
             e.setBuffer(columns, offset: 0, index: 1); e.setBuffer(columns, offset: n * 4, index: 2)
@@ -330,7 +376,8 @@ final class Coexecutor {
             for np in 0..<nParts {
                 var t = Shape(k: UInt32(k), n: UInt32(n), k0: UInt32(kp * Coexecutor.tile), kPart: UInt32(Coexecutor.tile),
                               n0: UInt32(np * Coexecutor.tile), nPart: UInt32(Coexecutor.tile), row0: 0, rows: 0, kParts: UInt32(kParts))
-                try kernel(halfWeights ? "ane_pack_weight_h" : "ane_pack_weight", commands) { e in
+                try kernel(aneInt8 ? (halfWeights ? "ane8_pack_weight_h" : "ane8_pack_weight")
+                                   : halfWeights ? "ane_pack_weight_h" : "ane_pack_weight", commands) { e in
                     e.setBuffer(w.buffer, offset: w.offset, index: 0); e.setBuffer(columns, offset: 0, index: 1)
                     e.setBuffer(slots[set][kp * nParts + np].w, offset: 0, index: 2)
                     e.setBytes(&t, length: MemoryLayout<Shape>.stride, index: 3)

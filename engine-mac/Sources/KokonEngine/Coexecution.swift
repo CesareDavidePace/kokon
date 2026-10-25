@@ -68,6 +68,8 @@ final class Coexecutor {
     /// chip: the error does not depend on the chip, and on the M2 Pro (2026-10-25) one 1792 × 4096 × 4096 tile ran
     /// 7.0 ms in int8, 8.3 ms with int8 weights, 10.1 ms in fp16 (`check-ane8`), but the velocity at 896² went from
     /// 7.6e-4 to 4.1e-2 (int8) and 1.1e-2 (int8 weights; one scale per 4 096 values where Q4_K has one per 32).
+    /// Finer scales do not close the gap (README, "Tried and not kept": 4.8e-3 with one per 32, and scales given as
+    /// program inputs run slower than fp16).
     /// `bench` measures both on M3 and later. Falls back to fp16 when its programs cannot be built (macOS 26+).
     private(set) var aneInt8: Bool
     /// With `aneInt8`, the rows stay fp16 (int8 weights only, W8A16: `KOKON_ANE_INT8=w8`).

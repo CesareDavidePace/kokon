@@ -271,7 +271,7 @@ correctness test that runs on any Mac (`PerChipTests`). Only the M2 Pro has meas
   rows). Opt-in on every chip, as their error does not depend on the chip. M2 Pro: one 1792 × 4096 × 4096 tile 10.1 ms
   in fp16, 8.3 ms with int8 weights, 7.0 ms in int8 (`check-ane8`); per evaluation 7.42 → 7.20 / 7.00 s; but the
   velocity at 896² goes from 7.6e-4 to 1.1e-2 / 4.1e-2 (one int8 scale per 4 096 weights where Q4_K has one per 32;
-  activation rows with outliers). Finer weight scales are the way to try next.
+  activation rows with outliers). **Finer scales do not fix it** (2026-10-25, below): int8 stays opt-in.
 - **Attention reading K and V straight from memory** (`flash_attention_direct`) on Apple9+ GPUs (M3 and later), as
   MFA's tables prefer there (`KOKON_ATTENTION_DIRECT=0` off); 142 ms on the M2 Pro against 91, unmeasured on an M3+.
 - **Starting shares per chip**: the balancer's M2 Pro rates scaled by the chip's estimated units (GPU cores × clock,
@@ -296,6 +296,24 @@ GitHub discussion. A row with a path off that is faster than the default means t
 chip. Close other apps and keep the Mac plugged in: the units share one power and memory limit.
 
 ## Tried and not kept, the VAE, credits
+
+**int8 on the Neural Engine with finer scales: measured, not kept** (M2 Pro, 2026-10-25). First the accuracy, with
+int8 rounding simulated on the fp16 path (each column's weights, or each row's values, rounded to 127 levels of its
+own piece of K, then packed as fp16), velocity at 896² against diffusers fp32 (`dit-t2i-896`; fp16 path 7.6e-4):
+
+| int8 grid | weights | rows |
+|---|---|---|
+| one scale per column / row (today's int8 path) | 1.1e-2 (the measured int8 program's) | 3.0e-2 |
+| pieces of 512 / 256 / 128 | 1.3e-2 / 6.4e-3 / 7.7e-3 | – / 1.4e-2 / – |
+| pieces of 64 / 32 | – / 4.8e-3 | 8.1e-3 / – |
+| weights and rows, pieces of 256 | 1.7e-2 | |
+
+So even one scale per 32 weights stays 6× fp16's error: Q4_K's 4-bit grid rounded again to 127 levels. Only Q4_K's own
+codes with its per-32 scale and offset would be exact, and the scales of a weight given at run time must be program
+inputs; timed on one 1792 × 4096 × 4096 tile, the Neural Engine then runs slower than in fp16: fp16 8.2 ms, int8 with
+one constant scale 4.8, int8 with scales per 256 as an input 10.0, per 32 10.6, per 32 with offsets 11.2 (K in two
+pieces of 2 048: 10.9 / 11.7). The int8 path stays opt-in (`KOKON_ANE_INT8`); activation smoothing was not tried,
+since the weights alone already miss the target.
 
 MFA's GEMM (libnnc, 48 × 48 blocks, 2 × 2 SIMD groups) was tried against MPS: its async copies are an AIR intrinsic
 that macOS 27's run-time compiler refuses (libnnc ships prebuilt metallibs for it), and without them it ran at

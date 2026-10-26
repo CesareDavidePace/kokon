@@ -27,7 +27,8 @@ Windows, macOS (Apple Silicon, 15+) and Linux (`.deb`, `.rpm`). Installed copies
   engine is in development on the `macos-optimization` branch (`engine-mac/`, not released): text to image,
   Prompt+ (a prompt written in about 7–9 s), edits with reference images (Prompt+ looking at them too), brushed edits and
   extending an image, about 64–67 s for 1 MP text to image and ~106 s for a 1 MP edit on the same Mac (peak memory 5 GB),
-  as an experimental switch in Settings → Performance (off by default). LoRAs and the upscaler still need the standard
+  as an experimental switch in Settings → Performance (off by default). Since then (2026-10-26, not yet re-measured as
+  whole images): one denoising step ~5 % faster, the decoder ~1 s faster per image, an edit's image reading 2.6 → 1.7 s. LoRAs and the upscaler still need the standard
   engine (not planned for its first release).
 - The Windows installer is not code-signed: SmartScreen or Smart App Control may block it (README FAQ: Unblock).
 - HEIC photos can't be opened on Linux yet.

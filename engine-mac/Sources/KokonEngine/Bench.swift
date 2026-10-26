@@ -131,8 +131,16 @@ public enum Bench {
                                 number(row, "image1"), second.isNaN ? "–" : String(format: "%.1f s", second), number(row, "step"),
                                 number(row, "vae"), number(row, "peak"), velocity, image))
         }
+        lines += ["", "Where the time goes at 1024² (s): text encoder, DiT load, step 1, steps 2–8, VAE, total",
+                  "", "| Run | Image | Encoder | DiT load | Step 1 | Steps 2–8 | VAE | Total |", "|---|---|---|---|---|---|---|---|"]
+        for row in rows {
+            for (i, p) in ((row["parts"] as? [[String: Any]]) ?? []).enumerated() {
+                lines.append(String(format: "| %@ | %d | %.2f | %.2f | %.2f | %.1f | %.2f | %.1f |", row["name"] as? String ?? "?", i + 1,
+                                    number(p, "encode"), number(p, "load"), number(p, "step1"), number(p, "steps"), number(p, "vae"), number(p, "total")))
+            }
+        }
         lines += ["", "Image 1 includes loading the models and building the Neural Engine's programs; image 2 is the engine "
-                  + "already running, as in the app. Accuracy at 512² against the engine's fp32 GPU path"
+                  + "already running, as in the app (below 32 GB the app loads the models again for every image, so image 2 does too). Accuracy at 512² against the engine's fp32 GPU path"
                   + (quick ? "; --quick: one image per run." : ".")]
         return lines.joined(separator: "\n")
     }
@@ -186,16 +194,19 @@ public enum Bench {
             try Data(pixels).write(to: URL(fileURLWithPath: prefix + "-image.u8"))
             result = ["velocity": prefix + "-velocity.f32", "image": prefix + "-image.u8"]
         } else {
-            var images: [Double] = [], steps: [Double] = [], vae = 0.0
+            var images: [Double] = [], steps: [Double] = [], vae = 0.0, parts: [[String: Double]] = []
             for i in 0..<(quick ? 1 : 2) {
                 _ = try pipeline.textToImage(prompt: Bench.prompt, width: 1024, height: 1024, seed: 42 + UInt64(i))
                 let t = pipeline.timings
                 images.append(t["total"] ?? .nan)
                 vae = t["vae"] ?? .nan
                 steps = (2...8).compactMap { t["step \($0)"] }
+                // Where each image's time goes: on 16 GB the models are loaded again for every image.
+                parts.append(["encode": t["encode"] ?? .nan, "load": t["dit load"] ?? .nan, "step1": t["step 1"] ?? .nan,
+                              "steps": steps.reduce(0, +), "vae": vae, "total": t["total"] ?? .nan])
             }
             let memory = MemoryUsage.now()
-            result = ["image1": images[0], "step": steps.reduce(0, +) / Double(max(1, steps.count)), "vae": vae,
+            result = ["parts": parts, "image1": images[0], "step": steps.reduce(0, +) / Double(max(1, steps.count)), "vae": vae,
                       "peak": memory.footprintPeak, "shares": pipeline.shares ?? "GPU only"]
             if images.count > 1 { result["image2"] = images[1] }
         }

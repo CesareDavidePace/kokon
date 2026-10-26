@@ -10,7 +10,7 @@ import { useSyncExternalStore } from "react";
 import { markFresh } from "../components/Cocoon";
 import { api, ApiError, setPrivateInputs, subscribe, urls } from "./api";
 import { activeLoras, buildRequest, composing, emptyComposer, goneVersions, needsPrompt, newKey, pageOutdated, persistentAdvanced, refFromGen, refFromInput, reviewRequest, stageFitsPreview, starPromptDue, timelineLinks, undoTarget, versionLabels, wantsPromptReview, type CompareMode, type Composer, type Ref } from "./logic";
-import type { AppErrorBody, GenerationRecord, GenerationRequest, InputRecord, JobView, LoraItem, ServerState, StatusResponse } from "./types";
+import type { AppErrorBody, GenerationRecord, GenerationRequest, InputRecord, JobView, LoraItem, MacBenchState, ServerState, StatusResponse } from "./types";
 
 export type Overlay = null | "gallery" | "settings" | "inpaint" | "expand" | "welcome" | "whats-new" | "prompt-tips" | "shortcuts";
 
@@ -74,6 +74,8 @@ export interface State {
   compareUpscalers: boolean;
   toasts: Toast[];
   galleryVersion: number;
+  /** Benchmark this Mac: null until Settings asks the service. */
+  macBench: MacBenchState | null;
   needsSetup: boolean;
   /** Setup opens on "Use models I already have" or on the official download (Settings → Models). */
   setupMode: "own" | "official" | null;
@@ -406,6 +408,7 @@ let state: State = {
   compareUpscalers: false,
   toasts: [],
   galleryVersion: 0,
+  macBench: null,
   needsSetup: false,
   setupMode: null,
   compare: "off",
@@ -562,6 +565,7 @@ export function startEvents() {
       }
       else if (ev.type === "gallery") setState((s) => ({ galleryVersion: s.galleryVersion + 1 }));
       else if (ev.type === "projects") onProjectEvent(ev.id, ev.rev, ev.deleted);
+      else if (ev.type === "mac_bench") setState({ macBench: ev.bench });
     },
     (ok) => {
       setState({ connected: ok });

@@ -192,6 +192,7 @@ do {
         for path in [encoder, dit, vae] where !FileManager.default.fileExists(atPath: path) {
             fail("\(path) not found: install Kokon's models, or pass --encoder, --dit and --vae")
         }
+        setvbuf(stdout, nil, _IOLBF, 0)   // Kokon reads the progress lines as they come
         try Bench.run(encoder: encoder, dit: dit, vae: vae, quick: quick, out: out)
     case "bench-run":
         guard arguments.count >= 6 else { fail(usage) }

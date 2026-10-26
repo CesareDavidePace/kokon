@@ -376,6 +376,8 @@ pub struct ServerManager {
     data_dir: PathBuf,
     pub log: Arc<LogBuffer>,
     lines_tx: broadcast::Sender<String>,
+    /// Why the server may not start now (the Mac benchmark needs the GPU): [`Self::ensure_ready`] refuses.
+    held: Mutex<Option<String>>,
 }
 
 #[cfg(windows)]
@@ -403,7 +405,13 @@ impl ServerManager {
             data_dir,
             log: Arc::new(LogBuffer::new(4000)),
             lines_tx,
+            held: Mutex::new(None),
         })
+    }
+
+    /// Keeps the server from starting until `None` (set it before [`Self::stop`]: a start in progress finishes first).
+    pub fn hold(&self, reason: Option<String>) {
+        *self.held.lock().unwrap() = reason;
     }
 
     /// Live stream of server log lines (only available for servers this app launched).
@@ -459,6 +467,9 @@ impl ServerManager {
     /// launches it. Serialized so concurrent callers never start two instances.
     pub async fn ensure_ready(&self, cfg: &AppConfig) -> Result<Capabilities, AppError> {
         let _guard = self.start_lock.lock().await;
+        if let Some(why) = self.held.lock().unwrap().clone() {
+            return Err(AppError::new(ErrorCode::ServerUnavailable, why).suggest("Wait for it to finish, or cancel it in Settings → Performance."));
+        }
         let profile = cfg.profile().clone();
         // Our server may run on a fallback port (see `launch_port`); otherwise the configured one.
         let rec = self.read_record().filter(|r| process_alive(r.pid));
@@ -826,6 +837,15 @@ pub fn parse_device_list(text: &str) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn held_server_does_not_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let m = ServerManager::new(dir.path().to_path_buf());
+        m.hold(Some("The Mac is running the benchmark.".into()));
+        let e = m.ensure_ready(&AppConfig::default()).await.unwrap_err();
+        assert_eq!((e.code, e.message.as_str()), (ErrorCode::ServerUnavailable, "The Mac is running the benchmark."));
+    }
 
     #[test]
     fn default_launch_args() {

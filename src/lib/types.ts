@@ -435,8 +435,17 @@ export interface HardwareReport {
   issues_url: string;
 }
 
+/** Settings → Performance → Benchmark this Mac (`qls_core::mac_bench::BenchState`). */
+export type MacBenchState =
+  | { state: "idle" }
+  /** Step `k` of `n`; `n` is 0 until the engine prints its first step. */
+  | { state: "running"; k: number; n: number; label: string; started_at: string; quick: boolean }
+  | { state: "done"; report: string; finished_at: string; quick: boolean }
+  | { state: "failed"; error: string; log: string };
+
 export type ServiceEvent =
   | { type: "job"; job: JobView }
   | { type: "server"; state: ServerState; owned: boolean; error: AppErrorBody | null }
   | { type: "gallery"; id: string; change: "added" | "updated" | "deleted" }
-  | { type: "projects"; id: string; rev: number; deleted: boolean };
+  | { type: "projects"; id: string; rev: number; deleted: boolean }
+  | { type: "mac_bench"; bench: MacBenchState };

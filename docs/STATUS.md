@@ -29,7 +29,9 @@ Windows, macOS (Apple Silicon, 15+) and Linux (`.deb`, `.rpm`). Installed copies
   extending an image, about 64–67 s for 1 MP text to image and ~106 s for a 1 MP edit on the same Mac (peak memory 5 GB),
   as an experimental switch in Settings → Performance (off by default). Since then (2026-10-26, not yet re-measured as
   whole images): one denoising step ~5 % faster, the decoder ~1 s faster per image, an edit's image reading 2.6 → 1.7 s. LoRAs and the upscaler still need the standard
-  engine (not planned for its first release).
+  engine (not planned for its first release). A "Benchmark this Mac" button in Settings → Performance runs the engine's
+  bench from the app (~10 min) and gives the report to paste in
+  [Discussion #43](https://github.com/GabrieleLozupone/kokon/discussions/43).
 - The Windows installer is not code-signed: SmartScreen or Smart App Control may block it (README FAQ: Unblock).
 - HEIC photos can't be opened on Linux yet.
 
@@ -41,8 +43,10 @@ Windows, macOS (Apple Silicon, 15+) and Linux (`.deb`, `.rpm`). Installed copies
 - AMD RDNA3/RDNA4 owners who know HIP: compare a ROCm engine with Vulkan
   ([#38](https://github.com/GabrieleLozupone/kokon/issues/38)).
 - Hardware reports: AMD and Intel on Windows and Linux, Linux on NVIDIA outside WSL, Macs other than an M2 Pro.
-  For the Mac engine: `bash engine-mac/tools/bench.sh` on the `macos-optimization` branch prints a report to paste
-  (M1, M3, M4 and M5 Macs are the most useful; see [engine-mac/README.md](../engine-mac/README.md#testing-on-your-mac-bench)).
+  For the Mac engine: Settings → Performance → Benchmark this Mac in a build of the `macos-optimization` branch, or
+  `bash engine-mac/tools/bench.sh` there, gives a report to paste in
+  [Discussion #43](https://github.com/GabrieleLozupone/kokon/discussions/43) (M1, M3, M4 and M5 Macs are the most
+  useful; see [engine-mac/README.md](../engine-mac/README.md#testing-on-your-mac-bench)).
 - Model proposals that meet the switch rule: [Discussion #35](https://github.com/GabrieleLozupone/kokon/discussions/35).
 
 ## Recently shipped

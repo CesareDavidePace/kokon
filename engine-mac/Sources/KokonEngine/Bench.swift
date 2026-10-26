@@ -57,6 +57,15 @@ public enum Bench {
             for mode in ["w8", "1"] { runs.append(Run(name: "KOKON_ANE_INT8=\(mode)", environment: ["KOKON_ANE_INT8": mode])) }
         }
 
+        // `PROGRESS k/N <what>` before each child, for Kokon's Benchmark button (stdout is a pipe there).
+        let total = 1 + 2 * runs.count
+        var done = 0
+        func progress(_ label: String) {
+            done += 1
+            print("PROGRESS \(done)/\(total) \(label)")
+            fflush(stdout)
+        }
+
         func child(_ mode: String, _ environment: [String: String], tag: String) throws -> [String: Any] {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: Bundle.main.executablePath ?? CommandLine.arguments[0])
@@ -76,11 +85,14 @@ public enum Bench {
         }
 
         print("accuracy at 512²: the fp32 reference (GPU alone, ~1 min)…")
+        progress("Accuracy reference (512², most accurate path)")
         let reference = try child("accuracy", Bench.reference, tag: "reference")
         var rows: [[String: Any]] = []
         for (i, run) in runs.enumerated() {
             print("[\(i + 1)/\(runs.count)] \(run.name): accuracy at 512², then two images at 1024²…")
+            progress("\(run.name): accuracy at 512²")
             var row = try child("accuracy", run.environment, tag: "run\(i)")
+            progress("\(run.name): " + (quick ? "one image" : "two images") + " at 1024²")
             row.merge(try child("timing", run.environment, tag: "run\(i)")) { a, _ in a }
             row["name"] = run.name
             rows.append(row)
@@ -150,6 +162,12 @@ public enum Bench {
 
     /// `bench-run accuracy|timing <encoder> <dit> <vae> <file prefix> [--quick]`: prints `BENCH {json}`.
     public static func child(mode: String, encoder: String, dit: String, vae: String, prefix: String, quick: Bool) throws {
+        // Ends with the bench: when Kokon cancels it, the parent is killed and this child is handed to launchd.
+        let parent = getppid()
+        Thread.detachNewThread {
+            while getppid() == parent { Thread.sleep(forTimeInterval: 1) }
+            exit(1)
+        }
         let pipeline = try QwenPipeline(encoder: encoder, dit: dit, vae: vae)
         pipeline.keepModels = true
         pipeline.log = { _ in }

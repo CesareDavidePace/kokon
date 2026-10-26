@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  macBenchProgress,
   activeLoras, activeOverrides, buildRequest, composing, editing, reviewRequest, wantsPromptReview, toggleLora, MAX_LORAS, jobPercent, compareBase, composerFromRecord, enhancerApplies, diffPixels, emptyComposer, expansionPixels, expansionPreset, jobLabel, jobSecondsLeft, lutInfo, moveRef, needsPrompt, normalizeQuality, persistentAdvanced, pipelineSummary,
   planPipeline, remainingSeconds, sizeForWidth, timeAgo, upscaleRequest, upscaleTargets, versionLabels, type JobClock, type Ref,
   neighbourAfterRemoval, pageOutdated, previewIndex, starPromptDue, STAR_PROMPT_AFTER, formatBytes, formatDuration, installItemShort, installItemText, installProgress, installStep, installTimeLeft, timelineLinks, undoTarget, aspectLabel, parseRatio, sizeForRatio, expandToRatio, expandToSize, arcLayout,
@@ -608,5 +609,21 @@ describe("opening a project in a browser", () => {
     // A deleted input is dropped too; with no copy known, nothing is dropped.
     expect([...goneVersions(items, { generations: { g1: {}, g2: {}, g3: {} }, inputs: {} }, ["i"])]).toEqual(["i"]);
     expect(goneVersions(items, { generations: {}, inputs: {} }, []).size).toBe(0);
+  });
+});
+
+describe("macBenchProgress", () => {
+  const started_at = "2026-10-26T10:00:00Z";
+  const t0 = Date.parse(started_at);
+  it("shows the step, the run and the minutes", () => {
+    const p = macBenchProgress({ state: "running", k: 2, n: 7, label: "default (paths above): accuracy at 512²", started_at, quick: false }, t0 + 185_000);
+    expect(p).toEqual({ frac: 1 / 7, text: "Step 2 of 7 · Default: accuracy at 512² · 3 min" });
+  });
+  it("starts empty before the first step", () => {
+    expect(macBenchProgress({ state: "running", k: 0, n: 0, label: "Starting", started_at, quick: true }, t0)).toEqual({ frac: 0, text: "Starting · 0 min" });
+  });
+  it("is nothing when not running", () => {
+    expect(macBenchProgress({ state: "idle" }, t0)).toBeNull();
+    expect(macBenchProgress({ state: "done", report: "r", finished_at: started_at, quick: false }, t0)).toBeNull();
   });
 });

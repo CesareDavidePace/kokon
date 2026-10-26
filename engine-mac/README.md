@@ -432,7 +432,11 @@ correctness test that runs on any Mac (`PerChipTests`). Only the M2 Pro has meas
 
 ## Testing on your Mac (`bench`)
 
-For anyone with an Apple Silicon Mac, to measure these paths on hardware we do not have (M1, M3, M4, M5, base chips):
+For anyone with an Apple Silicon Mac, to measure these paths on hardware we do not have (M1, M3, M4, M5, base chips).
+In Kokon: Settings → Performance, turn on Kokon's Mac engine and save, then **Benchmark this Mac → Run** (~10 min; the
+server is stopped while it runs and images wait). It runs the same `bench` on the app's engine and model files, shows
+the step it is on, and gives the report with Copy report and a link to
+[Discussion #43](https://github.com/GabrieleLozupone/kokon/discussions/43). From the source:
 
 ```bash
 git clone https://github.com/GabrieleLozupone/kokon.git && cd kokon && git checkout macos-optimization
@@ -443,8 +447,8 @@ It needs the Xcode command line tools and Kokon's model files (Kokon set up once
 and writes `kokon-bench-report.md`: chip, GPU family and cores, memory, macOS, the paths selected, the units' shares,
 time per step and per image at 1024² (image 1 with the loading, image 2 with the engine already running), peak memory, and accuracy at
 512² against the engine's own fp32 GPU path on the same Mac (the first step's velocity and the image, in 8-bit
-levels), then the same with each chip-specific path off (and the int8 path on, on M3 and later). Paste it in the
-GitHub discussion. A row with a path off that is faster than the default means that path should not be on for that
+levels), then the same with each chip-specific path off (and the int8 path on, on M3 and later). Paste it in
+[Discussion #43](https://github.com/GabrieleLozupone/kokon/discussions/43). A row with a path off that is faster than the default means that path should not be on for that
 chip. Close other apps and keep the Mac plugged in: the units share one power and memory limit.
 
 ## Tried and not kept, the VAE, credits

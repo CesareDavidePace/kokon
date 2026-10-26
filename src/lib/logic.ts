@@ -1,6 +1,6 @@
 // Pure UI logic (unit-tested in logic.test.ts).
 
-import type { Advanced, GenerationRecord, GenerationRequest, InpaintAction, InputRecord, InstallItem, JobView, LoraItem, LutInfo, Mode, OutpaintSpec, Plan, Quality, ResolutionMode, Size } from "./types";
+import type { Advanced, GenerationRecord, GenerationRequest, InpaintAction, InputRecord, InstallItem, JobView, LoraItem, LutInfo, MacBenchState, Mode, OutpaintSpec, Plan, Quality, ResolutionMode, Size } from "./types";
 
 export interface Ref {
   key: string;
@@ -640,6 +640,18 @@ export function formatBytes(n: number): string {
   if (n >= 1e9) return `${(n / 1e9).toFixed(n >= 1e10 ? 0 : 1)} GB`;
   if (n >= 1e6) return `${Math.round(n / 1e6)} MB`;
   return `${Math.max(0, Math.round(n / 1e3))} KB`;
+}
+
+/** Benchmark this Mac while it runs: the bar's fill and the line under it ("Step 2 of 7 · Default: accuracy at
+ * 512² · 3 min"). The engine names a run by the setting it changes; its first run is the default paths. */
+export function macBenchProgress(b: MacBenchState, now: number): { frac: number; text: string } | null {
+  if (b.state !== "running") return null;
+  const minutes = Math.max(0, Math.floor((now - Date.parse(b.started_at)) / 60000));
+  const elapsed = Number.isFinite(minutes) ? ` · ${minutes} min` : "";
+  if (b.n <= 0) return { frac: 0, text: `Starting${elapsed}` };
+  const label = b.label.replace(/^default \(paths above\)/, "Default");
+  // A step is done when the next one starts: k − 1 of n.
+  return { frac: (b.k - 1) / b.n, text: `Step ${b.k} of ${b.n}${label ? ` · ${label}` : ""}${elapsed}` };
 }
 
 /** Overall download progress over the files that were not installed already. */

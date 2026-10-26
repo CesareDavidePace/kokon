@@ -12,8 +12,8 @@ import MetalPerformanceShaders
 ///     merged = fc2(GELU(fc1(LN(x) as [N/4, 4608])))              [N/4, 4096], one row per text encoder slot
 ///     deepstack j = the same after block 8 / 16 / 24 (LN after the 2 × 2 merge)   added to the text encoder's layers 0–2
 ///
-/// The heads (72 dimensions) run on the DiT's flash kernel zero-padded to 128 (`vision_rope_pad`): the scores and the
-/// output are the 72-dimension ones. The processor's input is the image with alpha composited over white (as the
+/// The heads (72 dimensions) run on the DiT's fp32 flash kernel built for 72 (`flash_attention_72`): until 2026-10-26
+/// they were zero-padded to 128, the same values to the bit for ~1.8× the work. The processor's input is the image with alpha composited over white (as the
 /// pipeline's PIL paste), scaled to [−1, 1], each frame of the Conv3d's two the same image.
 public final class QwenVisionTower {
     public static let dim = 1152, heads = 16, headDim = 72, hidden = 4304, layers = 27, outDim = 4096
@@ -156,7 +156,7 @@ public final class QwenVisionTower {
 
     struct Buffers {
         let arena: Arena
-        let x, normed, qkv, q, k, v, attended, a72, h, mergeIn, mergeHidden, smalls, rope: Arena.Slice
+        let x, normed, qkv, q, k, v, attended, h, mergeIn, mergeHidden, smalls, rope: Arena.Slice
         let outputs: [Arena.Slice]
         let reserves: [Arena.Slice]
     }
@@ -182,13 +182,13 @@ public final class QwenVisionTower {
         let mrows = QwenDiT.padded(slots)
         let smallNames = smallTensors()
         let smallCount = try smallNames.reduce(0) { $0 + (try file.tensor($1)).count } + n * d
-        let sizes = [rows * d, rows * d, rows * 3 * d, rows * 2048, rows * 2048, rows * 2048, rows * 2048, rows * d,
+        let sizes = [rows * d, rows * d, rows * 3 * d, rows * d, rows * d, rows * d, rows * d,
                      rows * QwenVisionTower.hidden, mrows * merged, mrows * merged, smallCount, n * 72,
                      slots * 4096, slots * 4096, slots * 4096, slots * 4096, merged * merged, merged * merged]
         let arena = try Arena(device: context.device, bytes: Arena.bytes(sizes.map { $0 * 4 }))
         var s = try sizes.map { try arena.slice(floats: $0) }.makeIterator()
         let b = Buffers(arena: arena, x: s.next()!, normed: s.next()!, qkv: s.next()!, q: s.next()!, k: s.next()!,
-                        v: s.next()!, attended: s.next()!, a72: s.next()!, h: s.next()!, mergeIn: s.next()!,
+                        v: s.next()!, attended: s.next()!, h: s.next()!, mergeIn: s.next()!,
                         mergeHidden: s.next()!, smalls: s.next()!, rope: s.next()!,
                         outputs: [s.next()!, s.next()!, s.next()!, s.next()!], reserves: [s.next()!, s.next()!])
 
@@ -320,7 +320,7 @@ public final class QwenVisionTower {
         let d = QwenVisionTower.dim, block = "v.blk.\(layer)."
         try layerNorm(b, b.x, into: b.normed, prefix: block + "ln1", rows: n, columns: d, commands: commands)
         try linear(block + "attn_qkv", b, a: b.normed, c: b.qkv, m: n, commands: commands)
-        try compute("vision_rope_pad", commands: commands) { e in
+        try compute("vision_rope", commands: commands) { e in
             e.setBuffer(b.arena.buffer, offset: b.qkv.offset, index: 0)
             e.setBuffer(b.arena.buffer, offset: b.q.offset, index: 1)
             e.setBuffer(b.arena.buffer, offset: b.k.offset, index: 2)
@@ -328,27 +328,21 @@ public final class QwenVisionTower {
             e.setBuffer(b.arena.buffer, offset: b.rope.offset, index: 4)
             var r = UInt32(n)
             e.setBytes(&r, length: 4, index: 5)
-            e.dispatchThreads(MTLSize(width: n * 1024, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+            e.dispatchThreads(MTLSize(width: n * QwenVisionTower.heads * 36, height: 1, depth: 1),
+                              threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
         }
-        try compute("flash_attention", commands: commands) { e in
+        try compute("flash_attention_72", commands: commands) { e in
             e.setBuffer(b.arena.buffer, offset: b.q.offset, index: 0)
             e.setBuffer(b.arena.buffer, offset: b.k.offset, index: 1)
             e.setBuffer(b.arena.buffer, offset: b.v.offset, index: 2)
             e.setBuffer(b.arena.buffer, offset: b.attended.offset, index: 3)
-            var params = QwenDiT.FlashParams(queries: UInt32(n), keys: UInt32(n), causal: 0, stride: 2048,
+            var params = QwenDiT.FlashParams(queries: UInt32(n), keys: UInt32(n), causal: 0, stride: UInt32(d),
                                              scale: 1 / Float(QwenVisionTower.headDim).squareRoot() * Float(M_LOG2E), headBase: 0)
             e.setBytes(&params, length: MemoryLayout<QwenDiT.FlashParams>.stride, index: 4)
             e.dispatchThreadgroups(MTLSize(width: (n + 63) / 64, height: QwenVisionTower.heads, depth: 1),
                                    threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
         }
-        try compute("vision_unpad", commands: commands) { e in
-            e.setBuffer(b.arena.buffer, offset: b.attended.offset, index: 0)
-            e.setBuffer(b.arena.buffer, offset: b.a72.offset, index: 1)
-            var r = UInt32(n)
-            e.setBytes(&r, length: 4, index: 2)
-            e.dispatchThreads(MTLSize(width: n * d, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
-        }
-        try linear(block + "attn_out", b, a: b.a72, c: b.normed, m: n, commands: commands)
+        try linear(block + "attn_out", b, a: b.attended, c: b.normed, m: n, commands: commands)
         try add(b, b.x, b.normed, offset: 0, count: n * d, commands: commands)
         try layerNorm(b, b.x, into: b.normed, prefix: block + "ln2", rows: n, columns: d, commands: commands)
         try linear(block + "ffn_up", b, a: b.normed, c: b.h, m: n, commands: commands)

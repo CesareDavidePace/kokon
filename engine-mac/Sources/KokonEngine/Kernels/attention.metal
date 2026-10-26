@@ -43,24 +43,25 @@ static inline thread float2 &elements(thread simdgroup_float8x8 &m) {
     return *(thread float2 *)&m.thread_elements();
 }
 
-kernel void flash_attention(device const float *q [[buffer(0)]], device const float *k [[buffer(1)]],
+template <uint HD>
+kernel void flash_attention_d(device const float *q [[buffer(0)]], device const float *k [[buffer(1)]],
                             device const float *v [[buffer(2)]], device float *out [[buffer(3)]],
                             constant FlashParams &p [[buffer(4)]],
                             uint2 tg [[threadgroup_position_in_grid]],
                             uint tid [[thread_index_in_threadgroup]],
                             uint sg [[simdgroup_index_in_threadgroup]],
                             uint lane [[thread_index_in_simdgroup]]) {
-    threadgroup float tile[BK * D];   // 32 KB: the key tile, then the value tile
+    threadgroup float tile[BK * HD];   // 32 KB at 128: the key tile, then the value tile
 
     const uint head = p.headBase + tg.y;
     const uint q0 = tg.x * BQ + sg * 8;
     const uint stride = p.stride;
-    device const float *kh = k + head * D;
-    device const float *vh = v + head * D;
+    device const float *kh = k + head * HD;
+    device const float *vh = v + head * HD;
 
-    simdgroup_float8x8 Q[16], O[16];
-    for (uint d = 0; d < 16; d++) {
-        simdgroup_load(Q[d], q + (ulong)q0 * stride + head * D + 8 * d, stride);
+    simdgroup_float8x8 Q[HD / 8], O[HD / 8];
+    for (uint d = 0; d < HD / 8; d++) {
+        simdgroup_load(Q[d], q + (ulong)q0 * stride + head * HD + 8 * d, stride);
         O[d] = make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
     }
 
@@ -76,18 +77,18 @@ kernel void flash_attention(device const float *q [[buffer(0)]], device const fl
 
     for (uint j0 = 0; j0 < kEnd; j0 += BK) {
         // Key tile: 64 rows × 128, 256 threads × 8 float4.
-        for (uint i = tid; i < BK * D / 4; i += 256) {
-            uint r = i / (D / 4), c = i % (D / 4);
+        for (uint i = tid; i < BK * HD / 4; i += 256) {
+            uint r = i / (HD / 4), c = i % (HD / 4);
             ((threadgroup float4 *)tile)[i] = *((device const float4 *)(kh + (ulong)(j0 + r) * stride) + c);
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
         simdgroup_float8x8 S[8];
         for (uint c = 0; c < 8; c++) S[c] = make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
-        for (uint d = 0; d < 16; d++) {
+        for (uint d = 0; d < HD / 8; d++) {
             for (uint c = 0; c < 8; c++) {
                 simdgroup_float8x8 Kt;
-                simdgroup_load(Kt, tile + 8 * c * D + 8 * d, D, ulong2(0, 0), true);
+                simdgroup_load(Kt, tile + 8 * c * HD + 8 * d, HD, ulong2(0, 0), true);
                 simdgroup_multiply_accumulate(S[c], Q[d], Kt, S[c]);
             }
         }
@@ -117,20 +118,20 @@ kernel void flash_attention(device const float *q [[buffer(0)]], device const fl
         l = l * alpha + sum;
         m = mNew;
         if (!simd_all(alpha == 1.0f)) {
-            for (uint d = 0; d < 16; d++) elements(O[d]) *= alpha;
+            for (uint d = 0; d < HD / 8; d++) elements(O[d]) *= alpha;
         }
 
         // Value tile into the same memory, once every SIMD group is done with the keys.
         threadgroup_barrier(mem_flags::mem_threadgroup);
-        for (uint i = tid; i < BK * D / 4; i += 256) {
-            uint r = i / (D / 4), c = i % (D / 4);
+        for (uint i = tid; i < BK * HD / 4; i += 256) {
+            uint r = i / (HD / 4), c = i % (HD / 4);
             ((threadgroup float4 *)tile)[i] = *((device const float4 *)(vh + (ulong)(j0 + r) * stride) + c);
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
-        for (uint d = 0; d < 16; d++) {
+        for (uint d = 0; d < HD / 8; d++) {
             for (uint c = 0; c < 8; c++) {
                 simdgroup_float8x8 V;
-                simdgroup_load(V, tile + 8 * c * D + 8 * d, D);
+                simdgroup_load(V, tile + 8 * c * HD + 8 * d, HD);
                 simdgroup_multiply_accumulate(O[d], S[c], V, O[d]);
             }
         }
@@ -140,14 +141,21 @@ kernel void flash_attention(device const float *q [[buffer(0)]], device const fl
     // O / l, the valid rows to memory.
     if (qi < p.queries) {
         const float inv = 1.0f / l;
-        device float *o = out + (ulong)qi * stride + head * D + col;
-        for (uint d = 0; d < 16; d++) {
+        device float *o = out + (ulong)qi * stride + head * HD + col;
+        for (uint d = 0; d < HD / 8; d++) {
             float2 e = elements(O[d]) * inv;
             o[8 * d] = e.x;
             o[8 * d + 1] = e.y;
         }
     }
 }
+
+// The DiT's heads (128) and the vision tower's (72: Qwen3-VL's 1152 / 16), with no zero padding. At 72 the result is
+// the padded kernel's to the bit: the 7 padding chunks only added exact zeros to every sum.
+template [[host_name("flash_attention")]] kernel void flash_attention_d<128>(device const float *, device const float *,
+    device const float *, device float *, constant FlashParams &, uint2, uint, uint, uint);
+template [[host_name("flash_attention_72")]] kernel void flash_attention_d<72>(device const float *, device const float *,
+    device const float *, device float *, constant FlashParams &, uint2, uint, uint, uint);
 
 // The same with q, k, v and the probabilities in fp16 (scores, softmax and O accumulated in fp32; K and V tiles of 64
 // keys side by side in 32 KB), the engine's default (`KOKON_ATTENTION=fp32` for the one above): 94 ms against 120 at

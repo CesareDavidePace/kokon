@@ -60,39 +60,23 @@ kernel void gelu_erf(device float *x [[buffer(0)]], constant uint &count [[buffe
     x[i] = 0.5f * v * tail;
 }
 
-// Qwen3VLVisionAttention's qkv split and apply_rotary_pos_emb_vision, into the flash kernel's layout: q, k, v as
-// [rows, 16 heads, 128] with the head's 72 dimensions first and zeros after (the scores and the output are the
-// 72-dimension ones). rotate_half pairs dimension i with i + 36; `rope` is [rows, 36, (cos, sin)].
-// One thread per (row, head, j < 64): j < 36 rotates the pair (j, j + 36), the others clear two padding columns.
-kernel void vision_rope_pad(device const float *qkv [[buffer(0)]], device float *q [[buffer(1)]],
-                            device float *k [[buffer(2)]], device float *v [[buffer(3)]],
-                            device const float *rope [[buffer(4)]], constant uint &rows [[buffer(5)]],
-                            uint i [[thread_position_in_grid]]) {
-    uint j = i % 64, head = (i / 64) % 16, row = i / 1024;
+// Qwen3VLVisionAttention's qkv split and apply_rotary_pos_emb_vision: q, k, v as [rows, 16 heads × 72], the layout
+// `flash_attention_72` reads and attn.proj's input has. rotate_half pairs dimension i with i + 36; `rope` is
+// [rows, 36, (cos, sin)]. One thread per (row, head, j < 36), rotating the pair (j, j + 36).
+kernel void vision_rope(device const float *qkv [[buffer(0)]], device float *q [[buffer(1)]],
+                        device float *k [[buffer(2)]], device float *v [[buffer(3)]],
+                        device const float *rope [[buffer(4)]], constant uint &rows [[buffer(5)]],
+                        uint i [[thread_position_in_grid]]) {
+    uint j = i % 36, head = (i / 36) % 16, row = i / 576;
     if (row >= rows) return;
     device const float *in = qkv + (ulong)row * 3456 + head * 72;
-    ulong o = (ulong)row * 2048 + head * 128;
-    if (j < 36) {
-        float c = rope[((ulong)row * 36 + j) * 2], s = rope[((ulong)row * 36 + j) * 2 + 1];
-        float q0 = in[j], q1 = in[j + 36], k0 = in[1152 + j], k1 = in[1152 + j + 36];
-        q[o + j] = q0 * c - q1 * s;
-        q[o + j + 36] = q1 * c + q0 * s;
-        k[o + j] = k0 * c - k1 * s;
-        k[o + j + 36] = k1 * c + k0 * s;
-        v[o + j] = in[2304 + j];
-        v[o + j + 36] = in[2304 + j + 36];
-    } else {
-        uint c = 72 + (j - 36) * 2;
-        q[o + c] = 0; q[o + c + 1] = 0;
-        k[o + c] = 0; k[o + c + 1] = 0;
-        v[o + c] = 0; v[o + c + 1] = 0;
-    }
-}
-
-// The attention's output back to [rows, 16 × 72] for attn.proj.
-kernel void vision_unpad(device const float *x [[buffer(0)]], device float *out [[buffer(1)]],
-                         constant uint &rows [[buffer(2)]], uint i [[thread_position_in_grid]]) {
-    if (i >= rows * 1152) return;
-    uint row = i / 1152, c = i % 1152;
-    out[i] = x[(ulong)row * 2048 + (c / 72) * 128 + c % 72];
+    ulong o = (ulong)row * 1152 + head * 72;
+    float c = rope[((ulong)row * 36 + j) * 2], s = rope[((ulong)row * 36 + j) * 2 + 1];
+    float q0 = in[j], q1 = in[j + 36], k0 = in[1152 + j], k1 = in[1152 + j + 36];
+    q[o + j] = q0 * c - q1 * s;
+    q[o + j + 36] = q1 * c + q0 * s;
+    k[o + j] = k0 * c - k1 * s;
+    k[o + j + 36] = k1 * c + k0 * s;
+    v[o + j] = in[2304 + j];
+    v[o + j + 36] = in[2304 + j + 36];
 }

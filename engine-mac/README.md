@@ -356,7 +356,7 @@ M2 Pro 16 GB, edits with the reference at the output's size, alternated:
 
 Page-ins vary with what else the Mac runs: during these runs free memory sat near zero (12.5 of 16 GB used, 4.6 GB of swap),
 and every configuration still reads ~2 GB of the DiT's pages a step. A 1 MP
-edit: vision tower 2.5 s, text encoder 3.7 s (1 037 tokens), VAE encoder 0.8 s, step 1 ~20 s, then ~10.4 s, VAE 4.6–5 s; peak footprint
+edit: vision tower 2.5 s (1.6–1.8 s since 2026-10-26, below), text encoder 3.7 s (1 037 tokens), VAE encoder 0.8 s, step 1 ~20 s, then ~10.4 s, VAE 4.6–5 s; peak footprint
 5.0 GB. Through the server (`tools/api_check.py --ref … --enhance`, 768 × 448): Prompt+ looking at the reference 5.5–6.8 s
 (vision 0.6 s, 742 prompt tokens), the edit 36.4–37.3 s, peak footprint 3.6 GB.
 
@@ -495,13 +495,15 @@ texture-fix VAE, M2 Pro, 2026-10-25): the latent within 6.5e-6. 1024²: 0.59 s a
 `<|image_pad|>` slots): Qwen3-VL's ViT from Kokon's mmproj GGUF (llama.cpp's layout: the Conv3d as one kernel per frame,
 fused q/k/v, `mm.0`/`mm.2` the merger, `v.deepstack.8/16/24`), fp32 on the GPU with the F16 weights unpacked before each
 product. The patches in the processor's 2 × 2 merge-block order, the two frames' kernels summed (both frames are the
-image), the 48 × 48 position table resampled bilinearly, axial 2D RoPE, the 72-dimension heads on the DiT's flash kernel
-zero-padded to 128. Its input is the processor's: alpha over white as PIL's paste, and below 65 536 pixels the processor's
+image), the 48 × 48 position table resampled bilinearly, axial 2D RoPE, the 72-dimension heads on the DiT's fp32 flash
+kernel built for 72 (`flash_attention_72`). Its input is the processor's: alpha over white as PIL's paste, and below 65 536 pixels the processor's
 resize (torchvision's uint8 antialiased bicubic: PIL's kernel with int16 weights, horizontal pass first; bit for bit).
 `check-vision` against `tools/reference_vision.py` (transformers' `Qwen3VLVisionModel`, M2 Pro, 2026-10-25), 320 × 224:
 the pixels within 1.6e-7 (float rounding), the merged rows within 1.35e-5 of torch fp32 and **7.6e-6 of fp64**
 (`--dtype float64`; torch's own fp32 is 1.55e-5 from it), deepstack 3.8–9.4e-6; 256 × 192 (resized to 320 × 224) and
-an RGBA image the same. 1024²: 2.5 s an encode (4 096 patches; the padded heads cost ~1.8× the attention's work).
+an RGBA image the same. 1024²: 1.6–1.8 s an encode (4 096 patches), 2.6–2.7 s while the heads were zero-padded to 128
+(~1.8× the attention's work; the same values to the bit, `check-vision` and `check-text` with the cat unchanged to every
+digit; M2 Pro, 2026-10-26, other apps open).
 
 ```bash
 ~/kokon-bench/venv-oracle/bin/python -I tools/reference_vision.py <mmproj.gguf> <processor dir> <text_encoder dir> ~/kokon-bench/ref/vision-320 [--dtype float64]

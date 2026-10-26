@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  macEngineOfferDue,
   macBenchProgress,
   activeLoras, activeOverrides, buildRequest, composing, editing, reviewRequest, wantsPromptReview, toggleLora, MAX_LORAS, jobPercent, compareBase, composerFromRecord, enhancerApplies, diffPixels, emptyComposer, expansionPixels, expansionPreset, jobLabel, jobSecondsLeft, lutInfo, moveRef, needsPrompt, normalizeQuality, persistentAdvanced, pipelineSummary,
   planPipeline, remainingSeconds, sizeForWidth, timeAgo, upscaleRequest, upscaleTargets, versionLabels, type JobClock, type Ref,
@@ -625,5 +626,21 @@ describe("macBenchProgress", () => {
   it("is nothing when not running", () => {
     expect(macBenchProgress({ state: "idle" }, t0)).toBeNull();
     expect(macBenchProgress({ state: "done", report: "r", finished_at: started_at, quick: false }, t0)).toBeNull();
+  });
+});
+
+describe("macEngineOfferDue", () => {
+  const gpu = (gb: number) => ({ name: "Apple M2 Pro", vendor: "apple", unified: true, memory_total_mib: gb * 1024, memory_used_mib: 0, memory_free_mib: 0, driver_version: "" });
+  const st = (available: boolean, on: boolean, gb = 16) => ({ gpu: gpu(gb), mac_engine: { available, on } });
+  it("offers it once on a set-up Mac with the engine in the app", () => {
+    expect(macEngineOfferDue(st(true, false), {}, true)).toBe(true);
+    expect(macEngineOfferDue(st(true, false), { macEngineOffered: true }, true)).toBe(false);
+  });
+  it("not before setup, without the engine, when it is on, or below 16 GB", () => {
+    expect(macEngineOfferDue(st(true, false), {}, false)).toBe(false);
+    expect(macEngineOfferDue(st(false, false), {}, true)).toBe(false);
+    expect(macEngineOfferDue(st(true, true), {}, true)).toBe(false);
+    expect(macEngineOfferDue(st(true, false, 8), {}, true)).toBe(false);
+    expect(macEngineOfferDue({ gpu: null, mac_engine: undefined }, {}, true)).toBe(false);
   });
 });

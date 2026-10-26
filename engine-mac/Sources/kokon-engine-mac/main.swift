@@ -198,6 +198,9 @@ do {
         guard arguments.count >= 6 else { fail(usage) }
         try Bench.child(mode: arguments[1], encoder: arguments[2], dit: arguments[3], vae: arguments[4], prefix: arguments[5],
                         quick: arguments.contains("--quick"))
+    case "kernels":
+        // Where the kernels' source was found (diagnostics: Kokon.app, tauri dev, swift build).
+        print(EngineBundle.kernels?.path ?? "not found")
     case "check-ane8":
         try Checks.aneInt8()
     case "check-na":

@@ -267,6 +267,8 @@ async fn status(State(s): St) -> Json<Value> {
         "active_job": s.engine.active_job(),
         "queue": { "queued": queued, "jobs": jobs.iter().filter(|j| !j.status.is_terminal()).collect::<Vec<_>>() },
         "setup_complete": cfg.setup_complete,
+        // Kokon's Mac engine: installed (inside the app or by hand) and switched on.
+        "mac_engine": { "available": cfg.gpu_backend == GpuBackend::Metal && cfg.mac_engine_exe().is_file(), "on": cfg.uses_mac_engine() },
     }))
 }
 

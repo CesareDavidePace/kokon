@@ -1,6 +1,6 @@
 // Pure UI logic (unit-tested in logic.test.ts).
 
-import type { Advanced, GenerationRecord, GenerationRequest, InpaintAction, InputRecord, InstallItem, JobView, LoraItem, LutInfo, MacBenchState, Mode, OutpaintSpec, Plan, Quality, ResolutionMode, Size } from "./types";
+import type { Advanced, GenerationRecord, GenerationRequest, InpaintAction, InputRecord, InstallItem, JobView, LoraItem, LutInfo, MacBenchState, Mode, StatusResponse, OutpaintSpec, Plan, Quality, ResolutionMode, Size } from "./types";
 
 export interface Ref {
   key: string;
@@ -640,6 +640,13 @@ export function formatBytes(n: number): string {
   if (n >= 1e9) return `${(n / 1e9).toFixed(n >= 1e10 ? 0 : 1)} GB`;
   if (n >= 1e6) return `${Math.round(n / 1e6)} MB`;
   return `${Math.max(0, Math.round(n / 1e3))} KB`;
+}
+
+/** Offer Kokon's Mac engine once, at start: set up, the engine in the app, off, never asked. Not below 16 GB: the
+ * engine peaks at ~9 GB during a 1024² decode (M2 Pro, Benchmark button 2026-10-26) and was never run on 8 GB. */
+export function macEngineOfferDue(st: Pick<StatusResponse, "gpu" | "mac_engine"> | null, ui: Record<string, unknown>, setupComplete: boolean): boolean {
+  const engine = st?.mac_engine;
+  return setupComplete && !!engine?.available && !engine.on && !ui.macEngineOffered && (st?.gpu?.memory_total_mib ?? 0) >= 15 * 1024;
 }
 
 /** Benchmark this Mac while it runs: the bar's fill and the line under it ("Step 2 of 7 · Default: accuracy at

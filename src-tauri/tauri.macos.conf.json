@@ -22,6 +22,14 @@
     ]
   },
   "bundle": {
+    "externalBin": [
+      "binaries/kokon-service",
+      "binaries/kokon-mcp",
+      "binaries/kokon-engine-mac"
+    ],
+    "resources": {
+      "resources/engine-mac/": "engine-mac/"
+    },
     "targets": [
       "app",
       "dmg"

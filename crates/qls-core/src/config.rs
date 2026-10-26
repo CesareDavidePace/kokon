@@ -794,9 +794,16 @@ impl AppConfig {
 
     pub fn server_exe(&self) -> PathBuf {
         if self.uses_mac_engine() {
-            return self.sdcpp_dir.join(MAC_ENGINE_DIR).join(MAC_ENGINE_EXE);
+            return self.mac_engine_exe();
         }
         self.engine_dir().join(if cfg!(windows) { "sd-server.exe" } else { "sd-server" })
+    }
+
+    /// Kokon's Mac engine, on or off: the copy inside the app (next to kokon-service; `tauri dev` puts one there too),
+    /// else the one `engine-mac/tools/install-dev.sh` puts in the stable-diffusion.cpp folder.
+    pub fn mac_engine_exe(&self) -> PathBuf {
+        let here = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf));
+        mac_engine_in(here.as_deref(), &self.sdcpp_dir)
     }
 
     /// Kokon's Mac engine runs instead of sd-server: chosen in Settings, on the Metal backend only.
@@ -925,9 +932,25 @@ fn extra_weights_mib(diffusion: u64, text_encoder: u64, unified: bool) -> u64 {
     extra >> 20
 }
 
+/// See [`AppConfig::mac_engine_exe`]: `app_dir` is kokon-service's folder.
+fn mac_engine_in(app_dir: Option<&Path>, sdcpp_dir: &Path) -> PathBuf {
+    app_dir.map(|d| d.join(MAC_ENGINE_EXE)).filter(|p| p.is_file()).unwrap_or_else(|| sdcpp_dir.join(MAC_ENGINE_DIR).join(MAC_ENGINE_EXE))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mac_engine_inside_the_app_first() {
+        let app = tempfile::tempdir().unwrap();
+        let sdcpp = tempfile::tempdir().unwrap();
+        let dev = sdcpp.path().join(MAC_ENGINE_DIR).join(MAC_ENGINE_EXE);
+        assert_eq!(mac_engine_in(Some(app.path()), sdcpp.path()), dev);
+        assert_eq!(mac_engine_in(None, sdcpp.path()), dev);
+        std::fs::write(app.path().join(MAC_ENGINE_EXE), b"").unwrap();
+        assert_eq!(mac_engine_in(Some(app.path()), sdcpp.path()), app.path().join(MAC_ENGINE_EXE));
+    }
 
     /// Empty files at every path of `p`.
     fn touch_files(p: &ModelProfile) {

@@ -2,7 +2,7 @@ import { CircleAlert, Container, FolderSync, ShieldCheck, Smartphone, TabletSmar
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { formatBytes, installProgress, installStep, installTimeLeft } from "../lib/logic";
-import { refreshStatus, setState, toastError, useStore } from "../lib/store";
+import { afterStartScreens, refreshStatus, setState, toastError, useStore } from "../lib/store";
 import type { GpuBackend, InstallItem, InstallStatus, ModelsStatus } from "../lib/types";
 import { KokonMark } from "./Welcome";
 
@@ -155,7 +155,7 @@ export function WhatsNew() {
     setState({ overlay: null });
     markSeen(postponed && engine && needsEngine ? engine.release : null);
     refreshStatus();
-    api.startBackend().then(refreshStatus, () => refreshStatus());
+    afterStartScreens();
   };
 
   return (

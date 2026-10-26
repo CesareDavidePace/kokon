@@ -9,10 +9,10 @@ import { inBrowser, isNarrow } from "./platform";
 import { useSyncExternalStore } from "react";
 import { markFresh } from "../components/Cocoon";
 import { api, ApiError, setPrivateInputs, subscribe, urls } from "./api";
-import { activeLoras, buildRequest, composing, emptyComposer, goneVersions, needsPrompt, newKey, pageOutdated, persistentAdvanced, refFromGen, refFromInput, reviewRequest, stageFitsPreview, starPromptDue, timelineLinks, undoTarget, versionLabels, wantsPromptReview, type CompareMode, type Composer, type Ref } from "./logic";
+import { activeLoras, buildRequest, composing, emptyComposer, goneVersions, macEngineOfferDue, needsPrompt, newKey, pageOutdated, persistentAdvanced, refFromGen, refFromInput, reviewRequest, stageFitsPreview, starPromptDue, timelineLinks, undoTarget, versionLabels, wantsPromptReview, type CompareMode, type Composer, type Ref } from "./logic";
 import type { AppErrorBody, GenerationRecord, GenerationRequest, InputRecord, JobView, LoraItem, MacBenchState, ServerState, StatusResponse } from "./types";
 
-export type Overlay = null | "gallery" | "settings" | "inpaint" | "expand" | "welcome" | "whats-new" | "prompt-tips" | "shortcuts";
+export type Overlay = null | "gallery" | "settings" | "inpaint" | "expand" | "welcome" | "whats-new" | "mac-engine" | "prompt-tips" | "shortcuts";
 
 export interface SessionItem {
   key: string;
@@ -494,6 +494,21 @@ export function dismissToast(id: string) {
 // ---------------------------------------------------------------------------------------
 
 let unsub: (() => void) | null = null;
+
+/** After Setup or What's new: the Mac engine offer when it is due (the answer decides which engine loads), else the
+ * model loads in the background so the first image starts at once. */
+export async function afterStartScreens() {
+  try {
+    const [cfg, st] = await Promise.all([api.config(), api.status()]);
+    if (!inBrowser && macEngineOfferDue(st, (cfg.ui ?? {}) as Record<string, unknown>, cfg.setupComplete)) {
+      setState({ overlay: "mac-engine" });
+      return;
+    }
+  } catch {
+    // The offer can wait for the next start; the model still loads.
+  }
+  api.startBackend().then(refreshStatus, () => refreshStatus());
+}
 
 export async function refreshStatus() {
   try {

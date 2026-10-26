@@ -32,7 +32,7 @@ public final class MetalContext: @unchecked Sendable {
         }
         self.device = device
         self.queue = queue
-        guard let directory = Bundle.module.url(forResource: "Kernels", withExtension: nil) else {
+        guard let directory = EngineBundle.kernels else {
             throw Failure.noKernelSource
         }
         let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)

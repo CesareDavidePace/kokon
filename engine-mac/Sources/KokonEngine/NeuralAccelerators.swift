@@ -25,7 +25,7 @@ public final class NeuralAccelerators: @unchecked Sendable {
             return nil
         }
         do {
-            guard let url = Bundle.module.url(forResource: "Kernels", withExtension: nil)?
+            guard let url = EngineBundle.kernels?
                 .appendingPathComponent("metal4/na_matmul.metal") else { throw MetalContext.Failure.noKernelSource }
             let options = MTLCompileOptions()
             options.languageVersion = .version4_0

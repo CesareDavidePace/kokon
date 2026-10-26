@@ -45,5 +45,8 @@ exec node "$ROOT/mcp/build/kokon-mcp.cjs" "\$@"
 EOF
 chmod +x "src-tauri/binaries/kokon-mcp-$TRIPLE"
 
+echo "→ Kokon's Mac engine (Swift)"
+bash engine-mac/tools/stage-app.sh
+
 echo "→ Starting Kokon (close the window to stop)"
 npx tauri dev

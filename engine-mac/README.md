@@ -24,9 +24,13 @@ bash tools/ab.sh snapshot base; bash tools/ab.sh run 2 "base|base|X=1" "new|new|
                                              # alternated A/B of build snapshots and settings (steps, page-ins)
 ```
 
-In the app: `bash tools/install-dev.sh` puts the build where Kokon looks for it, then Settings → Performance →
-"Kokon's Mac engine (experimental)". Off by default; sd.cpp stays the default, the fallback, and the engine on
-Windows and Linux.
+In the app: Kokon.app carries the engine (1.7 MB: `Contents/MacOS/kokon-engine-mac`, the kernels in
+`Contents/Resources/engine-mac/`; `tools/stage-app.sh`, called by `scripts/dev/mac-dev.sh` and
+`scripts/build-release-mac.sh`), and Settings → Performance → "Kokon's Mac engine (experimental)" turns it on. Off by
+default; at the first start on a Mac with 16 GB or more Kokon offers it once, before the model loads. sd.cpp stays the
+default, the fallback, and the engine on Windows and Linux. Without the app's copy (a service run with `cargo run`),
+`bash tools/install-dev.sh` puts the build in the stable-diffusion.cpp folder; `kokon-engine-mac kernels` prints where
+the kernels were found.
 
 ## What is here
 

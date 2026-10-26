@@ -34,6 +34,9 @@ public enum Bench {
         return paths
     }
 
+    /// Seconds between image 1 and image 2.
+    static let pause = 10.0
+
     /// The fp32 path, GPU only: the reference for accuracy.
     static let reference = ["KOKON_WEIGHTS": "fp32", "KOKON_ACTIVATIONS": "fp32", "KOKON_ATTENTION": "fp32",
                             "KOKON_COEXEC": "0", "KOKON_NA": "0"]
@@ -52,6 +55,10 @@ public enum Bench {
 
         var runs = [Run(name: "default (paths above)", environment: [:])]
         for path in paths { runs.append(Run(name: "\(path.1)=\(path.2)", environment: [path.1: path.2])) }
+        // Below 32 GB the models are read back into the file cache after each image (`Prefetch`): its gain on image 2.
+        if chip.memoryGB < 30, Prefetch.enabled {
+            runs.append(Run(name: "KOKON_PREFETCH=0", environment: ["KOKON_PREFETCH": "0"]))
+        }
         // The opt-in int8 Neural Engine path where it may pay (libnnc's M3/M4 path; less accurate everywhere).
         if (chip.generation ?? 5) >= 3, #available(macOS 26, *) {
             for mode in ["w8", "1"] { runs.append(Run(name: "KOKON_ANE_INT8=\(mode)", environment: ["KOKON_ANE_INT8": mode])) }
@@ -140,7 +147,8 @@ public enum Bench {
             }
         }
         lines += ["", "Image 1 includes loading the models and building the Neural Engine's programs; image 2 is the engine "
-                  + "already running, as in the app (below 32 GB the app loads the models again for every image, so image 2 does too). Accuracy at 512² against the engine's fp32 GPU path"
+                  + "already running, as in the app, \(Int(Bench.pause)) s after image 1 (below 32 GB the models are loaded again for "
+                  + "every image, read back into the file cache meanwhile unless KOKON_PREFETCH=0). Accuracy at 512² against the engine's fp32 GPU path"
                   + (quick ? "; --quick: one image per run." : ".")]
         return lines.joined(separator: "\n")
     }
@@ -196,6 +204,8 @@ public enum Bench {
         } else {
             var images: [Double] = [], steps: [Double] = [], vae = 0.0, parts: [[String: Double]] = []
             for i in 0..<(quick ? 1 : 2) {
+                // Image 2 after a pause, like someone looking at image 1 (the time `Prefetch` reads the models in).
+                if i > 0 { Thread.sleep(forTimeInterval: Bench.pause) }
                 _ = try pipeline.textToImage(prompt: Bench.prompt, width: 1024, height: 1024, seed: 42 + UInt64(i))
                 let t = pipeline.timings
                 images.append(t["total"] ?? .nan)

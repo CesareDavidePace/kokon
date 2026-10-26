@@ -295,6 +295,11 @@ public final class QwenPipeline {
         timings["vae"] = since(t)
         timings["total"] = since(started)
         log(String(format: "VAE: %.2f s; total %.1f s", timings["vae"]!, timings["total"]!))
+        // The server's next image: the models that were not kept go back into the file cache meanwhile (`Prefetch`).
+        if keepModels, Prefetch.enabled {
+            let dropped = [(encoderPath, keepEncoder), (ditPath, keepDiT), (vaePath, keepVAE)].filter { !$0.1 }.map(\.0)
+            if !dropped.isEmpty { Prefetch.files(dropped) }
+        }
         return image
     }
 

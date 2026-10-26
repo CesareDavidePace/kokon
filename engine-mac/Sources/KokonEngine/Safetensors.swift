@@ -49,6 +49,33 @@ public final class SafetensorsFile: @unchecked Sendable {
 
     deinit { munmap(UnsafeMutableRawPointer(mutating: base), length) }
 
+    /// A tensor as fp32 into `out` (its count of floats); BF16 widened 8 values at a time on every core (the VAE's
+    /// ~260 M decoder weights, read again for each image below 32 GB of memory).
+    public func copyFloats(_ name: String, into out: UnsafeMutablePointer<Float>) throws {
+        guard let t = tensors[name] else { throw GGUFFile.Failure.unsupported("no tensor \(name) in \(path)") }
+        guard t.dtype == "BF16" else {
+            let values = try floats(name)
+            out.update(from: values, count: values.count)
+            return
+        }
+        let p = base + dataStart + t.start, count = t.count
+        let chunk = 1 << 20, chunks = (count + chunk - 1) / chunk
+        nonisolated(unsafe) let (source, target) = (p, UnsafeMutableRawPointer(out))
+        DispatchQueue.concurrentPerform(iterations: chunks) { c in
+            let start = c * chunk, end = min(count, start + chunk)
+            var i = start
+            while i + 8 <= end {
+                let v = SIMD8<UInt32>(truncatingIfNeeded: source.loadUnaligned(fromByteOffset: 2 * i, as: SIMD8<UInt16>.self)) &<< 16
+                target.storeBytes(of: v, toByteOffset: 4 * i, as: SIMD8<UInt32>.self)
+                i += 8
+            }
+            while i < end {
+                target.storeBytes(of: UInt32(source.loadUnaligned(fromByteOffset: 2 * i, as: UInt16.self)) << 16, toByteOffset: 4 * i, as: UInt32.self)
+                i += 1
+            }
+        }
+    }
+
     /// A tensor as fp32 (BF16, F16 or F32 in the file).
     public func floats(_ name: String) throws -> [Float] {
         guard let t = tensors[name] else { throw GGUFFile.Failure.unsupported("no tensor \(name) in \(path)") }

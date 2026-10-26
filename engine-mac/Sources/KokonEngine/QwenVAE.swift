@@ -47,8 +47,24 @@ public final class QwenVAE {
     /// 1024², the first two 2.65, for 2.2–2.7e-3 of diffusers instead of 1.1e-5 (M2 Pro, `check-vae`, 2026-10-25). The
     /// VAE stays fp32.
     var executables: [String: MPSGraphExecutable] = [:]
-    private var feedOrders: [String: [Int]] = [:]
     let lock = NSLock()
+
+    /// **Compiled single-operation graphs** (a convolution with its bias and skip, the mid block's attention), shared by
+    /// every instance: their weights are inputs, so they hold none. Below 32 GB the pipeline makes a new VAE for each
+    /// image, which compiled them all again (a new instance's decode 3.9–4.1 s against 3.1, with its weights' reading).
+    nonisolated(unsafe) private static var operationGraphs: [String: (MPSGraphExecutable, [Int])] = [:]
+    private static let graphLock = NSLock()
+
+    /// The graph cached under `key` (with the device), compiled by `build` the first time; its executable and the
+    /// order of its inputs.
+    static func operationGraph(_ key: String, _ build: () throws -> (MPSGraphExecutable, [Int])) throws -> (MPSGraphExecutable, [Int]) {
+        try graphLock.withLock {
+            if let cached = operationGraphs[key] { return cached }
+            let made = try build()
+            operationGraphs[key] = made
+            return made
+        }
+    }
 
     public init(path: String, context: MetalContext) throws {
         file = try SafetensorsFile(path: path)
@@ -117,6 +133,7 @@ public final class QwenVAE {
         var commands = MPSCommandBuffer(from: context.queue)
         let pool = BufferPool(context: context)
         let memory = ProcessInfo.processInfo.environment["KOKON_VAE_MEMORY"] != nil   // waits after each stage to tell
+        var stageStart = DispatchTime.now().uptimeNanoseconds
         var current = try pool.take(latent.count)
         current.contents().copyMemory(from: latent, byteCount: 4 * latent.count)
         for (stage, tile) in stages {
@@ -133,8 +150,10 @@ public final class QwenVAE {
                 commands.commit()
                 commands.waitUntilCompleted()
                 commands = MPSCommandBuffer(from: context.queue)
-                print(String(format: "  after %@: footprint %.2f GB, pool %.2f GB", stage.description, MemoryUsage.now().footprint,
-                             Double(pool.bytes) / Double(1 << 30)))
+                let now = DispatchTime.now().uptimeNanoseconds
+                print(String(format: "  after %@: %.2f s, footprint %.2f GB, pool %.2f GB", stage.description,
+                             Double(now - stageStart) * 1e-9, MemoryUsage.now().footprint, Double(pool.bytes) / Double(1 << 30)))
+                stageStart = now
             }
         }
         commands.commit()
@@ -170,7 +189,7 @@ public final class QwenVAE {
     /// `stage` on an `H` × `W` input, whole.
     private func encode(_ stage: Stage, from input: MTLBuffer, to output: MTLBuffer, height H: Int, width W: Int,
                         pool: BufferPool, commands: MPSCommandBuffer) throws {
-        if ops && stage.first >= 0 {
+        if ops && (stage.first >= 0 || midOperations) {
             return try encodeOperations(stage, from: input, to: output, height: H, width: W, pool: pool, commands: commands)
         }
         _ = try prepare(stage, height: H, width: W)
@@ -206,21 +225,18 @@ public final class QwenVAE {
         var (x, c, hh, ww) = (input, Stage.channels(stage.first), H, W)
         /// Gives `b` back unless it is the stage's input (the caller's).
         func done(_ b: MTLBuffer) { if b !== input { pool.give(b) } }
-        for i in stage.first..<stage.end {
+        if stage.first < 0 {
+            let mid = stage.end == 0 ? output : try pool.take(QwenVAE.dims[0] * H * W)
+            try encodeMid(from: input, to: mid, height: H, width: W, pool: pool, commands: commands)
+            if stage.end == 0 { return }
+            (x, c) = (mid, QwenVAE.dims[0])
+        }
+        for i in max(stage.first, 0)..<stage.end {
             let (inC, outC) = (QwenVAE.dims[i], QwenVAE.dims[i + 1])
             let blockInput = x
             for j in 0..<3 {
-                let name = "decoder.upsamples.\(i).upsamples.\(j)"
-                let t = try pool.take(c * hh * ww)
-                try normSilu(x, to: t, gamma: name + ".residual.0.gamma", channels: c, pixels: hh * ww, commands: commands)
-                let u = try pool.take(outC * hh * ww)
-                try convolution(t, name + ".residual.2", inC: c, outC: outC, k: 3, height: hh, width: ww, to: u, commands: commands)
-                pool.give(t)
-                try normSilu(u, to: u, gamma: name + ".residual.3.gamma", channels: outC, pixels: hh * ww, commands: commands)
-                let y = try pool.take(outC * hh * ww)
-                try convolution(u, name + ".residual.6", inC: outC, outC: outC, k: 3, height: hh, width: ww, to: y,
-                                skip: (x, c == outC ? nil : name + ".shortcut", c), commands: commands)
-                pool.give(u)
+                let y = try residualBlock(x, "decoder.upsamples.\(i).upsamples.\(j)", inC: c, outC: outC, height: hh, width: ww,
+                                          pool: pool, commands: commands)
                 if x !== blockInput { done(x) }
                 (x, c) = (y, outC)
             }
@@ -253,14 +269,103 @@ public final class QwenVAE {
         }
     }
 
+    /// QwenImage21ResidualBlock on `[inC, h, w]` in `x`: norm + SiLU, 3×3, norm + SiLU, 3×3 with the skip (through
+    /// the 1×1 shortcut when the channels change), into `out` or a buffer of the pool.
+    func residualBlock(_ x: MTLBuffer, _ name: String, inC: Int, outC: Int, height hh: Int, width ww: Int, out: MTLBuffer? = nil,
+                       pool: BufferPool, commands: MPSCommandBuffer) throws -> MTLBuffer {
+        let t = try pool.take(inC * hh * ww)
+        try normSilu(x, to: t, gamma: name + ".residual.0.gamma", channels: inC, pixels: hh * ww, commands: commands)
+        let u = try pool.take(outC * hh * ww)
+        try convolution(t, name + ".residual.2", inC: inC, outC: outC, k: 3, height: hh, width: ww, to: u, commands: commands)
+        pool.give(t)
+        try normSilu(u, to: u, gamma: name + ".residual.3.gamma", channels: outC, pixels: hh * ww, commands: commands)
+        let y = try out ?? pool.take(outC * hh * ww)
+        try convolution(u, name + ".residual.6", inC: outC, outC: outC, k: 3, height: hh, width: ww, to: y,
+                        skip: (x, inC == outC ? nil : name + ".shortcut", inC), commands: commands)
+        pool.give(u)
+        return y
+    }
+
+    /// **The mid stage as operations** (`KOKON_VAE_MID_OPS=0`: one graph): the latent's scale and shift, post_quant_conv,
+    /// conv_in, the two residual blocks as the up blocks run them, and the attention block (norm, to_qkv, one head over
+    /// every pixel in a graph of its own, proj with the skip). As one graph it was compiled for each new instance with
+    /// its ~54 M weights as constants and kept 0.55 GB of intermediates at 1024².
+    public var midOperations = ProcessInfo.processInfo.environment["KOKON_VAE_MID_OPS"] != "0"
+
+    private lazy var latentAffine: (std: MTLBuffer, mean: MTLBuffer)? = {
+        guard let s = try? context.scratch(4 * 64, label: "latent std"), let m = try? context.scratch(4 * 64, label: "latent mean") else { return nil }
+        s.contents().copyMemory(from: QwenVAE.latentsStd, byteCount: 4 * 64)
+        m.contents().copyMemory(from: QwenVAE.latentsMean, byteCount: 4 * 64)
+        return (s, m)
+    }()
+
+    /// The normalized latent `[64, h, w]` in `input` to the mid block's output `[1152, h, w]` in `output`.
+    private func encodeMid(from input: MTLBuffer, to output: MTLBuffer, height h: Int, width w: Int, pool: BufferPool,
+                           commands: MPSCommandBuffer) throws {
+        let c = QwenVAE.dims[0], px = h * w
+        guard let affine = latentAffine else { throw MetalContext.Failure.buffer("VAE latent statistics") }
+        let a = try pool.take(64 * px)
+        try dispatch("vae_latent_affine", [input, a, affine.std, affine.mean], [64, UInt32(px)],
+                     grid: MTLSize(width: px, height: 64, depth: 1), commands: commands)
+        let b = try pool.take(64 * px)
+        try convolution(a, "conv2", inC: 64, outC: 64, k: 1, height: h, width: w, to: b, commands: commands)          // post_quant_conv
+        pool.give(a)
+        var x = try pool.take(c * px)
+        try convolution(b, "decoder.conv1", inC: 64, outC: c, k: 3, height: h, width: w, to: x, commands: commands)   // conv_in
+        pool.give(b)
+        var y = try residualBlock(x, "decoder.middle.0", inC: c, outC: c, height: h, width: w, pool: pool, commands: commands)
+        pool.give(x)
+        x = try attentionBlock(y, "decoder.middle.1", channels: c, height: h, width: w, pool: pool, commands: commands)
+        pool.give(y)
+        y = try residualBlock(x, "decoder.middle.2", inC: c, outC: c, height: h, width: w, out: output, pool: pool, commands: commands)
+        pool.give(x)
+    }
+
+    /// QwenImage21AttentionBlock on `[c, h, w]` in `x`: one head over every pixel, its own graph between to_qkv and proj.
+    func attentionBlock(_ x: MTLBuffer, _ name: String, channels c: Int, height h: Int, width w: Int, pool: BufferPool,
+                        commands: MPSCommandBuffer) throws -> MTLBuffer {
+        let px = h * w
+        let t = try pool.take(c * px)
+        try dispatch("vae_norm", [x, t, try weight(name + ".norm.gamma")], [UInt32(c), UInt32(px)],
+                     grid: MTLSize(width: px, height: 1, depth: 1), commands: commands)
+        let qkv = try pool.take(3 * c * px)
+        try convolution(t, name + ".to_qkv", inC: c, outC: 3 * c, k: 1, height: h, width: w, to: qkv, commands: commands)
+        pool.give(t)
+        let o = try pool.take(c * px)
+        let (executable, _) = try QwenVAE.operationGraph("\(context.device.registryID) attention \(c) \(h)×\(w)") {
+            let g = MPSGraph()
+            func n(_ v: [Int]) -> [NSNumber] { v.map { NSNumber(value: $0) } }
+            let input = g.placeholder(shape: n([1, 3 * c, h, w]), dataType: .float32, name: nil)
+            let rows = g.transpose(g.reshape(input, shape: n([3 * c, px]), name: nil), permutation: n([1, 0]), name: nil)
+            func part(_ i: Int) -> MPSGraphTensor {
+                g.reshape(g.sliceTensor(rows, dimension: 1, start: i * c, length: c, name: nil), shape: n([1, 1, px, c]), name: nil)
+            }
+            let a = g.scaledDotProductAttention(query: part(0), key: part(1), value: part(2), mask: nil,
+                                                scale: 1 / Float(c).squareRoot(), name: nil)
+            let back = g.reshape(g.transpose(g.reshape(a, shape: n([px, c]), name: nil), permutation: n([1, 0]), name: nil),
+                                 shape: n([1, c, h, w]), name: nil)
+            let descriptor = MPSGraphCompilationDescriptor()
+            descriptor.waitForCompilationCompletion = true
+            return (g.compile(with: MPSGraphDevice(mtlDevice: context.device),
+                              feeds: [input: MPSGraphShapedType(shape: n([1, 3 * c, h, w]), dataType: .float32)],
+                              targetTensors: [back], targetOperations: nil, compilationDescriptor: descriptor), [0])
+        }
+        _ = executable.encode(to: commands, inputs: [data(qkv, [1, 3 * c, h, w])], results: [data(o, [1, c, h, w])], executionDescriptor: nil)
+        pool.give(qkv)
+        let y = try pool.take(c * px)
+        try convolution(o, name + ".proj", inC: c, outC: c, k: 1, height: h, width: w, to: y, skip: (x, nil, c), commands: commands)
+        pool.give(o)
+        return y
+    }
+
     /// Weights as fp32 buffers, each read from the file once.
     private var weightBuffers: [String: MTLBuffer] = [:]
     func weight(_ name: String) throws -> MTLBuffer {
         try lock.withLock {
             if let b = weightBuffers[name] { return b }
-            let values = try file.floats(name)
-            let b = try context.scratch(4 * values.count, label: name)
-            b.contents().copyMemory(from: values, byteCount: 4 * values.count)
+            guard let t = file.tensors[name] else { throw GGUFFile.Failure.unsupported("no tensor \(name) in \(file.path)") }
+            let b = try context.scratch(4 * t.count, label: name)
+            try file.copyFloats(name, into: b.contents().assumingMemoryBound(to: Float.self))
             weightBuffers[name] = b
             return b
         }
@@ -302,8 +407,7 @@ public final class QwenVAE {
         let kind = skip == nil ? "" : skip!.shortcut == nil ? "+x" : "+1x1(\(skip!.channels))"
         let key = "conv \(inC)→\(outC) \(k)×\(k)\(kind)\(clamp ? " clamp" : "")\(downsample ? " /2" : "") \(h)×\(w)"
         let (oh, ow) = downsample ? (h / 2, w / 2) : (h, w)
-        let (executable, order) = try lock.withLock { () throws -> (MPSGraphExecutable, [Int]) in
-            if let e = executables[key], let order = feedOrders[key] { return (e, order) }
+        let (executable, order) = try QwenVAE.operationGraph("\(context.device.registryID) " + key) { () throws -> (MPSGraphExecutable, [Int]) in
             let g = MPSGraph()
             func n(_ v: [Int]) -> [NSNumber] { v.map { NSNumber(value: $0) } }
             var feeds: [MPSGraphTensor: MPSGraphShapedType] = [:], placeholders: [MPSGraphTensor] = []
@@ -338,8 +442,6 @@ public final class QwenVAE {
                               targetOperations: nil, compilationDescriptor: descriptor)
             // The executable takes its inputs in its own order (`feedTensors`), not the placeholders'.
             let order = (e.feedTensors ?? placeholders).map { t in placeholders.firstIndex { $0 === t }! }
-            executables[key] = e
-            feedOrders[key] = order
             return (e, order)
         }
         var inputs = [data(x, [1, inC, h, w]), data(try weight(name + ".weight"), [outC, inC, k, k]),

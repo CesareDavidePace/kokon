@@ -504,6 +504,15 @@ reach: the result is the whole graph's (1.2e-7; a 2-pixel halo is 17 levels off)
 | operations, tiles of 144 | 3.9 s | 1.47 GB | 3.85 GB |
 | graphs per block, every block tiled | 3.45 s | 3.8–5 GB | 6.25 GB |
 
+**The mid stage as operations too, the compiled operations shared by every instance** (2026-10-26; `KOKON_VAE_MID_OPS=0`
+for the graph): below 32 GB the pipeline makes a new VAE for each image, which converted its ~260 M weights bf16 → fp32
+one value at a time and compiled every graph again (the mid stage's with its ~54 M weights as constants). Now the weights
+are widened 8 at a time on every core straight into their buffers, the convolution and attention graphs (weights as
+inputs) are cached across instances, and the mid stage runs as the up blocks do (its one-head attention a graph of its
+own). `time-vae` at 1024², M2 Pro: a new instance's decode 3.9–4.1 → 3.1 s, the first 4.2 → 3.2, the next ones 3.05
+either way (the up blocks run at the GPU's fp32 rate, ~16 TFLOP in ~3 s), 1.67 → 1.52 GB kept after it, peak 4.6 → 4.5.
+`check-vae` against diffusers: 1.11e-5 at 256² (graph mid stage 1.04e-5), 1.37e-5 at 768², 1 level off at most.
+
 The untiled peak grows with the image; the tiles keep it bounded. Buffers the GPU used leave the footprint up to a second
 after their release (`time-vae` waits 1.5 s). `KOKON_VAE_OPS=0`, `KOKON_VAE_SPLIT`, `KOKON_VAE_TILES` to compare.
 fp16 up blocks (norms and the mid block kept fp32) are wrong (2.7e-1) and 3–11× slower only when MPSGraph may place

@@ -70,3 +70,26 @@ kernel void vae_avg_down_add(device float *out [[buffer(0)]], device const float
     }
     out[(ulong(gid.z) * p.h + gid.y) * p.w + gid.x] += sum / float(group);
 }
+
+/// QwenImage21RMS_norm alone (the attention block's), one pixel a thread: x / max(‖x‖, 1e-12) · √C · γ.
+kernel void vae_norm(device const float *x [[buffer(0)]], device float *out [[buffer(1)]],
+                     device const float *gamma [[buffer(2)]], constant uint2 &p [[buffer(3)]],
+                     uint i [[thread_position_in_grid]]) {
+    if (i >= p.y) return;
+    float sum = 0;
+    for (uint c = 0; c < p.x; c++) { float v = x[ulong(c) * p.y + i]; sum += v * v; }
+    float scale = sqrt(float(p.x)) / max(sqrt(sum), 1e-12f);
+    for (uint c = 0; c < p.x; c++) {
+        ulong at = ulong(c) * p.y + i;
+        out[at] = x[at] * scale * gamma[c];
+    }
+}
+
+/// The normalized latent back to the VAE's: x · std + mean per channel (`p.x` channels of `p.y` pixels).
+kernel void vae_latent_affine(device const float *x [[buffer(0)]], device float *out [[buffer(1)]],
+                              device const float *std [[buffer(2)]], device const float *mean [[buffer(3)]],
+                              constant uint2 &p [[buffer(4)]], uint2 gid [[thread_position_in_grid]]) {
+    if (gid.x >= p.y || gid.y >= p.x) return;
+    ulong at = ulong(gid.y) * p.y + gid.x;
+    out[at] = x[at] * std[gid.y] + mean[gid.y];
+}

@@ -246,17 +246,20 @@ extension Checks {
     /// first decode with its graph builds, then two more; the footprint 1.5 s after each, and the process's peak.
     public static func timeVAE(path: String, grid: Int) throws {
         let context = try MetalContext()
-        let vae = try QwenVAE(path: path, context: context)
+        var vae = try QwenVAE(path: path, context: context)
         let random = (0..<(64 * grid * grid)).map { Float(($0 * 7919) % 1000) / 500 - 1 }
         print("VAE \(grid * 16)² in \(tiles(vae, grid, grid)), \(String(format: "footprint %.2f GB", MemoryUsage.now().footprint))")
-        for run in 0..<3 {
+        for run in 0..<4 {
+            // The last one on a new instance, as the pipeline decodes below 32 GB (weights read, graphs compiled again).
+            if run == 3 { vae = try QwenVAE(path: path, context: context) }
             let started = DispatchTime.now().uptimeNanoseconds
             try autoreleasepool { _ = try vae.decode(random, height: grid, width: grid) }
             let seconds = Double(DispatchTime.now().uptimeNanoseconds - started) * 1e-9
             // Buffers the GPU used leave the footprint within a second of their release.
             Thread.sleep(forTimeInterval: 1.5)
             let m = MemoryUsage.now()
-            print(String(format: "decode %d: %.2f s, then footprint %.2f GB (peak %.2f GB)", run + 1, seconds, m.footprint, m.footprintPeak))
+            print(String(format: "decode %d%@: %.2f s, then footprint %.2f GB (peak %.2f GB)", run + 1, run == 3 ? " (new instance)" : "",
+                         seconds, m.footprint, m.footprintPeak))
         }
     }
 }

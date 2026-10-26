@@ -141,9 +141,21 @@ extension Checks {
             let rows = try reference(text, "conditioning")
             given = (rows, [Bool](repeating: false, count: rows.count / QwenDiT.dim))
         }
-        let image = try pipeline.generate(prompt: prompt, references: references, width: w * 16, height: h * 16, seed: 0,
-                                          noise: try reference(directory, "noise"), conditioning: given,
-                                          referenceLatents: latents) { i, latent in
+        // An init image and a mask (`reference_generate.py --init --mask --strength`).
+        var initImage: QwenPipeline.InitImage?, initLatent: [Float]?
+        if meta["init"] as? Bool == true {
+            let folder = URL(fileURLWithPath: directory)
+            let png = try QwenPipeline.decodeImage(Data(contentsOf: folder.appendingPathComponent("init.png")))
+            let mask = meta["mask"] as? Bool == true
+                ? try QwenPipeline.decodeGray(Data(contentsOf: folder.appendingPathComponent("mask.png"))).gray : nil
+            let strength = Float(meta["strength"] as? Double ?? 1)
+            initImage = .init(image: .init(rgba: png.rgba, width: png.width, height: png.height), mask: mask, strength: strength)
+            if mmproj == nil && !sizes.isEmpty { initLatent = try reference(directory, "init_latent") }
+            print("init image, \(mask == nil ? "no mask" : "mask"), strength \(strength)")
+        }
+        let image = try pipeline.generate(prompt: prompt, references: references, initImage: initImage, width: w * 16, height: h * 16,
+                                          seed: 0, noise: try reference(directory, "noise"), conditioning: given,
+                                          referenceLatents: latents, initLatent: initLatent) { i, latent in
             latent.withUnsafeBufferPointer { report("latent\(i)", $0.baseAddress!, try! reference(directory, "latent\(i)")) }
         }
         image.withUnsafeBufferPointer { report("image", $0.baseAddress!, try! reference(directory, "image")) }

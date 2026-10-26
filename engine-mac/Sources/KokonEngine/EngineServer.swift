@@ -9,9 +9,9 @@ import Foundation
 ///     POST /sdcpp/v1/jobs/{id}/cancel   200 {status: cancelled}: a running image stops within a DiT layer
 ///     POST /sdcpp/v1/text_gen           Prompt+: the text encoder's LLM writes, streamed as Server-Sent Events
 ///
-/// Text to image and edits (`ref_images`, with the vision projector given as `--llm_vision`; Prompt+ then also looks at
-/// the images); requests with a mask, an
-/// init image, LoRAs or a second pass are refused with 400 and say so. Jobs and text generation run one at a time;
+/// Text to image, edits (`ref_images`, with the vision projector given as `--llm_vision`; Prompt+ then also looks at
+/// the images) and an init image with a mask (`init_image`, `mask_image`, `strength`: brushed edits, extending an
+/// image); requests with LoRAs or a second pass are refused with 400 and say so. Jobs and text generation run one at a time;
 /// what stays loaded between them depends on the Mac (`QwenPipeline.keepModels`).
 ///
 /// Progress goes to stdout as sd-server's log lines, the ones qls-core's `ProgressParser` reads (process.rs):
@@ -54,6 +54,7 @@ public final class EngineServer: @unchecked Sendable {
         let sigmas: [Float]
         /// An edit's condition images, decoded, at the size they are encoded at.
         let references: [QwenPipeline.Reference]
+        let initImage: QwenPipeline.InitImage?
 
         /// nil and the reason when the engine cannot do it (yet). `vision`: the engine has the vision tower (edits).
         static func parse(_ body: Data, vision: Bool = true) -> (ImageRequest?, String?) {
@@ -61,9 +62,6 @@ public final class EngineServer: @unchecked Sendable {
                 return (nil, "the body is not a JSON object")
             }
             func array(_ key: String) -> [Any] { json[key] as? [Any] ?? [] }
-            if json["init_image"] is String || json["mask_image"] is String {
-                return (nil, "Kokon's Mac engine has no init image or mask yet (brushed edits, extending images)")
-            }
             let refs = array("ref_images")
             if !refs.isEmpty && !vision {
                 return (nil, "Qwen Image 2.1 editing requires Qwen3-VL vision weights; start the engine with --llm_vision")
@@ -113,8 +111,35 @@ public final class EngineServer: @unchecked Sendable {
                 }
                 references.append(r)
             }
+            // init_image, mask_image and strength (sd-server's default 0.75), at the output's size as Kokon sends them
+            // (`image_preprocess` mode=none).
+            func decoded(_ key: String) -> Data? {
+                (json[key] as? String).flatMap { Data(base64Encoded: String($0.split(separator: ",").last ?? ""), options: .ignoreUnknownCharacters) }
+            }
+            var initImage: QwenPipeline.InitImage?
+            if json["init_image"] is String || json["mask_image"] is String {
+                guard let data = decoded("init_image"), let image = try? QwenPipeline.decodeImage(data) else {
+                    return (nil, json["init_image"] is String ? "init_image is not a base64 image" : "a mask_image needs an init_image")
+                }
+                guard image.width == width, image.height == height else {
+                    return (nil, "init_image is \(image.width)×\(image.height); Kokon's Mac engine needs it at the output's \(width)×\(height)")
+                }
+                var mask: [UInt8]?
+                if json["mask_image"] is String {
+                    guard let data = decoded("mask_image"), let m = try? QwenPipeline.decodeGray(data) else {
+                        return (nil, "mask_image is not a base64 image")
+                    }
+                    guard m.width == width, m.height == height else {
+                        return (nil, "mask_image is \(m.width)×\(m.height); Kokon's Mac engine needs it at the output's \(width)×\(height)")
+                    }
+                    mask = m.gray
+                }
+                let strength = (json["strength"] as? NSNumber)?.floatValue ?? 0.75
+                guard strength.isFinite, strength >= 0, strength <= 1 else { return (nil, "strength \(strength) out of [0, 1]") }
+                initImage = .init(image: .init(rgba: image.rgba, width: width, height: height), mask: mask, strength: strength)
+            }
             return (ImageRequest(prompt: json["prompt"] as? String ?? "", width: width, height: height, seed: seed,
-                                 batch: batch, sigmas: sigmas, references: references), nil)
+                                 batch: batch, sigmas: sigmas, references: references, initImage: initImage), nil)
         }
     }
 
@@ -181,7 +206,7 @@ public final class EngineServer: @unchecked Sendable {
 
     func capabilities() -> [String: Any] {
         let url = URL(fileURLWithPath: paths.diffusionModel)
-        let feature: [String: Any] = ["ref_images": paths.vision != nil, "init_image": false, "mask_image": false, "lora": false,
+        let feature: [String: Any] = ["ref_images": paths.vision != nil, "init_image": true, "mask_image": true, "lora": false,
                                       "hires": false, "custom_sigmas": true, "cancel_generating": true]
         return [
             "engine": "kokon-engine-mac",
@@ -435,7 +460,7 @@ public final class EngineServer: @unchecked Sendable {
                     log("[INFO   ] engine-mac - decoding 1 latents")
                 }
             }
-            let image = try pipeline.generate(prompt: r.prompt, references: r.references, width: r.width, height: r.height,
+            let image = try pipeline.generate(prompt: r.prompt, references: r.references, initImage: r.initImage, width: r.width, height: r.height,
                                               seed: UInt64(bitPattern: seed), sigmas: r.sigmas)
             let png = try QwenPipeline.pngData(QwenPipeline.pixels(image, width: r.width, height: r.height), width: r.width, height: r.height)
             images.append(png.base64EncodedString())

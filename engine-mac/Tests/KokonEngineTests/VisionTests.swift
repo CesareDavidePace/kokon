@@ -1,3 +1,4 @@
+import ImageIO
 import XCTest
 @testable import KokonEngine
 
@@ -75,6 +76,39 @@ final class EditRequestTests: XCTestCase {
         XCTAssertNotNil(EngineServer.ImageRequest.parse(try body(["ref_images": [try png(336, 224)],
                                                                   "ref_image_args": "resize_before_vae=false"])).1)   // 336 % 32
         XCTAssertNotNil(EngineServer.ImageRequest.parse(try body(["ref_images": ["not an image"]])).1)
+    }
+
+    /// 8-bit gray PNG, as qls-core sends masks (`gray_png_b64`).
+    func grayPNG(_ gray: [UInt8], _ width: Int, _ height: Int) throws -> String {
+        let data = NSMutableData()
+        let provider = CGDataProvider(data: Data(gray) as CFData)!
+        let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 8, bytesPerRow: width,
+                            space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGBitmapInfo(rawValue: 0), provider: provider,
+                            decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
+        let destination = CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil)!
+        CGImageDestinationAddImage(destination, image, nil)
+        XCTAssert(CGImageDestinationFinalize(destination))
+        return (data as Data).base64EncodedString()
+    }
+
+    func testInitImageAndMaskAreReadAsSent() throws {
+        let gray = (0..<(512 * 384)).map { UInt8(truncatingIfNeeded: $0 * 13) }
+        let (r, reason) = EngineServer.ImageRequest.parse(try body(["init_image": try png(512, 384), "mask_image": try grayPNG(gray, 512, 384)]))
+        XCTAssertNil(reason)
+        XCTAssertEqual(r?.initImage?.mask, gray)   // gray values as stored, no color conversion
+        XCTAssertEqual(r?.initImage?.strength, 0.75)   // sd-server's default
+        XCTAssertEqual(r?.initImage?.image.rgba[4 * 5 + 1], UInt8(truncatingIfNeeded: (4 * 5 + 1) * 7))
+        let plain = EngineServer.ImageRequest.parse(try body(["init_image": try png(512, 384), "strength": 1])).0
+        XCTAssertNil(plain?.initImage?.mask)
+        XCTAssertEqual(plain?.initImage?.strength, 1)
+        XCTAssertNil(EngineServer.ImageRequest.parse(try body([:])).0?.initImage)
+    }
+
+    func testInitImageRefusals() throws {
+        XCTAssertNotNil(EngineServer.ImageRequest.parse(try body(["init_image": try png(256, 384)])).1)   // not the output's size
+        XCTAssertNotNil(EngineServer.ImageRequest.parse(try body(["mask_image": try png(512, 384)])).1)   // a mask alone
+        XCTAssertNotNil(EngineServer.ImageRequest.parse(try body(["init_image": try png(512, 384), "mask_image": try png(512, 256)])).1)
+        XCTAssertNotNil(EngineServer.ImageRequest.parse(try body(["init_image": try png(512, 384), "strength": 1.5])).1)
     }
 }
 

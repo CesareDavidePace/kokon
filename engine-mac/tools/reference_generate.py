@@ -15,7 +15,16 @@ to the VAE (RGBA, `VaeImageProcessor.preprocess` at its own size, which `resize_
 text reference's `image_pad_mask` places their slots. Saved as `reference<i>`.
 
     python -I engine-mac/tools/reference_generate.py <dit.gguf> <vae.safetensors> <text reference dir> <repo dir> <out>
-        [--grid 16 | --size WxH] [--seed 1] [--dtype float64]
+        [--grid 16 | --size WxH] [--seed 1] [--dtype float64] [--init in.png [--mask mask.png] [--strength 1]]
+
+**An init image and a mask** (`--init`, `--mask`, `--strength`; brushed edits and extending an image, as Kokon's
+sd.cpp runs them for Qwen-Image 2.1, pipeline/image.cpp and diffusion_engine.cpp), written as diffusers' inpaint
+pipelines loop (QwenImageInpaintPipeline): the init image encoded as the references are; the schedule cut by sd.cpp's
+rule (`t_enc = int(steps · strength)`, one less at `steps`, start at sigma index `steps − t_enc − 1`: one step more
+than diffusers' `get_timesteps`); the start `scale_noise(init, σ₀, noise)`; after each step the latent outside the
+mask replaced by the init noised to the next σ (the clean init after the last). The mask as sd.cpp reads it: gray / 255
+rounded, then the largest value of each 16 × 16 block (`NearestMax`), 1 = repaint. sd.cpp blends the x₀ prediction
+with the clean init instead, the same latent algebraically. Saves `init.png`, `mask.png` and `init_latent`.
 
 `--dtype float64`: the DiT and the latents in fp64 (the scheduler still rounds the latent to fp32 each step), the
 VAE in fp32. Needed on unsloth's DiT, where torch's fp32 drifts to 7e-5 of fp64 in one evaluation.
@@ -51,6 +60,9 @@ def main():
     parser.add_argument("--size", help="WxH of the image instead (multiples of 32)")
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--dtype", default="float32", choices=["float32", "float64"])
+    parser.add_argument("--init", help="init image (PNG at the output's size)")
+    parser.add_argument("--mask", help="mask (PNG at the output's size; white = repaint)")
+    parser.add_argument("--strength", type=float, default=1.0)
     args = parser.parse_args()
     dtype = getattr(torch, args.dtype)
     if dtype == torch.float64:
@@ -85,10 +97,34 @@ def main():
             refs.append((packed.to(dtype), rh // 16, rw // 16))
         del encoder_vae
 
+    # The init image and the mask (sd.cpp's rules, above).
+    init, keep = None, None
+    if args.init:
+        encoder_vae = load_full_vae(args.vae)
+        processor = VaeImageProcessor(vae_scale_factor=16, vae_latent_channels=64)
+        mean = torch.tensor(encoder_vae.config.latents_mean).view(1, 64, 1, 1, 1)
+        std = torch.tensor(encoder_vae.config.latents_std).view(1, 64, 1, 1, 1)
+        image = Image.open(args.init).convert("RGBA")
+        assert image.size == (w * 16, h * 16), f"the init image must be {w * 16}x{h * 16}"
+        image.save(os.path.join(args.out, "init.png"))
+        latent = (encoder_vae.encode(processor.preprocess(image, width=w * 16, height=h * 16).unsqueeze(2)).latent_dist.mode() - mean) / std
+        init = latent[0, :, 0].reshape(64, -1).transpose(0, 1)[None]
+        save("init_latent", init[0])
+        init = init.to(dtype)
+        del encoder_vae
+        if args.mask:
+            gray = Image.open(args.mask).convert("L")
+            assert gray.size == (w * 16, h * 16), f"the mask must be {w * 16}x{h * 16}"
+            gray.save(os.path.join(args.out, "mask.png"))
+            pixels = torch.from_numpy(np.asarray(gray, dtype=np.float32) / 255)
+            blocks = torch.floor(pixels + 0.5).view(h, 16, w, 16).amax(dim=(1, 3))   # std::round, then NearestMax
+            keep = (1 - blocks).reshape(1, h * w, 1).to(dtype)                       # 1 = the init stays
+
     # prepare_latents + _pack_latents
     noise = torch.randn((1, 1, 64, h, w), generator=torch.Generator().manual_seed(args.seed), dtype=torch.float32)
     save("noise", noise[0, 0])
-    latents = noise.view(1, 64, h * w).transpose(1, 2).to(dtype)
+    noise = noise.view(1, 64, h * w).transpose(1, 2).to(dtype)
+    latents = noise
 
     # retrieve_timesteps with the checkpoint's sigmas
     index = json.load(open(os.path.join(args.repo, "model_index.json")))
@@ -98,14 +134,25 @@ def main():
                          scheduler.config.get("max_image_seq_len", 4096), scheduler.config.get("base_shift", 0.5),
                          scheduler.config.get("max_shift", 1.15))
     scheduler.set_timesteps(sigmas=index["sample_sigmas"], mu=mu)
-    scheduler.set_begin_index(0)
+    start = 0
+    if init is not None and args.strength < 1:
+        steps = len(scheduler.timesteps)
+        t_enc = int(steps * np.float32(args.strength))
+        start = steps - (t_enc - 1 if t_enc == steps else t_enc) - 1
+    scheduler.set_begin_index(start)
+    timesteps = scheduler.timesteps[start:]
+    if init is not None:
+        latents = scheduler.scale_noise(init, timesteps[:1], noise)   # σ · noise + (1 − σ) · init
 
     dit = ReferenceDiT(args.dit, dtype=dtype)
-    for i, t in enumerate(scheduler.timesteps):
+    for i, t in enumerate(timesteps):
         velocity = dit.forward(conditioning, latents, h, w, t.expand(1).to(dtype) / 1000, progress=False,
                                refs=refs, slots=slots)
         save(f"velocity{i}", velocity[0])
         latents = scheduler.step(velocity, t, latents, return_dict=False)[0]
+        if keep is not None:
+            proper = init if i == len(timesteps) - 1 else scheduler.scale_noise(init, timesteps[i + 1:i + 2], noise)
+            latents = keep * proper + (1 - keep) * latents
         save(f"latent{i}", latents[0])
         print(f"step {i + 1}: t {float(t) / 1000:.6f}", flush=True)
 
@@ -121,9 +168,9 @@ def main():
     np.asarray(pil).tofile(os.path.join(args.out, "pixels.u8"))
 
     meta = {"prompt": text_meta["prompt"], "grid": [h, w], "seed": args.seed, "mode": pil.mode,
-            "sigmas": scheduler.sigmas.tolist(), "timesteps": (scheduler.timesteps / 1000).tolist(),
+            "sigmas": scheduler.sigmas[start:].tolist(), "timesteps": (timesteps / 1000).tolist(),
             "dit": os.path.basename(args.dit), "dtype": args.dtype, "vae": os.path.basename(args.vae),
-            "references": sizes}
+            "references": sizes, "init": init is not None, "mask": keep is not None, "strength": args.strength}
     with open(os.path.join(args.out, "meta.json"), "w") as f:
         json.dump(meta, f, indent=1)
     print(f"image {pil.size} {pil.mode}")

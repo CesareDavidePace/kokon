@@ -13,6 +13,24 @@ final class QwenPipelineTests: XCTestCase {
         XCTAssertEqual(QwenPipeline.unpack(tokens, height: h, width: w), latent)
     }
 
+    /// sd.cpp's img2img cut (pipeline/image.cpp): t_enc = int(8 · strength), at most 7, from sigma index 7 − t_enc.
+    func testStrengthCutsTheScheduleAsSdCpp() {
+        let sigmas = QwenPipeline.turboSigmas
+        XCTAssertEqual(QwenPipeline.steps(from: sigmas, strength: 1), sigmas)
+        XCTAssertEqual(QwenPipeline.steps(from: sigmas, strength: 0.99), sigmas)          // t_enc 7: every step
+        XCTAssertEqual(QwenPipeline.steps(from: sigmas, strength: 0.5), Array(sigmas[3...]))   // t_enc 4: 5 steps
+        XCTAssertEqual(QwenPipeline.steps(from: sigmas, strength: 0.125), Array(sigmas[6...]))
+        XCTAssertEqual(QwenPipeline.steps(from: sigmas, strength: 0), Array(sigmas[7...]))     // one step at least
+    }
+
+    /// The latent mask: gray / 255 rounded (128 repaints, 127 does not), then the largest of each 16 × 16 block.
+    func testMaskIsRoundedThenTheLargestOfEachBlock() {
+        var mask = [UInt8](repeating: 127, count: 48 * 32)   // 3 × 2 tokens
+        mask[5 * 48 + 20] = 128                              // pixel (20, 5): token (1, 0)
+        mask[31 * 48 + 47] = 255                             // the last pixel: token (2, 1)
+        XCTAssertEqual(QwenPipeline.keptTokens(mask: mask, width: 48, height: 32), [true, false, true, true, true, false])
+    }
+
     func testNoiseIsSdCppsBitForBit() {
         // Values of sd.cpp's PhiloxRNG built as Kokon's macOS engine (tools/philox_reference.cpp): the first four
         // and the last of a 1024² latent's draw, then the first of the next draw.

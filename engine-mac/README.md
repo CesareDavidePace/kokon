@@ -260,9 +260,9 @@ Engine's programs, are not pipelines an archive holds. Only an M2 Pro has been m
 
 `kokon-engine-mac serve` answers sd-server's `/sdcpp/v1` API (capabilities, img_gen, jobs/{id}, cancel), so
 qls-core, the app, remote access and MCP use it as they use sd-server; it prints the log lines qls-core's
-`ProgressParser` reads. Text to image, and edits with reference images when started with `--llm_vision` (qls-core passes
-the mmproj; below); an init image or a mask (brushed edits, extending an image), LoRAs and second passes are refused with
-400 (qls-core says so before submitting), upscaling falls back to Lanczos. Prompt+ works on every prompt (`text_gen`,
+`ProgressParser` reads. Text to image, edits with reference images when started with `--llm_vision` (qls-core passes
+the mmproj; below), and an init image with a mask (brushed edits, extending an image; below); LoRAs and second passes are
+refused with 400 (qls-core says so before submitting), upscaling falls back to Lanczos. Prompt+ works on every prompt (`text_gen`,
 below), looking at the images of an edit with the vision tower. A running image
 cancels within a DiT layer (sd-server answers 409 and qls-core restarts it). A new prompt length rebuilds the DiT's
 working memory in ~0.5 s.
@@ -372,7 +372,29 @@ within 6.8e-4 (the fp16 cache), the greedy choice the same at 23 of 23.
 .build/release/kokon-engine-mac generate <encoder.gguf> <dit.gguf> <vae> "make the cat a fox" --ref in.png --mmproj <mmproj.gguf>
 ```
 
-Not yet: an init image with a mask (brushed edits, extending an image: sd.cpp blends the masked latent each step).
+**Brushed edits and extending an image** (`init_image`, `mask_image`, `strength`; Kokon sends them with its references,
+both at the output's size): as Kokon's sd.cpp runs Qwen-Image 2.1 (pipeline/image.cpp, diffusion_engine.cpp). The init
+image goes through the VAE encoder as a reference does; `strength` cuts the schedule (`t_enc = int(8 · strength)`, at most
+7, from sigma index `7 − t_enc`: strength 1 runs all 8 steps, 0.6 runs 5); the start is `(1 − σ₀) · init + σ₀ · noise`
+(the noise itself at σ₀ = 1); the mask is read as stb_image reads it (8-bit gray as stored), each value / 255 rounded,
+then the largest of each 16 × 16 block (`NearestMax`), and outside it each step's x₀ prediction is the init, so the latent
+there stays the init's own noising and ends on the init.
+
+`reference_generate.py --init --mask --strength` writes it as diffusers' inpaint pipelines loop (`scale_noise` start, the
+init noised to the next σ blended in after each step: the same latent algebraically, written independently) with sd.cpp's
+schedule and mask rules. The street cat at 384 × 256 as init and reference, a feathered mask over the cat, "Turn the cat
+into a small red fox…" (M2 Pro, 2026-10-26):
+
+| | strength 1 (8 steps) | strength 0.6 (5 steps) |
+|---|---|---|
+| the reference's conditioning and latents, fp32 path | image 1.9e-6, 34 values off by 1 | 1.7e-6, 34 by 1 |
+| the engine's vision tower, text encoder, VAE encoder, fp32 path | 3.2e-6, 60 by 1 | 3.1e-6, 67 by 1 |
+| the same, default path | 2.1e-4, 1 384 by at most 2 | 1.6e-4, 1 181 by 1 |
+
+```bash
+~/kokon-bench/venv-oracle/bin/python -I tools/reference_generate.py <dit.gguf> <vae> ~/kokon-bench/ref/text/cat-edit <repo dir> ~/kokon-bench/ref/inpaint-cat-384 --size 384x256 --init cat-384x256.png --mask mask-cat-384x256.png --strength 1
+.build/release/kokon-engine-mac check-generate <encoder.gguf> <dit.gguf> <vae> ~/kokon-bench/ref/inpaint-cat-384 ~/kokon-bench/ref/text/cat-edit [<mmproj.gguf>]
+```
 
 ## Per-chip paths
 

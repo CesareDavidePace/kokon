@@ -97,6 +97,40 @@ public final class QwenPipeline {
                      sigmas: sigmas, step: step)
     }
 
+    /// **An init image** (sd-server's `init_image`, `mask_image`, `strength`: brushed edits, extending an image, img2img),
+    /// as Kokon's sd.cpp runs it for Qwen-Image 2.1 (pipeline/image.cpp, diffusion_engine.cpp): the image through the VAE
+    /// encoder as the references; the schedule cut by `strength` (`steps(from:strength:)`); the start
+    /// `(1 − σ₀) · init + σ₀ · noise`; with a mask, each step's x₀ prediction replaced by the init outside it.
+    public struct InitImage {
+        /// At the output's size, interleaved 8-bit RGBA.
+        public let image: Reference
+        /// 8-bit gray at the output's size, white = repaint; nil: img2img alone.
+        public let mask: [UInt8]?
+        public let strength: Float
+        public init(image: Reference, mask: [UInt8]?, strength: Float) { (self.image, self.mask, self.strength) = (image, mask, strength) }
+    }
+
+    /// sd.cpp's img2img schedule: `t_enc = int(steps · strength)` (one less when that is every step), from sigma index
+    /// `steps − t_enc − 1` to the end, so a strength below 1 runs `t_enc + 1` steps.
+    public static func steps(from sigmas: [Float], strength: Float) -> [Float] {
+        let steps = sigmas.count - 1
+        guard strength < 1, steps > 0 else { return sigmas }
+        var encoded = Int(Float(steps) * strength)
+        if encoded >= steps { encoded = steps - 1 }
+        return Array(sigmas[(steps - max(0, encoded) - 1)...])
+    }
+
+    /// sd.cpp's latent mask: each value / 255 rounded (≥ 128 repaints), then the largest of each 16 × 16 block
+    /// (`NearestMax`); true where the token keeps the init image.
+    public static func keptTokens(mask: [UInt8], width: Int, height: Int) -> [Bool] {
+        let (h, w) = (height / 16, width / 16)
+        var keep = [Bool](repeating: true, count: h * w)
+        for y in 0..<(h * 16) {
+            for x in 0..<(w * 16) where mask[y * width + x] >= 128 { keep[(y / 16) * w + x / 16] = false }
+        }
+        return keep
+    }
+
     /// **The vision tower's file** (mmproj, `--llm_vision`): edits need it.
     public var visionPath: String?
 
@@ -105,15 +139,20 @@ public final class QwenPipeline {
     /// the slots the encoder marks (`img_shapes`: the references, then the target). sd.cpp's `vlm_use_vae_input`: the
     /// tower sees the image the VAE encodes. `conditioning`: the encoder's rows and which are image slots, instead of
     /// encoding (the checks); `referenceLatents`: the references' packed tokens instead of the VAE encoder's.
-    public func generate(prompt: String, references: [Reference] = [], width: Int, height: Int, seed: UInt64,
-                         noise: [Float]? = nil, conditioning given: (rows: [Float], slots: [Bool])? = nil,
-                         referenceLatents givenLatents: [Float]? = nil, sigmas: [Float] = QwenPipeline.turboSigmas,
-                         step: ((Int, [Float]) -> Void)? = nil) throws -> [Float] {
+    /// `initImage`: start from an image (`InitImage`); `initLatent`: its packed tokens instead of the VAE encoder's.
+    public func generate(prompt: String, references: [Reference] = [], initImage: InitImage? = nil, width: Int, height: Int,
+                         seed: UInt64, noise: [Float]? = nil, conditioning given: (rows: [Float], slots: [Bool])? = nil,
+                         referenceLatents givenLatents: [Float]? = nil, initLatent givenInit: [Float]? = nil,
+                         sigmas: [Float] = QwenPipeline.turboSigmas, step: ((Int, [Float]) -> Void)? = nil) throws -> [Float] {
         guard width % 32 == 0, height % 32 == 0, width >= 64, height >= 64 else {
             throw QwenSequence.Failure.layout("\(width)×\(height): each side must be a multiple of 32, at least 64")
         }
         for r in references where r.width % 32 != 0 || r.height % 32 != 0 || r.rgba.count != 4 * r.width * r.height {
             throw QwenSequence.Failure.layout("a reference of \(r.width)×\(r.height): sides must be multiples of 32")
+        }
+        if let initImage, initImage.image.width != width || initImage.image.height != height
+            || initImage.image.rgba.count != 4 * width * height || (initImage.mask.map { $0.count != width * height } ?? false) {
+            throw QwenSequence.Failure.layout("the init image and its mask must be \(width)×\(height)")
         }
         let started = DispatchTime.now().uptimeNanoseconds
         timings = [:]
@@ -162,22 +201,26 @@ public final class QwenPipeline {
         log(String(format: "text encoder: %d tokens in %.2f s", rows, timings["encode"]!))
         events?(.encoded(tokens: rows, seconds: timings["encode"]!))
 
-        // 3. The references' latents (`_encode_vae_image`), packed and in order.
+        // 3. The references' latents (`_encode_vae_image`), packed and in order; the init image's the same way.
         t = DispatchTime.now().uptimeNanoseconds
         var referenceTokens: [Float] = givenLatents ?? []
-        if givenLatents == nil, !references.isEmpty {
+        var initTokens = givenInit
+        let encodeReferences = givenLatents == nil && !references.isEmpty
+        if encodeReferences || (initImage != nil && givenInit == nil) {
             if vae == nil { vae = try QwenVAE(path: vaePath, context: context) }
-            for r in references {
+            func encoded(_ r: Reference) throws -> [Float] {
                 // VaeImageProcessor.preprocess: x / 255, then 2x − 1; planar RGBA.
                 let plane = r.width * r.height
                 var input = [Float](repeating: 0, count: 4 * plane)
                 for p in 0..<plane { for c in 0..<4 { input[c * plane + p] = Float(r.rgba[p * 4 + c]) / 255 * 2 - 1 } }
-                let latent = try vae!.encode(input, height: r.height, width: r.width)
-                referenceTokens += QwenPipeline.pack(latent, height: r.height / 16, width: r.width / 16)
+                return QwenPipeline.pack(try vae!.encode(input, height: r.height, width: r.width), height: r.height / 16, width: r.width / 16)
             }
+            if encodeReferences { for r in references { referenceTokens += try encoded(r) } }
+            if let initImage, initTokens == nil { initTokens = try encoded(initImage.image) }
             if !keepVAE { vae = nil }
             timings["vae encode"] = since(t)
-            log(String(format: "VAE encoder: %d reference(s) in %.2f s", references.count, timings["vae encode"]!))
+            log(String(format: "VAE encoder: %d image(s) in %.2f s", (encodeReferences ? references.count : 0) + (givenInit == nil && initImage != nil ? 1 : 0),
+                       timings["vae encode"]!))
         }
 
         // 4. Noise, packed: token y·w + x holds the 64 channels of cell (y, x).
@@ -186,6 +229,13 @@ public final class QwenPipeline {
             throw QwenSequence.Failure.layout("noise of \(start.count) values for a \(channels)×\(h)×\(w) latent")
         }
         var x = QwenPipeline.pack(start, height: h, width: w)
+        let schedule = initImage.map { QwenPipeline.steps(from: sigmas, strength: $0.strength) } ?? sigmas
+        // sd.cpp's `noise_scaling` for flow models; at σ₀ = 1 (strength 1) the noise itself.
+        if let initTokens {
+            guard initTokens.count == x.count else { throw QwenSequence.Failure.layout("an init latent of \(initTokens.count) values") }
+            for j in x.indices { x[j] = initTokens[j] * (1 - schedule[0]) + x[j] * schedule[0] }
+        }
+        let kept = initImage?.mask.map { QwenPipeline.keptTokens(mask: $0, width: width, height: height) }
 
         // 5. The steps.
         t = DispatchTime.now().uptimeNanoseconds
@@ -208,21 +258,28 @@ public final class QwenPipeline {
             }
             dit.cancelled = cancelled
             defer { dit.cancelled = { false } }
-            try dit.prepareModulation([0] + sigmas.dropLast())
+            try dit.prepareModulation([0] + schedule.dropLast())
             timings["dit load"] = since(t)
             let memory = dit.memoryBytes
             log(String(format: "DiT: %d rows, prefix %d, prefix K/V cache %@, working memory %.2f GB%@", sequence.count, sequence.prefix,
                        dit.prefixCache.map { String(format: "%.2f GB (%@)", Double($0.length) / 1e9, dit.cacheFormat.rawValue) } ?? "off",
                        Double(memory.all) / 1e9, memory.target.map { String(format: " (target's %.2f GB)", Double($0) / 1e9) } ?? ""))
-            for i in 0..<(sigmas.count - 1) {
+            for i in 0..<(schedule.count - 1) {
                 if cancelled() { throw QwenDiT.Cancelled() }
                 let stepStart = DispatchTime.now().uptimeNanoseconds
-                let velocity = try dit.forward(encoder: conditioning, references: referenceTokens, target: x, sigma: sigmas[i])
-                let dt = sigmas[i + 1] - sigmas[i]
-                for j in x.indices { x[j] += dt * velocity[j] }
+                let sigma = schedule[i]
+                let velocity = try dit.forward(encoder: conditioning, references: referenceTokens, target: x, sigma: sigma)
+                let dt = schedule[i + 1] - sigma
+                if let kept, let initTokens {
+                    // Outside the mask sd.cpp's x₀ prediction is the init, so the step is (x − init) / σ: x stays on
+                    // the init's own noising, (1 − σ) · init + σ · noise, and ends on it.
+                    for j in x.indices { x[j] += dt * (kept[j / channels] ? (x[j] - initTokens[j]) / sigma : velocity[j]) }
+                } else {
+                    for j in x.indices { x[j] += dt * velocity[j] }
+                }
                 timings["step \(i + 1)"] = since(stepStart)
-                log(String(format: "step %d/%d (σ %.4f): %.2f s", i + 1, sigmas.count - 1, sigmas[i], timings["step \(i + 1)"]!))
-                events?(.step(i + 1, of: sigmas.count - 1, seconds: timings["step \(i + 1)"]!))
+                log(String(format: "step %d/%d (σ %.4f): %.2f s", i + 1, schedule.count - 1, sigma, timings["step \(i + 1)"]!))
+                events?(.step(i + 1, of: schedule.count - 1, seconds: timings["step \(i + 1)"]!))
                 step?(i, x)
             }
             shares = dit.coexecutor?.shares
@@ -357,6 +414,24 @@ public final class QwenPipeline {
             for c in 0..<3 { out[p * 4 + c] = a == 0 ? 0 : UInt8(min(255, (Int(out[p * 4 + c]) * 255 + a / 2) / a)) }
         }
         return (out, w, h)
+    }
+
+    /// A mask file as 8-bit gray, as sd-server loads `mask_image` (stb_image with one channel): 8-bit gray read as
+    /// stored, anything else through `decodeImage` and stb's luminance `(77 r + 150 g + 29 b) >> 8`.
+    public static func decodeGray(_ data: Data) throws -> (gray: [UInt8], width: Int, height: Int) {
+        if let source = CGImageSourceCreateWithData(data as CFData, nil), let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+           image.colorSpace?.model == .monochrome, image.bitsPerComponent == 8, image.bitsPerPixel == 8,
+           let bytes = image.dataProvider?.data, let p = CFDataGetBytePtr(bytes) {
+            let (w, h) = (image.width, image.height)
+            var out = [UInt8](repeating: 0, count: w * h)
+            for y in 0..<h { for x in 0..<w { out[y * w + x] = p[y * image.bytesPerRow + x] } }
+            return (out, w, h)
+        }
+        let rgba = try decodeImage(data)
+        let gray = (0..<(rgba.width * rgba.height)).map { p in
+            UInt8((77 * Int(rgba.rgba[p * 4]) + 150 * Int(rgba.rgba[p * 4 + 1]) + 29 * Int(rgba.rgba[p * 4 + 2])) >> 8)
+        }
+        return (gray, rgba.width, rgba.height)
     }
 
     /// Interleaved 8-bit RGBA (straight alpha) encoded as a PNG.

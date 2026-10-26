@@ -210,8 +210,10 @@ public final class QwenPipeline {
             defer { dit.cancelled = { false } }
             try dit.prepareModulation([0] + sigmas.dropLast())
             timings["dit load"] = since(t)
-            log(String(format: "DiT: %d rows, prefix %d, prefix K/V cache %@", sequence.count, sequence.prefix,
-                       dit.prefixCache.map { String(format: "%.2f GB (%@)", Double($0.length) / 1e9, dit.prefixHalf ? "fp16" : "fp32") } ?? "off"))
+            let memory = dit.memoryBytes
+            log(String(format: "DiT: %d rows, prefix %d, prefix K/V cache %@, working memory %.2f GB%@", sequence.count, sequence.prefix,
+                       dit.prefixCache.map { String(format: "%.2f GB (%@)", Double($0.length) / 1e9, dit.cacheFormat.rawValue) } ?? "off",
+                       Double(memory.all) / 1e9, memory.target.map { String(format: " (target's %.2f GB)", Double($0) / 1e9) } ?? ""))
             for i in 0..<(sigmas.count - 1) {
                 if cancelled() { throw QwenDiT.Cancelled() }
                 let stepStart = DispatchTime.now().uptimeNanoseconds

@@ -165,3 +165,23 @@ kernel void widen_half(device const half *src [[buffer(0)]], device float *dst [
                        constant uint &count [[buffer(2)]], uint i [[thread_position_in_grid]]) {
     if (i < count) dst[i] = float(src[i]);
 }
+
+// The prefix K/V cache in int8 (QwenDiT.cacheFormat q8): one scale per `lanes` × 4 values (8 lanes: 32 values; a
+// scale per head of 128 was 2× the error at the same speed), max |x| / 127, codes rounded to nearest. One SIMD group per row and head, 4 values a lane; `units` =
+// rows × heads, the grid exactly units × 32 threads.
+kernel void pack_q8(device const float4 *src [[buffer(0)]], device char4 *codes [[buffer(1)]],
+                    device float *scales [[buffer(2)]], constant uint &units [[buffer(3)]], constant uint &lanes [[buffer(4)]],
+                    uint i [[thread_position_in_grid]], uint lane [[thread_index_in_simdgroup]]) {
+    if (i / 32 >= units) return;
+    float4 x = src[i];
+    float m = max(max(fabs(x.x), fabs(x.y)), max(fabs(x.z), fabs(x.w)));
+    for (ushort offset = 1; offset < lanes; offset *= 2) m = max(m, simd_shuffle_xor(m, offset));
+    codes[i] = char4(rint(x * (m > 0 ? 127 / m : 0)));
+    if (lane % lanes == 0) scales[i / lanes] = m / 127;
+}
+
+kernel void widen_q8(device float4 *dst [[buffer(0)]], device const char4 *codes [[buffer(1)]],
+                     device const float *scales [[buffer(2)]], constant uint &units [[buffer(3)]],
+                     constant uint &lanes [[buffer(4)]], uint i [[thread_position_in_grid]]) {
+    if (i / 32 < units) dst[i] = float4(codes[i]) * scales[i / lanes];
+}

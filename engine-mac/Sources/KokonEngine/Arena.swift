@@ -48,7 +48,7 @@ public final class Arena: @unchecked Sendable {
     }
 
     public func pointer(_ s: Slice, floatOffset: Int = 0) -> UnsafeMutablePointer<Float> {
-        (base + s.offset).assumingMemoryBound(to: Float.self) + floatOffset
+        (base + (s.offset + floatOffset * 4)).assumingMemoryBound(to: Float.self)   // a slice may start before its storage
     }
 
     /// A buffer starting at `s.offset + byteOffset` (page-aligned), to the end of the slice.

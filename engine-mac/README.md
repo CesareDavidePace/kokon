@@ -327,19 +327,34 @@ Against diffusers (`reference_generate.py` on a `reference_text_encoder.py --ima
 | the same, default path (fp16 products and attention) | 1.8e-4 | 3.6e-4 | 5 083, by at most 2 |
 
 **The prefix K/V cache holds the references' rows too**, in fp16 when the attention reads fp16 (the default): the same
-values to the bit for the GPU's heads. A 1 MP reference is ~4 100 prefix rows, 2.1 GB of cache. M2 Pro 16 GB, edits with
-the reference at the output's size, alternated:
+values to the bit for the GPU's heads. A 1 MP reference is ~4 100 prefix rows, 2.1 GB of fp16 cache. When fp16 does not fit
+the limit (1.5 GB below 32 GB of memory, an eighth of it from 32 GB, not measured there; `KOKON_PREFIX_CACHE_MB`), the cache
+is **int8**, one scale per 32 values (`pack_q8`/`widen_q8`), if that fits: 1.2 GB at 1 MP. Its cost, the cat edit at
+384 × 256 against diffusers on the default path: the image within 2.4e-3, at most 7 levels off, against 3.6e-4 and 2 levels
+with fp16 (one scale per 128 values: 3.2e-3, 16 levels, no faster). Chosen as the default for 16 GB Macs (Gabriele,
+2026-10-26); `KOKON_PREFIX_CACHE=fp32|fp16|q8|0` to choose.
+
+**The working memory** (`QwenDiT.Memory`): `attended` shares `normed`'s storage, the MLP's first half lives in q, k and v
+(free by then), and the weights' reserves are sized for fp16: 2.3 → 1.55 GB at 8.1k rows, the same values to the bit. The
+evaluations that run the target alone (with the cache) get a memory of their own, rows from the prefix on (1.08 GB at 1 MP),
+the other released first, when that saves at least 256 MB (`KOKON_TARGET_MEMORY=0|1`).
+
+M2 Pro 16 GB, edits with the reference at the output's size, alternated:
 
 | reference and output | cache | steps 2–8 | image | page-ins an image |
 |---|---|---|---|---|
 | 768 × 448 | off | 4.9–5.0 s | 46.2 s | 12.1 GB |
-| 768 × 448 | 0.72 GB | 3.5 s | 38.1 s | 13.3 GB |
-| 1344 × 768 | off | 16.6–17.1 s | 147.7–150.1 s | 20.9 GB |
-| 1344 × 768 | 2.13 GB | 14.8–20.4 s | 144.2–158.7 s | 40.4 GB |
+| 768 × 448 | 0.72 GB fp16 | 3.5 s | 38.1 s | 13.3 GB |
+| 1344 × 768 (2026-10-25) | off | 16.6–17.1 s | 147.7–150.1 s | 20.9 GB |
+| 1344 × 768 (2026-10-25) | 2.13 GB fp16 | 14.8–20.4 s | 144.2–158.7 s | 40.4 GB |
+| 1344 × 768, working memory above (2026-10-26) | off | 16.4–18.8 s | 145.9–154.3 s | 13–41 GB |
+| 1344 × 768, working memory above | 2.13 GB fp16, target's memory | 13.4–19.7 s | 136.3–156.9 s | 42–53 GB |
+| 1344 × 768, working memory above | **1.20 GB int8**, target's memory | **10.2–11.3 s** | **106.1–107.4 s** | 29–32 GB |
+| 1344 × 768, working memory above | 1.10 GB int8 per 128 values | 10.2–13.0 s | 105.0–109.6 s | 26–31 GB |
 
-On 16 GB the 2.1 GB cache evicts the DiT's file pages, read again every step, and gains nothing; the cache is on up to
-1 GB below 32 GB of memory and to an eighth of it from 32 GB (not measured there; `KOKON_PREFIX_CACHE_MB` to choose). A 1 MP
-edit: vision tower 2.5 s, text encoder 3.7 s (1 037 tokens), VAE encoder 0.8 s, 8 steps of ~17 s, VAE 4.6 s; peak footprint
+Page-ins vary with what else the Mac runs: during these runs free memory sat near zero (12.5 of 16 GB used, 4.6 GB of swap),
+and every configuration still reads ~2 GB of the DiT's pages a step. A 1 MP
+edit: vision tower 2.5 s, text encoder 3.7 s (1 037 tokens), VAE encoder 0.8 s, step 1 ~20 s, then ~10.4 s, VAE 4.6–5 s; peak footprint
 5.0 GB. Through the server (`tools/api_check.py --ref … --enhance`, 768 × 448): Prompt+ looking at the reference 5.5–6.8 s
 (vision 0.6 s, 742 prompt tokens), the edit 36.4–37.3 s, peak footprint 3.6 GB.
 

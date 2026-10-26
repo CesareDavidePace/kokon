@@ -36,29 +36,127 @@ public final class QwenDiT {
     let context: MetalContext
     let dequant: GPUDequant
     public let sequence: QwenSequence
-    let arena: Arena
 
-    // Arena slices, rows of the joint sequence (N = prefix + target).
-    let x, normed, q, k, v, attended, o, h1, h2: Arena.Slice
-    let reserves: [Arena.Slice]
-    let rope, modulation, qkNorms, textNorm, textIn, textOut, latent, output, referenceLatent: Arena.Slice
-    /// K and V packed for the flash kernel (`attention_pack_kv`): fp16, heads first, keys padded to 64.
-    let kPacked, vPacked: Arena.Slice
+    /// **The working memory** and its slices, addressed by row of the joint sequence (N = prefix + target). Slices
+    /// that share storage: `attended` is `normed` (free from the last q/k/v product to `to_out`), and the MLP's `h1`
+    /// is q, k and v laid end to end (free from `to_out` on). With the prefix cache, the evaluations that run the
+    /// target's rows alone get a memory of their own (`firstRow` = the prefix): the row slices hold rows
+    /// `[prefix, N)` and start `prefix` rows before their storage, so every row index stays the joint sequence's;
+    /// only K and V (the cached prefix is restored into them) and the packed K and V keep every row.
+    struct Memory {
+        let arena: Arena
+        let firstRow: Int
+        let x, normed, attended, q, k, v, o, h1, h2: Arena.Slice
+        let reserves: [Arena.Slice]
+        let rope, modulation, qkNorms, textNorm, textIn, textOut, latent, output, referenceLatent: Arena.Slice
+        /// K and V packed for the flash kernel (`attention_pack_kv`): fp16, heads first, keys padded to 64.
+        let kPacked, vPacked: Arena.Slice
+
+        /// Floats of each slice that has storage, in order: x, normed, q, k, v, o, h2, the two reserves, then the small ones.
+        static func sizes(_ sequence: QwenSequence, firstRow: Int, halfWeights: Bool) -> [Int] {
+            let d = QwenDiT.dim
+            let n = QwenDiT.padded(sequence.count) + 64, r = QwenDiT.padded(sequence.count - firstRow) + 64
+            let s = QwenDiT.padded(sequence.target) + 64, t = QwenDiT.padded(sequence.textRows.count)
+            let packed = QwenDiT.heads * (n + 63) / 64 * 64 * QwenDiT.headDim / 2
+            let reserve = d * QwenDiT.hidden / (halfWeights ? 2 : 1)
+            return [r * d, r * d, r * d, n * d, n * d, r * d, r * QwenDiT.hidden, reserve, reserve,
+                    n * 128, 2 * 5 * d, QwenDiT.layers * 2 * QwenDiT.headDim, d, t * d, t * d,
+                    s * QwenDiT.channels, s * QwenDiT.channels, packed, packed,
+                    (QwenDiT.padded(sequence.images.dropLast().reduce(0) { $0 + $1.tokens }) + 64) * QwenDiT.channels]
+        }
+
+        static func bytes(_ sequence: QwenSequence, firstRow: Int, halfWeights: Bool) -> Int {
+            Arena.bytes(sizes(sequence, firstRow: firstRow, halfWeights: halfWeights).map { $0 * 4 })
+        }
+
+        /// `fill`: the rows written once (RoPE table, QK norms, txt_in's norm), copied in.
+        init(device: MTLDevice, sequence: QwenSequence, firstRow: Int, halfWeights: Bool,
+             fill: (rope: [Float], qkNorms: [Float], textNorm: [Float])) throws {
+            let sizes = Memory.sizes(sequence, firstRow: firstRow, halfWeights: halfWeights)
+            let arena = try Arena(device: device, bytes: Arena.bytes(sizes.map { $0 * 4 }))
+            var slices = try sizes.map { try arena.slice(floats: $0) }.makeIterator()
+            let row = QwenDiT.dim * 4
+            func shifted(_ s: Arena.Slice, _ rowBytes: Int) -> Arena.Slice {
+                Arena.Slice(offset: s.offset - firstRow * rowBytes, bytes: s.bytes + firstRow * rowBytes)
+            }
+            self.arena = arena
+            self.firstRow = firstRow
+            x = shifted(slices.next()!, row); normed = shifted(slices.next()!, row); attended = normed
+            let qStored = slices.next()!
+            q = shifted(qStored, row); k = slices.next()!; v = slices.next()!
+            // q, k and v are adjacent and page-sized per row: the MLP's rows fit in them (r ≤ n).
+            h1 = shifted(Arena.Slice(offset: qStored.offset, bytes: qStored.bytes + k.bytes + v.bytes), QwenDiT.hidden * 4)
+            o = shifted(slices.next()!, row); h2 = shifted(slices.next()!, QwenDiT.hidden * 4)
+            reserves = [slices.next()!, slices.next()!]
+            rope = slices.next()!; modulation = slices.next()!; qkNorms = slices.next()!; textNorm = slices.next()!
+            textIn = slices.next()!; textOut = slices.next()!; latent = slices.next()!; output = slices.next()!
+            kPacked = slices.next()!; vPacked = slices.next()!; referenceLatent = slices.next()!
+            arena.pointer(rope).update(from: fill.rope, count: fill.rope.count)
+            arena.pointer(qkNorms).update(from: fill.qkNorms, count: fill.qkNorms.count)
+            arena.pointer(textNorm).update(from: fill.textNorm, count: fill.textNorm.count)
+        }
+    }
+    /// nil only while one memory is released before the next is taken.
+    private var current: Memory?
+    var memory: Memory { current! }
+    var arena: Arena { memory.arena }
+    var x: Arena.Slice { memory.x }
+    var normed: Arena.Slice { memory.normed }
+    var attended: Arena.Slice { memory.attended }
+    var q: Arena.Slice { memory.q }
+    var k: Arena.Slice { memory.k }
+    var v: Arena.Slice { memory.v }
+    var o: Arena.Slice { memory.o }
+    var h1: Arena.Slice { memory.h1 }
+    var h2: Arena.Slice { memory.h2 }
+    var reserves: [Arena.Slice] { memory.reserves }
+    var rope: Arena.Slice { memory.rope }
+    var modulation: Arena.Slice { memory.modulation }
+    var qkNorms: Arena.Slice { memory.qkNorms }
+    var textNorm: Arena.Slice { memory.textNorm }
+    var textIn: Arena.Slice { memory.textIn }
+    var textOut: Arena.Slice { memory.textOut }
+    var latent: Arena.Slice { memory.latent }
+    var output: Arena.Slice { memory.output }
+    var referenceLatent: Arena.Slice { memory.referenceLatent }
+    var kPacked: Arena.Slice { memory.kPacked }
+    var vPacked: Arena.Slice { memory.vPacked }
+    private let fill: (rope: [Float], qkNorms: [Float], textNorm: [Float])
+    /// **The target's own memory for the cached evaluations** when it is at least 256 MB smaller than the whole
+    /// sequence's (an edit: the references are as long as the target), so the steps after the first leave that much
+    /// more room to the DiT's file pages (`KOKON_TARGET_MEMORY=0`: one memory for every evaluation; `=1`: always).
+    let targetMemory: Bool
     let paddedKeys: Int
     /// **The prefix's K and V, kept per layer** (text, later reference images): the prefix sees only its own keys and
     /// the modulation of t = 0, so its rows do not change from one evaluation of an image to the next. They are
     /// saved during the first evaluation of a conditioning and every later one runs only the target's rows
     /// (`KOKON_PREFIX_CACHE=0`: the whole sequence every time). nil when off or when it would exceed `prefixCacheLimit`.
-    /// **fp16** (`prefixHalf`) when the attention reads K and V as fp16 anyway (the packed kernel, the default): the
-    /// same values to the bit for the GPU's heads (the CPU's heads read them rounded); fp32 with any `KOKON_ATTENTION`
-    /// (the checks) or `KOKON_PREFIX_CACHE=fp32`. `KOKON_PREFIX_CACHE_MB` sets the limit.
+    /// **fp16** when the attention reads K and V as fp16 anyway (the packed kernel, the default): the same values to
+    /// the bit for the GPU's heads (the CPU's heads read them rounded). **int8** (`q8`, one scale per 32 values) when
+    /// fp16 does not fit the limit and int8 does: an edit with a 1 MP reference on 16 GB (Gabriele, 2026-10-26, below).
+    /// fp32 with any `KOKON_ATTENTION` (the checks; then nothing smaller). `KOKON_PREFIX_CACHE=fp32|fp16|q8` chooses,
+    /// `KOKON_PREFIX_CACHE_MB` sets the limit.
+    ///
+    /// int8 against fp16, the cat edit at 384 × 256 against diffusers (default path): the image within 2.4e-3, at most
+    /// 7 levels off (one scale per 128 values: 3.2e-3, 16 levels, at the same speed), fp16 3.6e-4 and 2 levels.
     let prefixCache: MTLBuffer?
-    let prefixHalf: Bool
-    /// Up to 1 GB below 32 GB of memory, an eighth of it from there. M2 Pro 16 GB, edits, fp16 cache, 2026-10-25: a
-    /// 768 × 448 reference (0.72 GB) made the steps after the first 4.95 → 3.48 s (image 46.2 → 38.1 s); a 1344 × 768
-    /// one (2.13 GB) gained nothing, the DiT's file pages evicted and read again (40 GB of page-ins an image against
-    /// 21 without the cache). The value from 32 GB is not measured.
-    static var prefixCacheLimit: Int { Chip.current.memoryGB < 30 ? 1 << 30 : Int(Chip.current.memoryGB * Double(1 << 30)) / 8 }
+    public enum CacheFormat: String { case fp32, fp16, q8 }
+    public let cacheFormat: CacheFormat
+    /// The cache's bytes per prefix row of one layer's K or V.
+    static func cacheRowBytes(_ format: CacheFormat) -> Int {
+        switch format {
+        case .fp32: return dim * 4
+        case .fp16: return dim * 2
+        case .q8: return dim + dim / (4 * q8Lanes) * 4
+        }
+    }
+    /// SIMD lanes (4 values each) per int8 scale: 8, one scale per 32 values.
+    static let q8Lanes = 8
+    /// Up to 1.5 GB below 32 GB of memory, an eighth of it from there. M2 Pro 16 GB, edits with the target's own memory,
+    /// alternated (2026-10-26): a 1344 × 768 reference with the int8 cache (1.20 GB) made the image 152–153 → 106–107 s
+    /// (steps 17 → 10.4 s); the fp16 one (2.13 GB) 146–154 → 136–157 s, the DiT's file pages evicted and read again.
+    /// 2026-10-25, fp16: a 768 × 448 reference (0.72 GB) made the steps 4.95 → 3.48 s. The value from 32 GB is not measured.
+    static var prefixCacheLimit: Int { Chip.current.memoryGB < 30 ? 3 << 29 : Int(Chip.current.memoryGB * Double(1 << 30)) / 8 }
     /// The conditioning (encoder rows, then the references' tokens) whose prefix the cache holds.
     private var cachedConditioning: [Float]?
     /// Latent tokens of the condition images (every image but the last), in order.
@@ -89,34 +187,28 @@ public final class QwenDiT {
         self.dequant = GPUDequant(context: context)
         self.sequence = sequence
         let d = QwenDiT.dim
-        let n = QwenDiT.padded(sequence.count) + 64, s = QwenDiT.padded(sequence.target) + 64
-        let t = QwenDiT.padded(sequence.textRows.count)
-        let sizes = [n * d, n * d, n * d, n * d, n * d, n * d, n * d, n * QwenDiT.hidden, n * QwenDiT.hidden,
-                     d * QwenDiT.hidden, d * QwenDiT.hidden,
-                     n * 128, 2 * 5 * d, QwenDiT.layers * 2 * QwenDiT.headDim, d, t * d, t * d,
-                     s * QwenDiT.channels, s * QwenDiT.channels,
-                     QwenDiT.heads * (n + 63) / 64 * 64 * QwenDiT.headDim / 2, QwenDiT.heads * (n + 63) / 64 * 64 * QwenDiT.headDim / 2,
-                     (QwenDiT.padded(sequence.images.dropLast().reduce(0) { $0 + $1.tokens }) + 64) * QwenDiT.channels]
-        let arena = try Arena(device: context.device, bytes: Arena.bytes(sizes.map { $0 * 4 }))
-        self.arena = arena
-        var slices = try sizes.map { try arena.slice(floats: $0) }.makeIterator()
-        x = slices.next()!; normed = slices.next()!; q = slices.next()!; k = slices.next()!; v = slices.next()!
-        attended = slices.next()!; o = slices.next()!; h1 = slices.next()!; h2 = slices.next()!
-        reserves = [slices.next()!, slices.next()!]
-        rope = slices.next()!; modulation = slices.next()!; qkNorms = slices.next()!; textNorm = slices.next()!
-        textIn = slices.next()!; textOut = slices.next()!; latent = slices.next()!; output = slices.next()!
-        kPacked = slices.next()!; vPacked = slices.next()!; referenceLatent = slices.next()!
-        paddedKeys = (n + 63) / 64 * 64
+        paddedKeys = (QwenDiT.padded(sequence.count) + 64 + 63) / 64 * 64
 
         let environment = ProcessInfo.processInfo.environment
-        prefixHalf = environment["KOKON_ATTENTION"] == nil && environment["KOKON_PREFIX_CACHE"] != "fp32"
-        let cacheBytes = QwenDiT.layers * 2 * sequence.prefix * d * (prefixHalf ? 2 : 4)
         let limit = Int(environment["KOKON_PREFIX_CACHE_MB"] ?? "").map { $0 << 20 } ?? QwenDiT.prefixCacheLimit
+        func bytes(_ format: CacheFormat) -> Int { QwenDiT.layers * 2 * sequence.prefix * QwenDiT.cacheRowBytes(format) }
+        if let chosen = environment["KOKON_PREFIX_CACHE"].flatMap(CacheFormat.init(rawValue:)) {
+            cacheFormat = chosen
+        } else if environment["KOKON_ATTENTION"] != nil {
+            cacheFormat = .fp32
+        } else {
+            cacheFormat = bytes(.fp16) <= limit ? .fp16 : .q8
+        }
+        let cacheBytes = bytes(cacheFormat)
         if environment["KOKON_PREFIX_CACHE"] != "0", sequence.prefix > 0, cacheBytes <= limit {
             prefixCache = try context.scratch(cacheBytes, label: "prefix K/V")
         } else {
             prefixCache = nil
         }
+        let half = environment["KOKON_WEIGHTS"] != "fp32"   // `halfWeights`
+        targetMemory = prefixCache != nil && environment["KOKON_TARGET_MEMORY"] != "0"
+            && (environment["KOKON_TARGET_MEMORY"] == "1" || Memory.bytes(sequence, firstRow: 0, halfWeights: half)
+                - Memory.bytes(sequence, firstRow: sequence.prefix, halfWeights: half) >= 256 << 20)
         // With the cache the split products are the target's rows; without it, the whole sequence's.
         let splitRows = QwenDiT.padded(prefixCache != nil ? sequence.target : sequence.count)
         if environment["KOKON_COEXEC"] != "0", splitRows >= 1024 {
@@ -130,17 +222,31 @@ public final class QwenDiT {
         if let coexecutor, coexecutor.attentionApplies(queries: sequence.target) {
             try coexecutor.prepareAttention(queries: sequence.target, keys: sequence.count)
         }
-        let table = sequence.ropeTable()
-        arena.pointer(rope).update(from: table, count: table.count)
         // Small weights unpacked once on the CPU: the QK norms of every layer, txt_in's norm as (w + 1).
+        var norms: [Float] = []
         for layer in 0..<QwenDiT.layers {
-            for (i, which) in ["norm_q", "norm_k"].enumerated() {
-                let w = try Dequant.array(file, QwenDiT.prefix + "transformer_blocks.\(layer).attn.\(which).weight")
-                arena.pointer(qkNorms, floatOffset: (layer * 2 + i) * QwenDiT.headDim).update(from: w, count: QwenDiT.headDim)
+            for which in ["norm_q", "norm_k"] {
+                norms += try Dequant.array(file, QwenDiT.prefix + "transformer_blocks.\(layer).attn.\(which).weight").prefix(QwenDiT.headDim)
             }
         }
         let tn = try Dequant.array(file, QwenDiT.prefix + "txt_in.text_norm.weight")
-        for j in 0..<d { arena.pointer(textNorm)[j] = tn[j] + 1 }
+        fill = (sequence.ropeTable(), norms, (0..<d).map { tn[$0] + 1 })
+        current = try Memory(device: context.device, sequence: sequence, firstRow: 0, halfWeights: half, fill: fill)
+    }
+
+    /// The memory for an evaluation from joint row `firstRow` on (0, or the prefix with `targetMemory`); the other is
+    /// released first, so the two never take memory at once. Between evaluations only.
+    func useMemory(firstRow: Int) throws {
+        guard memory.firstRow != firstRow else { return }
+        current = nil
+        current = try Memory(device: context.device, sequence: sequence, firstRow: firstRow, halfWeights: halfWeights, fill: fill)
+        unpackedAhead = nil
+    }
+
+    /// Bytes of working memory for every row, and for the target's rows alone (nil: one memory).
+    public var memoryBytes: (all: Int, target: Int?) {
+        (Memory.bytes(sequence, firstRow: 0, halfWeights: halfWeights),
+         targetMemory ? Memory.bytes(sequence, firstRow: sequence.prefix, halfWeights: halfWeights) : nil)
     }
 
     // MARK: - modulation (CPU, fp32)
@@ -223,6 +329,14 @@ public final class QwenDiT {
         let started = DispatchTime.now().uptimeNanoseconds
         timings = [:]
         castInput = nil
+        // The cached path when there is a cache and no probe (the probes compare every row of every stage).
+        // A new conditioning: the whole sequence once, the prefix's K and V saved on the way. A pass of the prefix
+        // alone took 1.86 s at 1024² (products of 64 rows run far below the GPU's rate); riding along the first
+        // evaluation it costs its 64 rows.
+        let cached = prefixCache != nil && probe == nil
+        let conditioning = encoder + references
+        let saving = cached && cachedConditioning != conditioning
+        try useMemory(firstRow: cached && !saving && targetMemory ? p : 0)
         try prepareModulation([0, sigma])
         arena.pointer(modulation).update(from: modulationCache[0]! + modulationCache[sigma]!, count: 10 * d)
         timings["modulation"] = elapsed(since: started)
@@ -234,15 +348,8 @@ public final class QwenDiT {
         arena.pointer(latent).update(from: target, count: s * QwenDiT.channels)
         arena.pointer(referenceLatent).update(from: references, count: references.count)
 
-        // The cached path when there is a cache and no probe (the probes compare every row of every stage).
-        let cached = prefixCache != nil && probe == nil
         probing = probe != nil
         var commands = try begin()
-        // A new conditioning: the whole sequence once, the prefix's K and V saved on the way. A pass of the prefix
-        // alone took 1.86 s at 1024² (products of 64 rows run far below the GPU's rate); riding along the first
-        // evaluation it costs its 64 rows.
-        let conditioning = encoder + references
-        let saving = cached && cachedConditioning != conditioning
         if !cached || saving { try embedText(commands: commands); try embedReferences(commands: commands) }
         try linear("img_in.weight", a: latent, c: x, m: s, cRow: p, commands: commands)
         if let probe { try finish(commands); probe("joint_in", arena.pointer(x), n * d); commands = try begin() }
@@ -329,7 +436,25 @@ public final class QwenDiT {
     /// The prefix's K and V of `layer` between k, v and the cache (`save`: into the cache).
     func copyPrefix(layer: Int, save: Bool, commands: MTLCommandBuffer) throws {
         guard let prefixCache else { return }
-        if prefixHalf {
+        if cacheFormat == .q8 {
+            // Per layer and tensor: the codes, then all the scales after the codes of every layer.
+            let units = sequence.prefix * QwenDiT.heads, count = sequence.prefix * QwenDiT.dim
+            let scaleBytes = count / (4 * QwenDiT.q8Lanes) * 4
+            for (i, slice) in [k, v].enumerated() {
+                let codes = (layer * 2 + i) * count, scales = QwenDiT.layers * 2 * count + (layer * 2 + i) * scaleBytes
+                try compute(save ? "pack_q8" : "widen_q8", commands: commands) { e in
+                    e.setBuffer(arena.buffer, offset: slice.offset, index: 0)
+                    e.setBuffer(prefixCache, offset: codes, index: 1)
+                    e.setBuffer(prefixCache, offset: scales, index: 2)
+                    var u = UInt32(units), lanes = UInt32(QwenDiT.q8Lanes)
+                    e.setBytes(&u, length: 4, index: 3)
+                    e.setBytes(&lanes, length: 4, index: 4)
+                    e.dispatchThreads(MTLSize(width: units * 32, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+                }
+            }
+            return
+        }
+        if cacheFormat == .fp16 {
             let count = sequence.prefix * QwenDiT.dim
             for (i, slice) in [k, v].enumerated() {
                 let cached = (layer * 2 + i) * count * 2

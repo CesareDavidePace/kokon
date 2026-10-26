@@ -1,7 +1,7 @@
 import { Activity, RotateCcw, Zap } from "lucide-react";
 import { useEffect } from "react";
 import { api } from "../lib/api";
-import { openSettings, refreshStatus, setState, toastError, toastInfo } from "../lib/store";
+import { refreshStatus, setState, toastError, toastInfo } from "../lib/store";
 import { KokonMark } from "./Welcome";
 
 const POINTS = [
@@ -23,8 +23,7 @@ const POINTS = [
 ];
 
 /** Once, at start on a Mac (after Setup or What's new): Kokon's own engine, experimental and off by default. The
- * model loads after the answer, on the engine chosen; "Try it" ends in Settings → Performance, where the switch and the
- * Benchmark button are. */
+ * model loads after the answer, on the engine chosen. */
 export function MacEngineOffer() {
   const answer = async (on: boolean) => {
     setState({ overlay: null });
@@ -32,11 +31,7 @@ export function MacEngineOffer() {
       const cfg = await api.config();
       const ui = { ...((cfg.ui ?? {}) as Record<string, unknown>), macEngineOffered: true };
       await api.saveConfig({ ...cfg, macEngine: on || !!cfg.macEngine, ui });
-      // Opened after the save: Settings reads the saved config, so the switch shows on.
-      if (on) {
-        openSettings("performance");
-        toastInfo("Kokon's Mac engine is on. Switch it off here any time; Benchmark this Mac is below.");
-      }
+      if (on) toastInfo("Kokon's Mac engine is on. Switch back any time in Settings → Performance.");
     } catch (e) {
       toastError(e);
     }

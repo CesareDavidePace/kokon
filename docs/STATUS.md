@@ -1,6 +1,6 @@
 # Status
 
-**Updated 2026-10-25.** What is in progress, what comes next, and where help is welcome. Kept current at the end
+**Updated 2026-10-26.** What is in progress, what comes next, and where help is welcome. Kept current at the end
 of every task (see [AGENTS.md](../AGENTS.md#keeping-docsstatusmd-current)); GitHub is the source of truth.
 
 ## Current version: [0.11.0](https://github.com/GabrieleLozupone/kokon/releases/tag/v0.11.0) (2026-10-24)
@@ -25,10 +25,10 @@ Windows, macOS (Apple Silicon, 15+) and Linux (`.deb`, `.rpm`). Installed copies
   ([#33](https://github.com/GabrieleLozupone/kokon/issues/33) has a product-shot test).
 - **Macs are slow** compared with NVIDIA cards (about 4 minutes for 1 MP on an M2 Pro 16 GB). Kokon's own Mac
   engine is in development on the `macos-optimization` branch (`engine-mac/`, not released): text to image,
-  Prompt+ (a prompt written in about 7–9 s) and edits with reference images (Prompt+ looking at them too), about 64–67 s
-  for 1 MP text to image and ~150 s for a 1 MP edit on the same Mac (peak memory 5 GB), as an experimental switch in
-  Settings → Performance (off by default). Brushed edits, extending an image, LoRAs and the upscaler still need the
-  standard engine.
+  Prompt+ (a prompt written in about 7–9 s), edits with reference images (Prompt+ looking at them too), brushed edits and
+  extending an image, about 64–67 s for 1 MP text to image and ~106 s for a 1 MP edit on the same Mac (peak memory 5 GB),
+  as an experimental switch in Settings → Performance (off by default). LoRAs and the upscaler still need the standard
+  engine (not planned for its first release).
 - The Windows installer is not code-signed: SmartScreen or Smart App Control may block it (README FAQ: Unblock).
 - HEIC photos can't be opened on Linux yet.
 

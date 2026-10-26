@@ -1,6 +1,6 @@
 // Pure UI logic (unit-tested in logic.test.ts).
 
-import type { Advanced, GenerationRecord, GenerationRequest, InpaintAction, InputRecord, InstallItem, JobView, LoraItem, LutInfo, MacBenchState, Mode, StatusResponse, OutpaintSpec, Plan, Quality, ResolutionMode, Size } from "./types";
+import type { Advanced, GenerationRecord, GenerationRequest, InpaintAction, InputRecord, InstallItem, JobView, LoraItem, LutInfo, MacBenchState, Mode, ModelsStatus, StatusResponse, OutpaintSpec, Plan, Quality, ResolutionMode, Size } from "./types";
 
 export interface Ref {
   key: string;
@@ -641,6 +641,28 @@ export function formatBytes(n: number): string {
   if (n >= 1e9) return `${(n / 1e9).toFixed(n >= 1e10 ? 0 : 1)} GB`;
   if (n >= 1e6) return `${Math.round(n / 1e6)} MB`;
   return `${Math.max(0, Math.round(n / 1e3))} KB`;
+}
+
+/** Whether What's new shows at start: once per release `version` after an update (not on a new install, which gets the
+ * welcome screen), and again while a needed engine update was not postponed. */
+export function whatsNewDue(ui: Record<string, unknown>, engine: { release: string; update_needed: boolean } | undefined, version: string): boolean {
+  if (!ui.welcomeSeen) return false;
+  return ui.whatsNewSeen !== version || (!!engine?.update_needed && ui.engineUpdateSkipped !== engine.release);
+}
+
+/** The image-model step of What's new (the Q4_K_M, 0.11.1): offered to the official files still on the Q4_K and, as a
+ * suggestion, to own files that are that Q4_K. "Later" waits for the next release `version`; "Keep using my file" is
+ * never asked again. */
+export function modelOfferDue(dit: ModelsStatus["dit"] | undefined, ui: Record<string, unknown>, version: string): boolean {
+  if (!dit?.update) return false;
+  if (dit.update === "own" && ui.ownModelKept) return false;
+  return ui.modelUpdateSkipped !== version;
+}
+
+/** What closing What's new remembers about a model step it offered and that did not happen: "keep" (own files) for
+ * good, otherwise postponed until the next release `version`. */
+export function modelChoiceUi(choice: "later" | "keep", version: string): Record<string, unknown> {
+  return choice === "keep" ? { ownModelKept: true } : { modelUpdateSkipped: version };
 }
 
 /** Offer Kokon's Mac engine once, at start: set up, the engine in the app, off, never asked. Not below 16 GB: the

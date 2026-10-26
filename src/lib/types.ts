@@ -405,6 +405,9 @@ export interface ModelsStatus {
   default_download_dir: string;
   /** The texture-fix VAE (#21): in use, or what switching to it downloads. */
   vae: { improved: boolean; download_bytes: number; page: string };
+  /** The Q4_K_M image model (0.11.1): "official" for the official files still on the Q4_K, "own" for own files that are
+   * that Q4_K (a suggestion only), null otherwise; and what switching downloads. */
+  dit: { update: "official" | "own" | null; download_bytes: number; page: string };
 }
 
 export interface HardwareReport {

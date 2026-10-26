@@ -1,53 +1,50 @@
-import { CircleAlert, Container, FolderSync, ShieldCheck, Smartphone, TabletSmartphone } from "lucide-react";
+import { CircleAlert, Copy, Cpu, Expand, Image, MousePointerClick } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
-import { formatBytes, installProgress, installStep, installTimeLeft } from "../lib/logic";
+import { formatBytes, installProgress, installStep, installTimeLeft, modelChoiceUi, modelOfferDue, whatsNewDue as due } from "../lib/logic";
+import { inBrowser } from "../lib/platform";
 import { afterStartScreens, refreshStatus, setState, toastError, useStore } from "../lib/store";
 import type { GpuBackend, InstallItem, InstallStatus, ModelsStatus } from "../lib/types";
 import { KokonMark } from "./Welcome";
 
 /** The release these notes describe. Shown once to people updating from an earlier version. */
-export const WHATS_NEW_VERSION = "0.11.0";
+export const WHATS_NEW_VERSION = "0.11.1";
+
+const MAC_NEWS = {
+  icon: Cpu,
+  title: "Kokon's own Mac engine",
+  text: "An engine made by Kokon for Apple Silicon: about 4 times faster on an M2 Pro, for new images, edits, brushed edits, extending and Prompt+. It's experimental and off until you try it; switch back any time in Settings → Performance.",
+};
 
 const NEWS = [
   {
-    icon: Smartphone,
-    title: "Kokon on your phone",
-    text: "Open Settings → Other devices, choose a password and scan the QR code: a phone, a tablet or another computer on your network uses Kokon in its browser. The images are still made on this computer and kept in its gallery.",
+    icon: Image,
+    title: "A new copy of the image model",
+    text: "New installs get unsloth's Q4_K_M of Qwen-Image 2.1 Turbo: the same model in the same 4-bit size, better supported and slightly better. If you have the earlier file, Kokon asks before changing it.",
   },
   {
-    icon: TabletSmartphone,
-    title: "Made for a phone screen",
-    text: "On a phone Kokon has a layout of its own: your projects as the home screen, versions you swipe through, a screen of its own for writing the prompt, and an icon for the home screen.",
+    icon: Expand,
+    title: "Expand to a ratio and a size",
+    text: "Expand can lock the aspect ratio and offers 1080p, 1440p and 4K. The size menu has the same sizes, and an exact size you typed can be picked again.",
   },
   {
-    icon: FolderSync,
-    title: "The same projects everywhere",
-    text: "Every device sees the same list of projects: a version made on the phone shows up in that project on the computer.",
+    icon: Copy,
+    title: "Copy from the info panel",
+    text: "The prompt, seed and settings of an image can be selected, and each has a copy button.",
   },
   {
-    icon: ShieldCheck,
-    title: "Off until you turn it on",
-    text: "Nothing listens on the network before you set a password, each browser asks for it once, and five wrong tries make that device wait. From outside your home, use Tailscale or another VPN (guide in the docs).",
-  },
-  {
-    icon: Container,
-    title: "Docker and Linux servers",
-    text: "Kokon without a window, for NVIDIA cards: the Docker image ghcr.io/gabrielelozupone/kokon, or kokon-service --remote on a Linux machine.",
-  },
-  {
-    icon: CircleAlert,
-    title: "Your own model files",
-    text: "Kokon warns when the image model is the base Qwen-Image 2.1 instead of Turbo (Kokon runs Turbo's 8 steps), and the MCP server works with folders listed in QLS_MCP_ALLOWED_DIRS.",
+    icon: MousePointerClick,
+    title: "Smaller fixes",
+    text: "Reuse keeps a fixed seed instead of picking a new one, and selected text is visible again in the dark theme on Linux.",
   },
 ];
 
-/** Remembers that these notes were read and, if the engine update was postponed, for which
- * release, so neither is offered again at the next start. */
-async function markSeen(engineSkipped: string | null) {
+/** Remembers that these notes were read and what was postponed (the engine update for its release, the model step),
+ * so neither is offered again at the next start. */
+async function markSeen(engineSkipped: string | null, model: Record<string, unknown>) {
   try {
     const cfg = await api.config();
-    const ui: Record<string, unknown> = { ...((cfg.ui ?? {}) as Record<string, unknown>), whatsNewSeen: WHATS_NEW_VERSION };
+    const ui: Record<string, unknown> = { ...((cfg.ui ?? {}) as Record<string, unknown>), whatsNewSeen: WHATS_NEW_VERSION, ...model };
     if (engineSkipped) ui.engineUpdateSkipped = engineSkipped;
     await api.saveConfig({ ...cfg, ui });
   } catch (e) {
@@ -55,33 +52,35 @@ async function markSeen(engineSkipped: string | null) {
   }
 }
 
-/** Whether to show the notes at start: once per release after an update (not on a new install,
- * which gets the welcome screen), and again while a needed engine update was not postponed. */
+/** Whether to show the notes at start (see `logic.whatsNewDue`). */
 export function whatsNewDue(ui: Record<string, unknown>, engine: { release: string; update_needed: boolean } | undefined): boolean {
-  if (!ui.welcomeSeen) return false;
-  return ui.whatsNewSeen !== WHATS_NEW_VERSION || (!!engine?.update_needed && ui.engineUpdateSkipped !== engine.release);
+  return due(ui, engine, WHATS_NEW_VERSION);
 }
 
-type Step = "engine" | "vae";
+type Step = "engine" | "vae" | "model";
 
-/** What's new in this release, plus the downloads it offers: the engine when the release needs
- * a newer stable-diffusion.cpp (only the files that changed), and the new VAE (#21), which
- * replaces the old one only if the user accepts. */
+/** What's new in this release, plus the downloads it offers, each chosen separately: the engine when the release needs
+ * a newer stable-diffusion.cpp (only the files that changed), the new VAE (#21) and the Q4_K_M image model, which
+ * replace the old files only if the user accepts. Own model files are never switched: the model step is a suggestion. */
 export function WhatsNew() {
   const engine = useStore((s) => s.status?.engine);
+  const macEngine = useStore((s) => !!s.status?.mac_engine?.available) && !inBrowser;
   const needsEngine = !!engine?.update_needed;
   const [missing, setMissing] = useState<InstallItem[] | null>(null);
   const [target, setTarget] = useState<{ preset: string; backend: GpuBackend } | null>(null);
   const [ms, setMs] = useState<ModelsStatus | null>(null);
-  // With both offered, each can be left out.
+  const [ui, setUi] = useState<Record<string, unknown> | null>(null);
+  // With several offered, each can be left out.
   const [wantEngine, setWantEngine] = useState(true);
   const [wantVae, setWantVae] = useState(true);
+  const [wantModel, setWantModel] = useState(true);
   const [queue, setQueue] = useState<Step[]>([]);
   const [inst, setInst] = useState<InstallStatus | null>(null);
   const [finished, setFinished] = useState(false);
 
   useEffect(() => {
     api.models().then(setMs, () => {});
+    api.config().then((c) => setUi((c.ui ?? {}) as Record<string, unknown>), () => setUi({}));
     api.installStatus().then((i) => i.running && setInst(i), () => {});
     if (!needsEngine) return;
     api.hardware().then((h) => {
@@ -94,16 +93,21 @@ export function WhatsNew() {
   }, [needsEngine]);
 
   const offerVae = !!ms && !ms.vae.improved;
+  const offerModel = !!ui && modelOfferDue(ms?.dit, ui, WHATS_NEW_VERSION);
+  const ownModel = ms?.dit.update === "own";
   const engineBytes = (missing ?? []).reduce((a, i) => a + Math.max(0, i.size - i.received), 0);
   const vaeBytes = ms?.vae.download_bytes ?? 0;
+  const modelBytes = ms?.dit.download_bytes ?? 0;
 
   const begin = async (step: Step) => {
     try {
       if (step === "engine") {
         if (!target) return false;
         setInst(await api.install(target.preset, target.backend, false));
-      } else {
+      } else if (step === "vae") {
         setInst(await api.improveVae());
+      } else {
+        setInst(await api.newImageModel());
       }
       return true;
     } catch (e) {
@@ -137,12 +141,18 @@ export function WhatsNew() {
   const items = inst?.items ?? [];
   const failed = items.filter((i) => i.state === "failed");
   const prog = installProgress(items);
-  const steps: Step[] = [...(needsEngine && wantEngine ? ["engine" as const] : []), ...(offerVae && wantVae ? ["vae" as const] : [])];
-  const size = (steps.includes("engine") ? engineBytes : 0) + (steps.includes("vae") ? vaeBytes : 0);
-  const offering = (needsEngine || offerVae) && !finished;
+  // Smallest first; the image model last.
+  const steps: Step[] = [
+    ...(needsEngine && wantEngine ? ["engine" as const] : []),
+    ...(offerVae && wantVae ? ["vae" as const] : []),
+    ...(offerModel && wantModel ? ["model" as const] : []),
+  ];
+  const size = (steps.includes("engine") ? engineBytes : 0) + (steps.includes("vae") ? vaeBytes : 0) + (steps.includes("model") ? modelBytes : 0);
+  const offering = (needsEngine || offerVae || offerModel) && !finished;
   // Macs default to Lanczos: their update has no Superscale-SP download.
   const getsSuperscale = (missing ?? []).some((i) => i.id === "upscaler_superscale");
-  const both = needsEngine && offerVae;
+  const several = [needsEngine, offerVae, offerModel].filter(Boolean).length > 1;
+  const modelOnly = offerModel && !several;
 
   const update = async () => {
     const [first, ...rest] = steps;
@@ -150,10 +160,13 @@ export function WhatsNew() {
     setQueue(rest);
     await begin(first);
   };
-  const close = (postponed: boolean) => {
+  /** `keep`: an own-files user chose to keep their image model (never asked again). */
+  const close = (postponed: boolean, keep = false) => {
     if (running) api.cancelInstall().catch(() => {});
     setState({ overlay: null });
-    markSeen(postponed && engine && needsEngine ? engine.release : null);
+    // A model step that did not happen (postponed or left out) waits for the next release.
+    const modelUi = offerModel && (postponed || !wantModel) ? modelChoiceUi(keep ? "keep" : "later", WHATS_NEW_VERSION) : {};
+    markSeen(postponed && engine && needsEngine ? engine.release : null, modelUi);
     refreshStatus();
     afterStartScreens();
   };
@@ -164,7 +177,7 @@ export function WhatsNew() {
         <KokonMark size={44} />
         <h1>What's new in Kokon {WHATS_NEW_VERSION}</h1>
         <div className="welcome-grid">
-          {NEWS.map(({ icon: Icon, title, text }) => (
+          {(macEngine ? [MAC_NEWS, ...NEWS] : NEWS).map(({ icon: Icon, title, text }) => (
             <div className="welcome-item" key={title}>
               <Icon size={20} />
               <strong>{title}</strong>
@@ -175,9 +188,33 @@ export function WhatsNew() {
 
         {offering && !running && (
           <div className="update-offers">
+            {offerModel && (
+              <div className="setup-note update-offer">
+                {several && <input type="checkbox" checked={wantModel} onChange={(e) => setWantModel(e.target.checked)} aria-label="Include the new image model file" />}
+                <div>
+                  <strong>
+                    {ownModel ? "A newer image model file" : "New image model file"}
+                    {modelBytes ? ` · ${formatBytes(modelBytes)}` : ""}
+                  </strong>
+                  <span>
+                    {ownModel
+                      ? "Your image model is the Q4_K file Kokon used before. Kokon now uses unsloth's Q4_K_M: better supported, slightly better, the same 4-bit size. Kokon can download it into its own folder and use it; your file stays where it is, untouched."
+                      : "Kokon now uses unsloth's Q4_K_M of Qwen-Image 2.1 Turbo: better supported, slightly better, the same 4-bit size. The old file is deleted once the new one is downloaded and checked."}{" "}
+                    You can also switch later in Settings → Models.
+                  </span>
+                  <details className="model-files">
+                    <summary>Why change it?</summary>
+                    <span className="update-detail">
+                      Both are 4-bit copies of Qwen's Turbo model and look much the same. The Q4_K_M comes from unsloth, one of the most used sources of
+                      GGUF models, and it is the file Kokon's tests and its Mac engine are checked against. Same license as the model.
+                    </span>
+                  </details>
+                </div>
+              </div>
+            )}
             {offerVae && (
               <div className="setup-note update-offer">
-                {both && <input type="checkbox" checked={wantVae} onChange={(e) => setWantVae(e.target.checked)} aria-label="Include the new decoder" />}
+                {several && <input type="checkbox" checked={wantVae} onChange={(e) => setWantVae(e.target.checked)} aria-label="Include the new decoder" />}
                 <div>
                   <strong>New image decoder{vaeBytes ? ` · ${formatBytes(vaeBytes)}` : ""}</strong>
                   <span>
@@ -198,7 +235,7 @@ export function WhatsNew() {
             )}
             {needsEngine && (
               <div className="setup-note update-offer">
-                {both && <input type="checkbox" checked={wantEngine} onChange={(e) => setWantEngine(e.target.checked)} aria-label="Include the engine update" />}
+                {several && <input type="checkbox" checked={wantEngine} onChange={(e) => setWantEngine(e.target.checked)} aria-label="Include the engine update" />}
                 <div>
                   <strong>Engine update{engineBytes ? ` · ${formatBytes(engineBytes)}` : ""}</strong>
                   <span>
@@ -241,10 +278,14 @@ export function WhatsNew() {
           <div className="welcome-actions">
             <div className="welcome-buttons">
               <button className="btn primary big" disabled={running || !steps.length || (steps.includes("engine") && (!target || missing === null))} onClick={update}>
-                {failed.length ? "Try again" : running ? "Updating…" : `Update now${size ? ` · ${formatBytes(size)}` : ""}`}
+                {failed.length
+                  ? "Try again"
+                  : running
+                    ? "Updating…"
+                    : `${modelOnly ? (ownModel ? "Download Q4_K_M and use it" : "Update now and remove the old file") : "Update now"}${size ? ` · ${formatBytes(size)}` : ""}`}
               </button>
-              <button className="btn big" onClick={() => close(true)}>
-                {offerVae && !needsEngine ? "Keep the current one" : "Later"}
+              <button className="btn big" onClick={() => close(true, modelOnly && ownModel)}>
+                {modelOnly && ownModel ? "Keep using my file" : offerVae && !needsEngine && !offerModel ? "Keep the current one" : "Later"}
               </button>
             </div>
             <span className="muted welcome-foot">You can update later from Settings → Models.</span>

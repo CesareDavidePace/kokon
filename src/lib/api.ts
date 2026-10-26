@@ -107,6 +107,7 @@ export const api = {
   useModels: (profile: "official" | "user") => call<ModelsStatus>("/models/use", { method: "POST", body: json({ profile }) }),
   /** Downloads the texture-fix VAE and switches the active model to it (progress in installStatus). */
   improveVae: () => call<InstallStatus>("/models/vae", { method: "POST" }),
+  newImageModel: () => call<InstallStatus>("/models/dit", { method: "POST" }),
   /** Runs the engine on another card (index in `hardware().gpus`); needs the engine installed. */
   setGpu: (gpu: number) => call<{ saved: boolean }>("/setup/gpu", { method: "POST", body: json({ gpu }) }),
   upscalers: () => call<{ selected: string; active: string | null; items: UpscalerItem[] }>("/upscalers"),

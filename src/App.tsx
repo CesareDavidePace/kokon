@@ -166,10 +166,9 @@ export default function App() {
           tourPending.current = true;
           addExampleProjects().catch(() => {});
         }
-        // After an app update: what's new, with the engine download when the release needs a
-        // newer one (it can be postponed there; offered again only for another release).
+        // After an app update: what's new, with the engine and model downloads the release offers
+        // (they can be postponed there). Closing it goes on with afterStartScreens.
         const whatsNew = cfg.setupComplete && whatsNewDue(ui, st?.engine);
-        const engineUpdate = whatsNew && !!st?.engine?.update_needed;
         // Otherwise, once on a Mac: Kokon's Mac engine (before the model loads, on the engine chosen).
         const macOffer = !inBrowser && welcomeSeen && !whatsNew && macEngineOfferDue(st, ui, cfg.setupComplete);
         setState({ needsSetup: !cfg.setupComplete, ...(!welcomeSeen ? { overlay: "welcome" } : whatsNew ? { overlay: "whats-new" } : macOffer ? { overlay: "mac-engine" } : {}) });
@@ -181,8 +180,9 @@ export default function App() {
             const w = m.active.source === "user" ? m.slots.find((x) => x.role === "diffusion")?.info?.warning : null;
             if (w) toastError(new ApiError({ code: "model_warning", message: w, suggestion: "Settings → Models: download the official files, or use other files of your own." }, 200));
           }, () => {});
-        // Preload the model so the first generation starts immediately (not an engine about to be replaced).
-        if (cfg.setupComplete && !engineUpdate && !macOffer && st && st.server.state === "stopped") api.startBackend().then(refreshStatus, () => refreshStatus());
+        // Preload the model so the first generation starts immediately. After What's new or the Mac offer instead
+        // (afterStartScreens): not a file or engine about to be replaced, and on the engine the user picks.
+        if (cfg.setupComplete && !whatsNew && !macOffer && st && st.server.state === "stopped") api.startBackend().then(refreshStatus, () => refreshStatus());
       } catch (e) {
         setBoot(String(e));
       }

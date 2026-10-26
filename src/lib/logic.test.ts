@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   macEngineOfferDue,
+  modelChoiceUi,
+  modelOfferDue,
+  whatsNewDue,
   macBenchProgress,
   activeLoras, activeOverrides, buildRequest, composing, editing, reviewRequest, wantsPromptReview, toggleLora, MAX_LORAS, jobPercent, compareBase, composerFromRecord, enhancerApplies, diffPixels, emptyComposer, expansionPixels, expansionPreset, jobLabel, jobSecondsLeft, lutInfo, moveRef, needsPrompt, normalizeQuality, persistentAdvanced, pipelineSummary,
   planPipeline, remainingSeconds, sizeForWidth, timeAgo, upscaleRequest, upscaleTargets, versionLabels, type JobClock, type Ref,
@@ -652,5 +655,39 @@ describe("macEngineOfferDue", () => {
     expect(macEngineOfferDue(st(true, true), {}, true)).toBe(false);
     expect(macEngineOfferDue(st(true, false, 8), {}, true)).toBe(false);
     expect(macEngineOfferDue({ gpu: null, mac_engine: undefined }, {}, true)).toBe(false);
+  });
+});
+
+describe("whatsNewDue", () => {
+  const engine = (update_needed: boolean) => ({ release: "r2", update_needed });
+  it("once per release after an update, never on a new install", () => {
+    expect(whatsNewDue({ welcomeSeen: true, whatsNewSeen: "0.11.0" }, engine(false), "0.11.1")).toBe(true);
+    expect(whatsNewDue({ welcomeSeen: true, whatsNewSeen: "0.11.1" }, engine(false), "0.11.1")).toBe(false);
+    expect(whatsNewDue({}, engine(true), "0.11.1")).toBe(false);
+  });
+  it("again while a needed engine update was not postponed", () => {
+    expect(whatsNewDue({ welcomeSeen: true, whatsNewSeen: "0.11.1" }, engine(true), "0.11.1")).toBe(true);
+    expect(whatsNewDue({ welcomeSeen: true, whatsNewSeen: "0.11.1", engineUpdateSkipped: "r2" }, engine(true), "0.11.1")).toBe(false);
+  });
+});
+
+describe("modelOfferDue", () => {
+  const dit = (update: "official" | "own" | null) => ({ update, download_bytes: 4_199_565_120, page: "" });
+  it("offers the Q4_K_M to the official files on the Q4_K until accepted, Later waiting for the next release", () => {
+    expect(modelOfferDue(dit("official"), {}, "0.11.1")).toBe(true);
+    const later = modelChoiceUi("later", "0.11.1");
+    expect(modelOfferDue(dit("official"), later, "0.11.1")).toBe(false);
+    expect(modelOfferDue(dit("official"), later, "0.12.0")).toBe(true);
+    expect(modelOfferDue(dit(null), {}, "0.11.1")).toBe(false);
+    expect(modelOfferDue(undefined, {}, "0.11.1")).toBe(false);
+  });
+  it("own files: a suggestion only when they are the old Q4_K; keeping them is final", () => {
+    expect(modelOfferDue(dit("own"), {}, "0.11.1")).toBe(true);
+    const keep = modelChoiceUi("keep", "0.11.1");
+    expect(modelOfferDue(dit("own"), keep, "0.11.1")).toBe(false);
+    expect(modelOfferDue(dit("own"), keep, "0.12.0")).toBe(false);
+    expect(modelOfferDue(dit("own"), modelChoiceUi("later", "0.11.1"), "0.12.0")).toBe(true);
+    // Already the Q4_K_M, or another file of theirs: the service reports nothing to offer.
+    expect(modelOfferDue(dit(null), {}, "0.11.1")).toBe(false);
   });
 });

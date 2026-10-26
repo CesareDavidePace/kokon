@@ -11,7 +11,7 @@ import { LoraSettings } from "./LoraSettings";
 import { RemoteAccess } from "./RemoteAccess";
 import { UpscalerControls } from "./Upscalers";
 import { WHATS_NEW_VERSION } from "./WhatsNew";
-import type { AppConfig, Check, MacBenchState, ModelProfile, ModelsStatus, SetupReport, TextEncoderPlacement } from "../lib/types";
+import type { AppConfig, Check, InstallStatus, MacBenchState, ModelProfile, ModelsStatus, SetupReport, TextEncoderPlacement } from "../lib/types";
 import { IconButton, Seg, Switch } from "./ui";
 import { autoCheckEnabled, checkForUpdate } from "../lib/updates";
 
@@ -312,29 +312,33 @@ export function Settings() {
     }
   };
 
-  // Switching to the new VAE (#21): download, then the service swaps it and deletes the old one.
+  // Switching to the new VAE (#21) or the Q4_K_M image model: download, then the service swaps it and deletes the old
+  // file from Kokon's folder (never the user's own).
   const [vaeProgress, setVaeProgress] = useState<number | null>(null);
-  const improveVae = async () => {
+  const [ditProgress, setDitProgress] = useState<number | null>(null);
+  const switchFile = async (start: () => Promise<InstallStatus>, setProgress: (p: number | null) => void, done: string) => {
     try {
-      let st = await api.improveVae();
-      setVaeProgress(0);
+      let st = await start();
+      setProgress(0);
       while (st.running) {
         await new Promise((r) => window.setTimeout(r, 700));
         st = await api.installStatus();
         const total = st.items.reduce((a, i) => a + i.size, 0);
-        setVaeProgress(total ? st.items.reduce((a, i) => a + i.received, 0) / total : 0);
+        setProgress(total ? st.items.reduce((a, i) => a + i.received, 0) / total : 0);
       }
       const failed = st.items.find((i) => i.state === "failed");
       if (failed) toastError(new Error(`${failed.label}: ${failed.error}`));
-      else if (st.complete) toastInfo("The new decoder is in use");
+      else if (st.complete) toastInfo(done);
       api.models().then(setMs, () => {});
       api.config().then(setCfg, () => {});
     } catch (e) {
       toastError(e);
     } finally {
-      setVaeProgress(null);
+      setProgress(null);
     }
   };
+  const improveVae = () => switchFile(api.improveVae, setVaeProgress, "The new decoder is in use");
+  const newImageModel = () => switchFile(api.newImageModel, setDitProgress, "The Q4_K_M image model is in use");
 
   const close = () => setState({ overlay: null });
   useEffect(() => {
@@ -610,6 +614,26 @@ export function Settings() {
                   <PathField label="Vision projector (mmproj)" value={profile.visionProjector ?? ""} onChange={(v) => setProfile({ visionProjector: v || null })} />
                 </>
               )}
+              {ms?.dit.update && (
+                <div className="setting-card">
+                  <div className="setting-card-text">
+                    <strong>Image model file</strong>
+                    <span className="muted">
+                      {ms.dit.update === "official"
+                        ? "Kokon now uses unsloth's Q4_K_M of the image model: better supported, slightly better, the same 4-bit size. Switching downloads it and deletes the old file from Kokon's folder."
+                        : "Your image model is the Q4_K file Kokon used before. Kokon now uses unsloth's Q4_K_M: better supported, slightly better, the same 4-bit size. Switching downloads it into Kokon's folder; your own file stays where it is."}
+                    </span>
+                    {ditProgress !== null && (
+                      <div className="progress" style={{ marginTop: 6 }}>
+                        <i style={{ width: `${ditProgress * 100}%` }} />
+                      </div>
+                    )}
+                  </div>
+                  <button className="btn primary" disabled={ditProgress !== null || vaeProgress !== null || dirty} title={dirty ? "Save or discard your changes first" : undefined} onClick={newImageModel}>
+                    <Download size={15} /> {ditProgress !== null ? `${Math.floor(ditProgress * 100)}%` : `Switch${ms.dit.download_bytes ? ` · ${formatBytes(ms.dit.download_bytes)}` : ""}`}
+                  </button>
+                </div>
+              )}
               {ms && (
                 <div className="setting-card">
                   <div className="setting-card-text">
@@ -627,7 +651,7 @@ export function Settings() {
                     )}
                   </div>
                   {!ms.vae.improved && (
-                    <button className="btn primary" disabled={vaeProgress !== null || dirty} title={dirty ? "Save or discard your changes first" : undefined} onClick={improveVae}>
+                    <button className="btn primary" disabled={vaeProgress !== null || ditProgress !== null || dirty} title={dirty ? "Save or discard your changes first" : undefined} onClick={improveVae}>
                       <Download size={15} /> {vaeProgress !== null ? `${Math.floor(vaeProgress * 100)}%` : `Switch${ms.vae.download_bytes ? ` · ${formatBytes(ms.vae.download_bytes)}` : ""}`}
                     </button>
                   )}

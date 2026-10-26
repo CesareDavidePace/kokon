@@ -39,8 +39,9 @@ public final class NeuralEngineProduct: @unchecked Sendable {
         }
     }
 
-    /// `sharing`: a program of the same shape whose `x` and `y` surfaces this one uses too (its own weight only).
-    public init(rows: Int, k: Int, n: Int, int8: Bool = false, halfActivations: Bool = false, sharing: NeuralEngineProduct? = nil) throws {
+    /// `sharing`: a program of the same shape whose `x` surface (and `y`, with `sharingOutput`) this one uses too.
+    public init(rows: Int, k: Int, n: Int, int8: Bool = false, halfActivations: Bool = false, sharing: NeuralEngineProduct? = nil,
+                sharingOutput: Bool = true) throws {
         self.rows = rows; self.k = k; self.n = n; self.int8 = int8; self.halfActivations = int8 && halfActivations
         let int8x = int8 && !halfActivations
         (model, directory) = try NeuralEngineProduct.compile(
@@ -49,7 +50,7 @@ public final class NeuralEngineProduct: @unchecked Sendable {
             inputs: [("x", [rows, k]), ("w", [k, n])], outputs: [("y", [rows, n])], int8Inputs: int8 ? (int8x ? ["x", "w"] : ["w"]) : [])
         x = try sharing?.x ?? NeuralEngineProduct.surface(rows: rows, columns: k, int8: int8x)
         w = try NeuralEngineProduct.surface(rows: k, columns: n, int8: int8)
-        y = try sharing?.y ?? NeuralEngineProduct.surface(rows: rows, columns: n)
+        y = try (sharingOutput ? sharing?.y : nil) ?? NeuralEngineProduct.surface(rows: rows, columns: n)
         func shape(_ dims: Int...) -> [NSNumber] { dims.map { NSNumber(value: $0) } }
         options = MLPredictionOptions()
         options.outputBackings = ["y": MLMultiArray(pixelBuffer: y, shape: shape(rows, n))]

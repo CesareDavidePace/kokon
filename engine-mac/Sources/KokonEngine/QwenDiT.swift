@@ -329,6 +329,7 @@ public final class QwenDiT {
         let started = DispatchTime.now().uptimeNanoseconds
         timings = [:]
         castInput = nil
+        deferredResidual = nil
         // The cached path when there is a cache and no probe (the probes compare every row of every stage).
         // A new conditioning: the whole sequence once, the prefix's K and V saved on the way. A pass of the prefix
         // alone took 1.86 s at 1024² (products of 64 rows run far below the GPU's rate); riding along the first
@@ -489,9 +490,16 @@ public final class QwenDiT {
         let (first, count) = (rows.lowerBound, rows.count)
         let block = "transformer_blocks.\(layer)."
         let band = 5 * d   // the target's modulation row follows the prefix's
-        try layerNorm(x, into: normed, rows: rows, prefixMod: 0, targetMod: band,
-                      half: halfOutput(count: count, k: d, n: d), commands: commands)
         let qkv = ["to_q", "to_k", "to_v"].map { block + "attn.\($0).weight" }
+        let qkvPack = rowPack(count: count, k: d, n: d, readers: qkv)
+        if let deferred = deferredResidual {   // the layer before's MLP residual, with this LN1
+            deferredResidual = nil
+            try residualNorm(gate: 3 * d, rows: rows, prefixMod: 0, targetMod: band, half: halfOutput(count: count, k: d, n: d),
+                             pack: qkvPack, tiles: deferred.tiles, commands: commands)
+        } else {
+            try layerNorm(x, into: normed, rows: rows, prefixMod: 0, targetMod: band,
+                          half: halfOutput(count: count, k: d, n: d), pack: qkvPack, commands: commands)
+        }
         try linear(qkv[0], a: normed, aRow: first, c: q, m: count, cRow: first, next: qkv[1], readers: qkv, commands: commands)
         try linear(qkv[1], a: normed, aRow: first, c: k, m: count, cRow: first, next: qkv[2], readers: qkv, commands: commands)
         try mark("norm1", normed)
@@ -508,22 +516,50 @@ public final class QwenDiT {
         if mode == .saving { try copyPrefix(layer: layer, save: true, commands: commands) }
         if mode == .target { try copyPrefix(layer: layer, save: false, commands: commands) }
         try attend(queries: p, count: n - p, keys: n, causal: false, commands: commands)
-        try linear(block + "attn.to_out.0.weight", a: attended, aRow: first, c: o, m: count, cRow: first,
-                   next: block + "img_mlp.gate_layer.weight", commands: commands)
-        try mark("attn_out", o)
-        try residual(gate: d, rows: rows, commands: commands)
-        try mark("res1", x)
-        try layerNorm(x, into: normed, rows: rows, prefixMod: 2 * d, targetMod: band + 2 * d,
-                      half: halfOutput(count: count, k: d, n: QwenDiT.hidden), commands: commands)
-        try mark("norm2", normed)
         let gateProj = ["gate_layer", "proj"].map { block + "img_mlp.\($0).weight" }
-        try linear(gateProj[0], a: normed, aRow: first, c: h1, m: count, cRow: first, next: gateProj[1], readers: gateProj, commands: commands)
-        try linear(gateProj[1], a: normed, aRow: first, c: h2, m: count, cRow: first, next: block + "img_mlp.out.weight", readers: gateProj, commands: commands)
-        try swiglu(first: first, count: count, half: halfOutput(count: count, k: QwenDiT.hidden, n: d), commands: commands)
-        try linear(block + "img_mlp.out.weight", a: h1, aRow: first, c: o, m: count, cRow: first,
-                   next: layer + 1 < QwenDiT.layers ? "transformer_blocks.\(layer + 1).attn.to_q.weight" : nil, commands: commands)
+        let toOut = block + "attn.to_out.0.weight"
+        let gpPack = rowPack(count: count, k: d, n: QwenDiT.hidden, readers: gateProj)
+        // With LN2's rows packed, to_out's Neural Engine rows stay in its output surfaces for the fused residual.
+        let fuse = fusedResidual && stage == nil
+        try linear(toOut, a: attended, aRow: first, c: o, m: count, cRow: first, next: gateProj[0],
+                   keepOutput: fuse && gpPack != nil, commands: commands)
+        if fuse {
+            try residualNorm(gate: d, rows: rows, prefixMod: 2 * d, targetMod: band + 2 * d,
+                             half: halfOutput(count: count, k: d, n: QwenDiT.hidden), pack: gpPack,
+                             tiles: gpPack != nil ? (coexecutor!.lastSet, toOut, 1) : nil, commands: commands)
+        } else {
+            try mark("attn_out", o)
+            try residual(gate: d, rows: rows, commands: commands)
+            try mark("res1", x)
+            try layerNorm(x, into: normed, rows: rows, prefixMod: 2 * d, targetMod: band + 2 * d,
+                          half: halfOutput(count: count, k: d, n: QwenDiT.hidden), pack: gpPack, commands: commands)
+        }
+        try mark("norm2", normed)
+        // With the MLP out's rows packed by the SwiGLU, gate's and proj's Neural Engine rows stay in their output
+        // surfaces and the SwiGLU reads them there (no fp32 unpacking of 2 × 88 MB at 1024²).
+        let mlpOut = block + "img_mlp.out.weight"
+        let mlpPack = rowPack(count: count, k: QwenDiT.hidden, n: d, readers: [mlpOut])
+        let keep = mlpPack != nil
+        try linear(gateProj[0], a: normed, aRow: first, c: h1, m: count, cRow: first, next: gateProj[1], readers: gateProj,
+                   keepOutput: keep, commands: commands)
+        let gateSet = coexecutor?.lastSet ?? 0
+        try linear(gateProj[1], a: normed, aRow: first, c: h2, m: count, cRow: first, next: mlpOut, readers: gateProj,
+                   keepOutput: keep, commands: commands)
+        try swiglu(first: first, count: count, half: halfOutput(count: count, k: QwenDiT.hidden, n: d), pack: mlpPack,
+                   tiles: keep ? (gateSet, coexecutor?.lastSet ?? 0, gateProj) : nil, commands: commands)
+        // The MLP's residual goes with the next layer's LN1 (`deferredResidual`), the Neural Engine's rows of the MLP
+        // out read there from its output surfaces when that LN1 packs them.
+        let nextQKV = ["to_q", "to_k", "to_v"].map { "transformer_blocks.\(layer + 1).attn.\($0).weight" }
+        let carry = fuse && layer + 1 < QwenDiT.layers
+        let keepMLP = carry && rowPack(count: count, k: d, n: d, readers: nextQKV) != nil
+        try linear(mlpOut, a: h1, aRow: first, c: o, m: count, cRow: first,
+                   next: layer + 1 < QwenDiT.layers ? nextQKV[0] : nil, keepOutput: keepMLP, commands: commands)
         try mark("mlp", o)
-        try residual(gate: 3 * d, rows: rows, commands: commands)
+        if carry {
+            deferredResidual = Deferred(tiles: keepMLP ? (coexecutor!.lastSet, mlpOut, 3) : nil)
+        } else {
+            try residual(gate: 3 * d, rows: rows, commands: commands)
+        }
     }
 
     // MARK: - encoders
@@ -582,7 +618,7 @@ public final class QwenDiT {
     /// GPU's ~1.8 ms per 4096 × 4096 weight otherwise ran alone between products).
     /// `readers`: every weight that reads this same A (q, k, v; gate, proj), so the Neural Engine's rows are packed once.
     func linear(_ name: String, a: Arena.Slice, aRow: Int = 0, c: Arena.Slice, m: Int, cRow: Int = 0,
-                next: String? = nil, readers: [String] = [], commands: MTLCommandBuffer) throws {
+                next: String? = nil, readers: [String] = [], keepOutput: Bool = false, commands: MTLCommandBuffer) throws {
         let tensor = try weight(name)
         let (kk, nn) = (tensor.columns, tensor.rows)
         let m = QwenDiT.padded(m)
@@ -644,7 +680,8 @@ public final class QwenDiT {
             }
             let ready = castInput.map { $0 == (a.offset, aRow, kk) } ?? false
             try coexecutor.encode(weight: name, a: operand(a, aRow, kk), w: operand(reserve, 0, nn), c: operand(c, cRow, nn),
-                                  m: m, k: kk, n: nn, commands: commands, readers: readers, castReady: ready, ahead: ahead, gpuRows: gpuRows)
+                                  m: m, k: kk, n: nn, commands: commands, readers: readers, castReady: ready, keepOutput: keepOutput,
+                                  ahead: ahead, gpuRows: gpuRows)
             castInput = c.offset == a.offset ? nil : (a.offset, aRow, kk)
         } else {
             try gpuRows(m)
@@ -681,6 +718,79 @@ public final class QwenDiT {
         return (h.buffer, HalfOut(rows: UInt32(count), halfRows: UInt32(h.rows), fullFrom: probing ? 0 : UInt32(h.rows)))
     }
 
+    /// Where a row kernel of `count` real rows packs the Neural Engine's rows of the split product that follows
+    /// (`Coexecutor.RowPack`); nil: they are written in fp32 and packed by the product.
+    func rowPack(count: Int, k: Int, n: Int, readers: [String]) -> Coexecutor.RowPack? {
+        guard fusedCast, !profiling, !probing, let coexecutor else { return nil }
+        return coexecutor.rowPack(m: QwenDiT.padded(count), k: k, n: n, readers: readers)
+    }
+
+    struct AnePack { var row0, real, surfaces, kSplit: UInt32 }
+
+    /// Binds a row pack's σ, bounds and surfaces at `index` on.
+    func bind(_ pack: Coexecutor.RowPack, _ e: MTLComputeCommandEncoder, real: Int, from index: Int) {
+        var a = AnePack(row0: UInt32(pack.first), real: UInt32(real), surfaces: UInt32(pack.surfaces.count), kSplit: pack.kSplit ? 1 : 0)
+        e.setBytes(&a, length: MemoryLayout<AnePack>.stride, index: index)
+        e.setBuffer(pack.sigma, offset: 0, index: index + 1)
+        for i in 0..<3 { e.setBuffer(pack.bounds[min(i, pack.bounds.count - 1)], offset: pack.boundOffset, index: index + 2 + i) }
+        for i in 0..<3 { e.setBuffer(pack.surfaces[min(i, pack.surfaces.count - 1)], offset: 0, index: index + 5 + i) }
+    }
+
+    /// **The residual and the LN after it in one pass** (`residual_layernorm`, `residual_layernorm_ane`): x is read
+    /// once instead of twice, and the Neural Engine's rows of `o` come from the product's output surfaces (`tiles`: set,
+    /// weight, K parts) instead of an fp32 unpacking. After to_out (with LN2) and after the MLP out (with the next
+    /// layer's LN1). The same values to the bit. `KOKON_FUSED_RESIDUAL=0`: the separate kernels.
+    let fusedResidual = ProcessInfo.processInfo.environment["KOKON_FUSED_RESIDUAL"] != "0"
+    struct Deferred { let tiles: (set: Int, weight: String, kParts: Int)? }
+    /// The MLP residual of the layer before, encoded with this layer's LN1.
+    var deferredResidual: Deferred?
+
+    /// `x += tanh(gate) · o` then `LN(x) · mod` on `rows` (see `fusedResidual`).
+    func residualNorm(gate: Int, rows: Range<Int>, prefixMod: Int, targetMod: Int, half: (buffer: MTLBuffer, out: HalfOut)?,
+                      pack: Coexecutor.RowPack?, tiles: (set: Int, weight: String, kParts: Int)?, commands: MTLCommandBuffer) throws {
+        let d = QwenDiT.dim
+        // Packing the Neural Engine's rows needs them from the product's surfaces; otherwise the residual kernel takes
+        // every row (the Neural Engine's unpacked in fp32 by the product).
+        guard (pack == nil) == (tiles == nil) else {
+            try residual(gate: gate, rows: rows, commands: commands)
+            return try layerNorm(x, into: normed, rows: rows, prefixMod: prefixMod, targetMod: targetMod, half: half, pack: pack, commands: commands)
+        }
+        let at = rows.lowerBound * d * 4
+        let h = half?.out ?? QwenDiT.fullOnly(rows.count)
+        var params = NormParams(columns: UInt32(d), targetStart: UInt32(max(0, sequence.prefix - rows.lowerBound)), eps: QwenDiT.eps, half: h)
+        try compute("residual_layernorm", commands: commands) { e in
+            e.setBuffer(arena.buffer, offset: x.offset + at, index: 0)
+            e.setBuffer(arena.buffer, offset: normed.offset + at, index: 1)
+            e.setBuffer(arena.buffer, offset: modulation.offset + prefixMod * 4, index: 2)
+            e.setBuffer(arena.buffer, offset: modulation.offset + targetMod * 4, index: 3)
+            e.setBytes(&params, length: MemoryLayout<NormParams>.stride, index: 4)
+            e.setBuffer(half?.buffer ?? arena.buffer, offset: half == nil ? normed.offset + at : 0, index: 5)
+            e.setBuffer(arena.buffer, offset: o.offset + at, index: 6)
+            e.setBuffer(arena.buffer, offset: modulation.offset + gate * 4, index: 7)
+            e.setBuffer(arena.buffer, offset: modulation.offset + (5 * d + gate) * 4, index: 8)
+            e.dispatchThreadgroups(MTLSize(width: pack.map { $0.first } ?? max(rows.count, Int(h.halfRows)), height: 1, depth: 1),
+                                   threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+        }
+        if let pack, let tiles, let c = coexecutor {
+            try compute("residual_layernorm_ane", commands: commands) { e in
+                e.setBuffer(arena.buffer, offset: x.offset + at, index: 0)
+                e.setBuffer(arena.buffer, offset: modulation.offset + prefixMod * 4, index: 1)
+                e.setBuffer(arena.buffer, offset: modulation.offset + targetMod * 4, index: 2)
+                e.setBytes(&params, length: MemoryLayout<NormParams>.stride, index: 3)
+                bind(pack, e, real: rows.count, from: 4)
+                for t in 0..<3 { e.setBuffer(c.slots[tiles.set][min(t, tiles.kParts - 1)].y, offset: 0, index: 12 + t) }
+                e.setBuffer(c.columns(tiles.weight), offset: 0, index: 15)
+                var parts = UInt32(tiles.kParts)
+                e.setBytes(&parts, length: 4, index: 16)
+                e.setBuffer(arena.buffer, offset: modulation.offset + gate * 4, index: 17)
+                e.setBuffer(arena.buffer, offset: modulation.offset + (5 * d + gate) * 4, index: 18)
+                e.dispatchThreadgroups(MTLSize(width: pack.rows, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+            }
+            c.packedByRowKernel(offset: normed.offset + at, readers: pack.readers)
+        }
+        if half != nil { castInput = (normed.offset, rows.lowerBound, d) }
+    }
+
     /// No fp16 copy: every row in fp32.
     static func fullOnly(_ rows: Int) -> HalfOut { HalfOut(rows: UInt32(rows), halfRows: 0, fullFrom: 0) }
     struct HeadParams { var heads: UInt32; var rows: UInt32; var eps: Float }
@@ -689,7 +799,7 @@ public final class QwenDiT {
     /// `out = LN(x) · mod[band]`, `prefixMod` / `targetMod` floats into the modulation slice; `half`: the next
     /// product's fp16 input too (`halfOutput`).
     func layerNorm(_ input: Arena.Slice, into out: Arena.Slice, rows: Range<Int>, prefixMod: Int, targetMod: Int,
-                   half: (buffer: MTLBuffer, out: HalfOut)? = nil, commands: MTLCommandBuffer) throws {
+                   half: (buffer: MTLBuffer, out: HalfOut)? = nil, pack: Coexecutor.RowPack? = nil, commands: MTLCommandBuffer) throws {
         let at = rows.lowerBound * QwenDiT.dim * 4
         let h = half?.out ?? QwenDiT.fullOnly(rows.count)
         try compute("layernorm_modulate", commands: commands) { e in
@@ -701,14 +811,29 @@ public final class QwenDiT {
                                     eps: QwenDiT.eps, half: h)
             e.setBytes(&params, length: MemoryLayout<NormParams>.stride, index: 4)
             e.setBuffer(half?.buffer ?? arena.buffer, offset: half == nil ? out.offset + at : 0, index: 5)
-            e.dispatchThreadgroups(MTLSize(width: max(rows.count, Int(h.halfRows)), height: 1, depth: 1),
+            e.dispatchThreadgroups(MTLSize(width: pack.map { $0.first } ?? max(rows.count, Int(h.halfRows)), height: 1, depth: 1),
                                    threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+        }
+        if let pack {
+            try compute("layernorm_modulate_ane", commands: commands) { e in
+                e.setBuffer(arena.buffer, offset: input.offset + at, index: 0)
+                e.setBuffer(arena.buffer, offset: modulation.offset + prefixMod * 4, index: 1)
+                e.setBuffer(arena.buffer, offset: modulation.offset + targetMod * 4, index: 2)
+                var params = NormParams(columns: UInt32(QwenDiT.dim), targetStart: UInt32(max(0, sequence.prefix - rows.lowerBound)),
+                                        eps: QwenDiT.eps, half: h)
+                e.setBytes(&params, length: MemoryLayout<NormParams>.stride, index: 3)
+                bind(pack, e, real: rows.count, from: 4)
+                e.dispatchThreadgroups(MTLSize(width: pack.rows, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+            }
+            coexecutor?.packedByRowKernel(offset: out.offset + at, readers: pack.readers)
         }
         if half != nil { castInput = (out.offset, rows.lowerBound, QwenDiT.dim) }
     }
 
     /// `h1 = SiLU(h1) ⊙ h2` on rows `[first, first + count)`; `half`: the MLP out's fp16 input too.
-    func swiglu(first: Int, count: Int, half: (buffer: MTLBuffer, out: HalfOut)?, commands: MTLCommandBuffer) throws {
+    /// `tiles`: gate's and proj's Neural Engine rows read from their output surfaces (sets, weights) instead of h1, h2.
+    func swiglu(first: Int, count: Int, half: (buffer: MTLBuffer, out: HalfOut)?, pack: Coexecutor.RowPack? = nil,
+                tiles: (gate: Int, proj: Int, weights: [String])? = nil, commands: MTLCommandBuffer) throws {
         let w = QwenDiT.hidden
         let h = half?.out ?? QwenDiT.fullOnly(count)
         try compute("swiglu", commands: commands) { e in
@@ -717,8 +842,27 @@ public final class QwenDiT {
             var params = SwigluParams(columns: UInt32(w), half: h)
             e.setBytes(&params, length: MemoryLayout<SwigluParams>.stride, index: 2)
             e.setBuffer(half?.buffer ?? arena.buffer, offset: half == nil ? h1.offset : 0, index: 3)
-            e.dispatchThreads(MTLSize(width: max(count, Int(h.halfRows)) * w, height: 1, depth: 1),
+            e.dispatchThreads(MTLSize(width: (pack.map { $0.first } ?? max(count, Int(h.halfRows))) * w, height: 1, depth: 1),
                               threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+        }
+        if let pack, let tiles, let c = coexecutor {
+            try compute("swiglu_ane_tiles", commands: commands) { e in
+                for t in 0..<3 { e.setBuffer(c.slots[tiles.gate][t].y, offset: 0, index: t) }
+                for t in 0..<3 { e.setBuffer(c.slots[tiles.proj][t].y, offset: 0, index: 3 + t) }
+                e.setBuffer(c.columns(tiles.weights[0]), offset: 0, index: 6)
+                e.setBuffer(c.columns(tiles.weights[1]), offset: 0, index: 7)
+                bind(pack, e, real: count, from: 8)
+                e.dispatchThreadgroups(MTLSize(width: pack.rows, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+            }
+            c.packedByRowKernel(offset: h1.offset + first * w * 4, readers: pack.readers)
+        } else if let pack {
+            try compute("swiglu_ane", commands: commands) { e in
+                e.setBuffer(arena.buffer, offset: h1.offset + first * w * 4, index: 0)
+                e.setBuffer(arena.buffer, offset: h2.offset + first * w * 4, index: 1)
+                bind(pack, e, real: count, from: 2)
+                e.dispatchThreadgroups(MTLSize(width: pack.rows, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+            }
+            coexecutor?.packedByRowKernel(offset: h1.offset + first * w * 4, readers: pack.readers)
         }
         if half != nil { castInput = (h1.offset, first, w) }
     }

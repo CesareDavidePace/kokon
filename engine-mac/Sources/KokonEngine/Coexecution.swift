@@ -30,8 +30,9 @@ final class Coexecutor {
     var amxRows: [String: Int] = [:]
     typealias ProductSlot = (product: NeuralEngineProduct, x: MTLBuffer, w: MTLBuffer, y: MTLBuffer)
     /// Two sets of the three tile programs, alternating product by product: the next product's weight is packed into
-    /// one set while the Neural Engine reads the other (`prepareWeight`). The sets share their row surfaces.
-    private var slots: [[ProductSlot]]
+    /// one set while the Neural Engine reads the other (`prepareWeight`). The sets share their input surfaces; each has
+    /// its own outputs, so gate's stay beside proj's for the SwiGLU (`keepOutput`).
+    private(set) var slots: [[ProductSlot]]
     /// Programs of other row counts, kept while the balancing loop may come back to them.
     private var spareSlots: [Int: [[ProductSlot]]] = [:]
     /// The set of the last product encoded; the weight packed ahead and its set.
@@ -148,9 +149,9 @@ final class Coexecutor {
         }
         let second: [ProductSlot] = try first.map { f in
             let p = try NeuralEngineProduct(rows: rows, k: Coexecutor.tile, n: Coexecutor.tile, int8: aneInt8, halfActivations: aneHalfRows,
-                                            sharing: f.product)
+                                            sharing: f.product, sharingOutput: false)
             try p.run()
-            return (p, f.x, try p.gpuBuffer(p.w, device: device), f.y)
+            return (p, f.x, try p.gpuBuffer(p.w, device: device), try p.gpuBuffer(p.y, device: device))
         }
         return [first, second]
     }
@@ -190,13 +191,46 @@ final class Coexecutor {
         return (aHalf, m - split(m: m, k: k, n: n).ane)
     }
 
+    /// **The row kernel before a split product packs its Neural Engine rows** (`layernorm_modulate_ane`, `swiglu_ane`):
+    /// σ and the scaled fp16 rows straight into the input surfaces, instead of fp32 rows that `ane_row_scales` and
+    /// `ane_pack_rows` read back. Once every reader's L is known (from the first evaluation on), fp16, `sharedRows` for
+    /// several readers. `KOKON_FUSED_PACK=0`: the separate passes, for comparison.
+    struct RowPack {
+        let readers: [String], surfaces: [MTLBuffer], bounds: [MTLBuffer], boundOffset: Int, sigma: MTLBuffer
+        /// The first Neural Engine row (from the product's first row), their count, K split into the tiles (MLP out).
+        let first: Int, rows: Int, kSplit: Bool
+    }
+    let fusedPack = ProcessInfo.processInfo.environment["KOKON_FUSED_PACK"] != "0"
+    /// The input (A's offset) a single-reader product finds packed by its row kernel.
+    var prepacked: Int?
+
+    func rowPack(m: Int, k: Int, n: Int, readers: [String]) -> RowPack? {
+        guard fusedPack, aneEnabled, !aneInt8, halfActivations, !readers.isEmpty, readers.count == 1 || sharedRows,
+              applies(m: m, k: k, n: n), m <= maxRows, m >= rows, k == Coexecutor.tile || n == Coexecutor.tile else { return nil }
+        let s = split(m: m, k: k, n: n)
+        let bounds = readers.compactMap { columnScales[$0] }
+        guard s.ane > 0, bounds.count == readers.count else { return nil }
+        let tiles = k / Coexecutor.tile * (n / Coexecutor.tile)
+        return RowPack(readers: readers, surfaces: slots[0].prefix(tiles).map(\.x), bounds: bounds, boundOffset: 2 * n * 4, sigma: scales,
+                       first: m - s.ane, rows: s.ane, kSplit: k > Coexecutor.tile)
+    }
+
+    /// The set of the last product encoded, whose output surfaces hold its Neural Engine rows (`keepOutput`).
+    var lastSet: Int { currentSet }
+    func columns(_ weight: String) -> MTLBuffer? { columnScales[weight] }
+
+    /// Notes that the rows at `offset` were packed by their row kernel for `readers`.
+    func packedByRowKernel(offset: Int, readers: [String]) {
+        if readers.count > 1 { packedRows = (offset, readers) } else { prepacked = offset }
+    }
+
     /// Encodes the split product of the weight named `weight`. `gpuRows` encodes the GPU's own rows `[0, g)` into the
     /// command buffer.
     func encode(weight: String, a: (buffer: MTLBuffer, offset: Int, pointer: UnsafeMutablePointer<Float>),
                 w: (buffer: MTLBuffer, offset: Int, pointer: UnsafeMutablePointer<Float>),
                 c: (buffer: MTLBuffer, offset: Int, pointer: UnsafeMutablePointer<Float>),
                 m: Int, k: Int, n: Int, commands: MTLCommandBuffer, readers: [String] = [],
-                castReady: Bool = false, ahead: ((MTLCommandBuffer) throws -> Void)? = nil,
+                castReady: Bool = false, keepOutput: Bool = false, ahead: ((MTLCommandBuffer) throws -> Void)? = nil,
                 gpuRows: (Int, MTLBuffer?) throws -> Void) throws {
         let s = split(m: m, k: k, n: n)
         counter += 1
@@ -232,6 +266,8 @@ final class Coexecutor {
         let shared = sharedRows && readers.count > 1 && readers.count <= 3 && readers.contains(weight)
             && (aneInt8 || readers.allSatisfy { columnScales[$0] != nil })
         let packed = shared && packedRows.map { $0.offset == a.offset && $0.readers == readers } ?? false
+            || prepacked == a.offset
+        prepacked = nil
         if s.ane > 0, !packed {
             var sh = shape()
             let bounds = shared && !aneInt8 ? readers.map { columnScales[$0]! } : [columns]   // L: fp16 only
@@ -306,6 +342,8 @@ final class Coexecutor {
         if s.amx > 0 { commands.encodeWaitForEvent(amxDone, value: p) }
         if s.ane > 0 {
             commands.encodeWaitForEvent(aneDone, value: p)
+            // Left in its set's output surfaces for the kernel that reads them (gate and proj for the SwiGLU).
+            if keepOutput { return }
             for np in 0..<nParts {
                 var t = shape(np: np)
                 let ys = (0..<3).map { kp in slots[min(kp, kParts - 1) * nParts + np].y }

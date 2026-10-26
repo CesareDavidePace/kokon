@@ -246,6 +246,18 @@ worse). Between operations 0.60 → 0.53 s, but per evaluation, 3 alternated rou
 instead of 66). With the three units at their shared limit, the GPU-alone time moved into the products; what pays
 is fewer bytes moved, as with the fp16 cast above.
 
+**The row kernels pack the Neural Engine's rows, and the residual goes with the LN after it** (2026-10-26;
+`KOKON_FUSED_PACK=0`, `KOKON_FUSED_RESIDUAL=0` for the comparison). From the second evaluation (every weight's L known):
+the LNs and the SwiGLU compute the Neural Engine's rows' σ themselves and write them scaled and packed into its input
+surfaces (`layernorm_modulate_ane`, `swiglu_ane`), where they wrote fp32 rows that `ane_row_scales` and `ane_pack_rows`
+read back; gate's and proj's Neural Engine rows stay in their output surfaces (each program set has its own now) and the
+SwiGLU reads them there instead of two fp32 unpackings; the residual after to_out and the one after the MLP out (carried
+into the next layer's LN1) run in the LN's pass (`residual_layernorm`, `residual_layernorm_ane`), x read once and the
+Neural Engine's rows of `o` taken from the product's surfaces. The velocity is the same to the bit (1024², fixed shares,
+three evaluations, `KOKON_DUMP=<file> time-dit` with each switch; `check-generate` unchanged to every digit). Between operations an evaluation: 0.60–0.66 → 0.41–0.45
+s (proj → MLP out 5.4 → 3.3 ms, gate → proj 1.3–2.6 → 0.07, to_out → gate 3.3 → 1.7–2.0, MLP out → q 3.4 → 2.5). Per
+evaluation at 1024², 5 alternated rounds of 4 (M2 Pro, other apps open, ~4.5 GB of page-ins a run): median 7.71 → 7.34 s.
+
 **The Neural Engine's rows packed once per input** (`KOKON_SHARED_ROWS=0` for the comparison): q, k and v read the
 same rows, and so do gate and proj, but each product scaled and packed them again with its own σ. From the second
 evaluation on (when every weight's L is known), an input's rows get one σ from the largest L of its readers and are

@@ -128,6 +128,9 @@ extension Checks {
             let started = DispatchTime.now().uptimeNanoseconds
             let out = try dit.forward(encoder: encoder, target: latent, sigma: 0.5)
             let seconds = Double(DispatchTime.now().uptimeNanoseconds - started) * 1e-9
+            if let dump = ProcessInfo.processInfo.environment["KOKON_DUMP"] {   // each evaluation's velocity, to compare builds
+                try out.withUnsafeBytes { try Data($0).write(to: URL(fileURLWithPath: "\(dump).\(run + 1)")) }
+            }
             print(String(format: "evaluation %d: %.2f s%@%@", run + 1, seconds, dit.timings["prefix"].map { String(format: " (prefix pass %.2f s)", $0) } ?? "",
                          out.allSatisfy(\.isFinite) ? "" : "  NON-FINITE OUTPUT"))
             if let c = dit.coexecutor {

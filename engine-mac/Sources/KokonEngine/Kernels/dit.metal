@@ -185,3 +185,223 @@ kernel void widen_q8(device float4 *dst [[buffer(0)]], device const char4 *codes
                      constant uint &lanes [[buffer(4)]], uint i [[thread_position_in_grid]]) {
     if (i / 32 < units) dst[i] = float4(codes[i]) * scales[i / lanes];
 }
+
+// The Neural Engine's rows of a row kernel's output, written straight into the next split product's input surfaces
+// (`Coexecution.swift`, `RowPack`): each row's σ from its largest |value| and the readers' bound L, as `ane_row_scales`
+// computes it, then half(v · σ) as `ane_pack_rows` writes it, into `surfaces` tiles of 4 096 columns (the same row
+// into each of an N-split product's tiles; a K-split product's parts in turn). Rows from `real` on are the product's
+// padding: zeros (σ 1), as packing never-written rows gave.
+struct AnePack {
+    uint row0;        // the first Neural Engine row, from the kernel's first row
+    uint real;        // rows of the kernel that are real, from its first row
+    uint surfaces;    // tiles written: 1 to 3
+    uint kSplit;      // 1: column j goes to tile j / 4096 (K parts); 0: every tile gets the whole row (N parts)
+};
+
+static inline float row_max(float v, threadgroup float *shared, uint tid) {
+    v = simd_max(v);
+    if (tid % 32 == 0) shared[tid / 32] = v;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    float m = 0;
+    for (uint i = 0; i < ROW_THREADS / 32; i++) m = max(m, shared[i]);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    return m;
+}
+
+static inline float ane_sigma(float peak, device const float *l0, device const float *l1, device const float *l2) {
+    float bound = peak * max(l0[0], max(l1[0], l2[0]));
+    return (bound > 0 && isfinite(bound)) ? exp2(floor(log2(32768.0f / bound))) : 1.0f;
+}
+
+// layernorm_modulate on the Neural Engine's rows (4 096 columns), packed. One threadgroup per row.
+kernel void layernorm_modulate_ane(device const float *x [[buffer(0)]], device const float *prefixMod [[buffer(1)]],
+                                   device const float *targetMod [[buffer(2)]], constant NormParams &p [[buffer(3)]],
+                                   constant AnePack &a [[buffer(4)]], device float *sigma [[buffer(5)]],
+                                   device const float *l0 [[buffer(6)]], device const float *l1 [[buffer(7)]],
+                                   device const float *l2 [[buffer(8)]], device half *s0 [[buffer(9)]],
+                                   device half *s1 [[buffer(10)]], device half *s2 [[buffer(11)]],
+                                   uint i [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]]) {
+    threadgroup float shared[ROW_THREADS / 32];
+    uint row = a.row0 + i;
+    device half *out[3] = {s0 + (ulong)i * 4096, s1 + (ulong)i * 4096, s2 + (ulong)i * 4096};
+    if (row >= a.real) {
+        for (uint t = 0; t < a.surfaces; t++) for (uint j = tid; j < 4096; j += ROW_THREADS) out[t][j] = 0;
+        if (tid == 0) sigma[i] = 1;
+        return;
+    }
+    device const float *r = x + (ulong)row * p.columns;
+    float s = 0;
+    for (uint j = tid; j < p.columns; j += ROW_THREADS) s += r[j];
+    float mean = row_sum(s, shared, tid) / float(p.columns);
+    float q = 0;
+    for (uint j = tid; j < p.columns; j += ROW_THREADS) { float c = r[j] - mean; q += c * c; }
+    float inv = rsqrt(row_sum(q, shared, tid) / float(p.columns) + p.eps);
+    device const float *m = row < p.targetStart ? prefixMod : targetMod;
+    float v[16], peak = 0;
+    for (uint c = 0; c < 16; c++) {
+        uint j = tid + c * ROW_THREADS;
+        v[c] = ((r[j] - mean) * inv) * m[j];
+        peak = max(peak, fabs(v[c]));
+    }
+    float sg = ane_sigma(row_max(peak, shared, tid), l0, l1, l2);
+    if (tid == 0) sigma[i] = sg;
+    for (uint c = 0; c < 16; c++) {
+        half h = half(v[c] * sg);
+        for (uint t = 0; t < a.surfaces; t++) out[t][tid + c * ROW_THREADS] = h;
+    }
+}
+
+// swiglu on the Neural Engine's rows (12 288 columns: the MLP out's K parts), packed. One threadgroup per row.
+// Padding rows pack the gate's value, which is what `swiglu` leaves in them.
+kernel void swiglu_ane(device const float *gate [[buffer(0)]], device const float *proj [[buffer(1)]],
+                       constant AnePack &a [[buffer(2)]], device float *sigma [[buffer(3)]],
+                       device const float *l0 [[buffer(4)]], device const float *l1 [[buffer(5)]],
+                       device const float *l2 [[buffer(6)]], device half *s0 [[buffer(7)]],
+                       device half *s1 [[buffer(8)]], device half *s2 [[buffer(9)]],
+                       uint i [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]]) {
+    threadgroup float shared[ROW_THREADS / 32];
+    uint row = a.row0 + i;
+    device const float *g = gate + (ulong)row * 12288, *pr = proj + (ulong)row * 12288;
+    float v[48], peak = 0;
+    for (uint c = 0; c < 48; c++) {
+        uint j = tid + c * ROW_THREADS;
+        float x = g[j];
+        v[c] = row < a.real ? (x / (1.0f + exp(-x))) * pr[j] : x;
+        peak = max(peak, fabs(v[c]));
+    }
+    float sg = ane_sigma(row_max(peak, shared, tid), l0, l1, l2);
+    if (tid == 0) sigma[i] = sg;
+    device half *out[3] = {s0 + (ulong)i * 4096, s1 + (ulong)i * 4096, s2 + (ulong)i * 4096};
+    for (uint c = 0; c < 48; c++) {
+        uint j = tid + c * ROW_THREADS;
+        out[j / 4096][j % 4096] = half(v[c] * sg);
+    }
+}
+
+// swiglu_ane reading gate's and proj's Neural Engine outputs where the products left them (`keepOutput`): each
+// value unscaled as `ane_unpack` does ((y / λ) / σ, σ the rows' shared one, then replaced by the MLP out's), the gate
+// tiles `g0..g2` and proj tiles `p0..p2` of 4 096 columns each. Value for value the unpacks, `swiglu`, then the packing.
+kernel void swiglu_ane_tiles(device const half *g0 [[buffer(0)]], device const half *g1 [[buffer(1)]],
+                             device const half *g2 [[buffer(2)]], device const half *p0 [[buffer(3)]],
+                             device const half *p1 [[buffer(4)]], device const half *p2 [[buffer(5)]],
+                             device const float *lambdaG [[buffer(6)]], device const float *lambdaP [[buffer(7)]],
+                             constant AnePack &a [[buffer(8)]], device float *sigma [[buffer(9)]],
+                             device const float *l0 [[buffer(10)]], device const float *l1 [[buffer(11)]],
+                             device const float *l2 [[buffer(12)]], device half *s0 [[buffer(13)]],
+                             device half *s1 [[buffer(14)]], device half *s2 [[buffer(15)]],
+                             uint i [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]]) {
+    threadgroup float shared[ROW_THREADS / 32];
+    uint row = a.row0 + i;
+    float sgIn = sigma[i];   // read before the barriers in row_max; thread 0 rewrites it after them
+    device const half *gs[3] = {g0, g1, g2}, *ps[3] = {p0, p1, p2};
+    float v[48], peak = 0;
+    for (uint c = 0; c < 48; c++) {
+        uint j = tid + c * ROW_THREADS, t = j / 4096;
+        ulong at = (ulong)i * 4096 + j % 4096;
+        float x = (float(gs[t][at]) / lambdaG[j]) / sgIn;
+        v[c] = row < a.real ? (x / (1.0f + exp(-x))) * ((float(ps[t][at]) / lambdaP[j]) / sgIn) : x;
+        peak = max(peak, fabs(v[c]));
+    }
+    float sg = ane_sigma(row_max(peak, shared, tid), l0, l1, l2);
+    if (tid == 0) sigma[i] = sg;
+    device half *out[3] = {s0 + (ulong)i * 4096, s1 + (ulong)i * 4096, s2 + (ulong)i * 4096};
+    for (uint c = 0; c < 48; c++) {
+        uint j = tid + c * ROW_THREADS;
+        out[j / 4096][j % 4096] = half(v[c] * sg);
+    }
+}
+
+// gated_residual then layernorm_modulate in one pass over each row: x += tanh(gate) · o (written back), then the
+// norm of the new x, as the two kernels compute them. Rows from `real` on are padding: no residual, zeros in the fp16
+// copy. One threadgroup per row, 4 096 columns.
+kernel void residual_layernorm(device float *x [[buffer(0)]], device float *out [[buffer(1)]],
+                               device const float *prefixMod [[buffer(2)]], device const float *targetMod [[buffer(3)]],
+                               constant NormParams &p [[buffer(4)]], device half *outHalf [[buffer(5)]],
+                               device const float *o [[buffer(6)]], device const float *prefixGate [[buffer(7)]],
+                               device const float *targetGate [[buffer(8)]],
+                               uint row [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]]) {
+    threadgroup float shared[ROW_THREADS / 32];
+    device half *h = outHalf + (ulong)row * p.columns;
+    if (row >= p.half_out.rows) {
+        for (uint j = tid; j < p.columns; j += ROW_THREADS) h[j] = 0;
+        return;
+    }
+    device float *r = x + (ulong)row * p.columns;
+    device const float *orow = o + (ulong)row * p.columns;
+    device const float *g = row < p.targetStart ? prefixGate : targetGate;
+    float v[16], s = 0;
+    for (uint c = 0; c < 16; c++) {
+        uint j = tid + c * ROW_THREADS;
+        v[c] = r[j] + g[j] * orow[j];
+        r[j] = v[c];
+        s += v[c];
+    }
+    float mean = row_sum(s, shared, tid) / float(p.columns);
+    float q = 0;
+    for (uint c = 0; c < 16; c++) { float d = v[c] - mean; q += d * d; }
+    float inv = rsqrt(row_sum(q, shared, tid) / float(p.columns) + p.eps);
+    device const float *m = row < p.targetStart ? prefixMod : targetMod;
+    device float *w = out + (ulong)row * p.columns;
+    bool toHalf = row < p.half_out.halfRows, toFull = row >= p.half_out.fullFrom;
+    for (uint c = 0; c < 16; c++) {
+        uint j = tid + c * ROW_THREADS;
+        float y = ((v[c] - mean) * inv) * m[j];
+        if (toFull) w[j] = y;
+        if (toHalf) h[j] = half(y);
+    }
+}
+
+// The same on the Neural Engine's rows, o read from the product's output tiles (`y0..y2`: its K parts, summed in
+// fp32 and unscaled as `ane_unpack` does, σ the product's, then replaced by the next one's), the norm packed as in
+// layernorm_modulate_ane.
+kernel void residual_layernorm_ane(device float *x [[buffer(0)]], device const float *prefixMod [[buffer(1)]],
+                                   device const float *targetMod [[buffer(2)]], constant NormParams &p [[buffer(3)]],
+                                   constant AnePack &a [[buffer(4)]], device float *sigma [[buffer(5)]],
+                                   device const float *l0 [[buffer(6)]], device const float *l1 [[buffer(7)]],
+                                   device const float *l2 [[buffer(8)]], device half *s0 [[buffer(9)]],
+                                   device half *s1 [[buffer(10)]], device half *s2 [[buffer(11)]],
+                                   device const half *y0 [[buffer(12)]], device const half *y1 [[buffer(13)]],
+                                   device const half *y2 [[buffer(14)]], device const float *lambda [[buffer(15)]],
+                                   constant uint &kParts [[buffer(16)]], device const float *prefixGate [[buffer(17)]],
+                                   device const float *targetGate [[buffer(18)]],
+                                   uint i [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]]) {
+    threadgroup float shared[ROW_THREADS / 32];
+    uint row = a.row0 + i;
+    device half *out[3] = {s0 + (ulong)i * 4096, s1 + (ulong)i * 4096, s2 + (ulong)i * 4096};
+    float sgIn = sigma[i];   // read before the barriers; thread 0 rewrites it after them
+    if (row >= a.real) {
+        for (uint t = 0; t < a.surfaces; t++) for (uint j = tid; j < 4096; j += ROW_THREADS) out[t][j] = 0;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (tid == 0) sigma[i] = 1;
+        return;
+    }
+    device float *r = x + (ulong)row * p.columns;
+    device const float *g = row < p.targetStart ? prefixGate : targetGate;
+    float v[16], s = 0;
+    for (uint c = 0; c < 16; c++) {
+        uint j = tid + c * ROW_THREADS;
+        ulong at = (ulong)i * 4096 + j;
+        float sum = float(y0[at]);
+        if (kParts > 1) sum += float(y1[at]);
+        if (kParts > 2) sum += float(y2[at]);
+        v[c] = r[j] + g[j] * ((sum / lambda[j]) / sgIn);
+        r[j] = v[c];
+        s += v[c];
+    }
+    float mean = row_sum(s, shared, tid) / float(p.columns);
+    float q = 0;
+    for (uint c = 0; c < 16; c++) { float d = v[c] - mean; q += d * d; }
+    float inv = rsqrt(row_sum(q, shared, tid) / float(p.columns) + p.eps);
+    device const float *m = row < p.targetStart ? prefixMod : targetMod;
+    float peak = 0;
+    for (uint c = 0; c < 16; c++) {
+        v[c] = ((v[c] - mean) * inv) * m[tid + c * ROW_THREADS];
+        peak = max(peak, fabs(v[c]));
+    }
+    float sg = ane_sigma(row_max(peak, shared, tid), l0, l1, l2);
+    if (tid == 0) sigma[i] = sg;
+    for (uint c = 0; c < 16; c++) {
+        half hv = half(v[c] * sg);
+        for (uint t = 0; t < a.surfaces; t++) out[t][tid + c * ROW_THREADS] = hv;
+    }
+}

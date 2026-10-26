@@ -27,7 +27,7 @@ Windows, macOS (Apple Silicon, 15+) and Linux (`.deb`, `.rpm`). Installed copies
 
 - **AMD RX 6000 (RDNA2) cards: turn flash attention off** (Settings → Performance). On GPUs without matrix cores
   the flash-attention path is about 10x slower, and Kokon turns it on by default: an RX 6700 XT goes from 21 to
-  4.5 s per step at 1024x704. The next update lets the engine choose per card.
+  4.5 s per step at 1024x704. A later update lets the engine choose per card.
 - **LoRA is beta** and tested on Windows only; reports from macOS and Linux are welcome
   ([#33](https://github.com/GabrieleLozupone/kokon/issues/33) has a product-shot test).
 - **Macs are slow** compared with NVIDIA cards (about 4 minutes for 1 MP on an M2 Pro 16 GB). Kokon's own Mac

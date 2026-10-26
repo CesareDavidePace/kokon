@@ -7,7 +7,7 @@ import { inBrowser } from "./platform";
 import type { ProjectData } from "./store";
 import type {
   GpuBackend,
-  AppConfig, AppErrorBody, GenerationRecord, GenerationRequest, HardwareReport, InputRecord, InstallStatus, JobView, LoraItem, LutEntry, ModelFileInfo, ModelScan, ModelSlot, ModelsStatus, Plan,
+  AppConfig, AppErrorBody, GenerationRecord, GenerationRequest, HardwareReport, InputRecord, InstallStatus, JobView, LoraItem, LutEntry, MacBenchState, ModelFileInfo, ModelScan, ModelSlot, ModelsStatus, Plan,
   ServiceEvent, SetupReport, StatusResponse, UpscalerItem,
 } from "./types";
 
@@ -116,6 +116,12 @@ export const api = {
   legacyUpscalers: (keep: string) => call<{ files: string[]; bytes: number }>(`/setup/legacy-upscalers?keep=${encodeURIComponent(keep)}`),
   /** `keep`: the model chosen in Settings, even if not saved yet. */
   removeLegacyUpscalers: (keep: string) => call<{ freed_bytes: number }>(`/setup/legacy-upscalers?keep=${encodeURIComponent(keep)}`, { method: "DELETE" }),
+  /** Benchmark this Mac (Kokon's Mac engine); progress also arrives as `mac_bench` events. */
+  macBench: () => call<MacBenchState>("/mac-engine/bench"),
+  /** `quick`: one image per run instead of two. */
+  startMacBench: (quick = false) => call<MacBenchState>("/mac-engine/bench", { method: "POST", body: json({ quick }) }),
+  cancelMacBench: () => call<MacBenchState>("/mac-engine/bench/cancel", { method: "POST" }),
+  clearMacBench: () => call<MacBenchState>("/mac-engine/bench", { method: "DELETE" }),
   installStatus: () => call<InstallStatus>("/setup/install"),
   cancelInstall: () => call<InstallStatus>("/setup/install/cancel", { method: "POST" }),
   config: () => call<AppConfig>("/config"),

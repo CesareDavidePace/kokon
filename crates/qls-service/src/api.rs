@@ -81,6 +81,8 @@ pub fn router(state: Arc<AppState>, lan: bool) -> Router {
         .route("/upscalers/{name}/download", post(download_upscaler))
         .route("/config", get(get_config).put(put_config))
         .route("/enhancer/defaults", get(enhancer_defaults))
+        .route("/mac-engine/bench", get(mac_bench_status).post(mac_bench_start).delete(mac_bench_clear))
+        .route("/mac-engine/bench/cancel", post(mac_bench_cancel))
         .route("/backend/start", post(backend_start))
         .route("/backend/stop", post(backend_stop))
         .route("/backend/restart", post(backend_restart))
@@ -265,6 +267,8 @@ async fn status(State(s): St) -> Json<Value> {
         "active_job": s.engine.active_job(),
         "queue": { "queued": queued, "jobs": jobs.iter().filter(|j| !j.status.is_terminal()).collect::<Vec<_>>() },
         "setup_complete": cfg.setup_complete,
+        // Kokon's Mac engine: installed (inside the app or by hand) and switched on.
+        "mac_engine": { "available": cfg.gpu_backend == GpuBackend::Metal && cfg.mac_engine_exe().is_file(), "on": cfg.uses_mac_engine() },
     }))
 }
 
@@ -534,6 +538,33 @@ async fn put_config(State(s): St, Extension(caller): Extension<Caller>, Json(mut
         s.engine.emit_server();
     }
     Ok(Json(json!({ "saved": true, "backend_restart_needed": restart })))
+}
+
+#[derive(Deserialize, Default)]
+struct BenchBody {
+    #[serde(default)]
+    quick: bool,
+}
+
+async fn mac_bench_status(State(s): St) -> Json<Value> {
+    Json(serde_json::to_value(s.engine.mac_bench.state()).unwrap())
+}
+
+/// Settings → Performance → Benchmark this Mac (see `qls_core::mac_bench`). `{"quick": true}`: one image per run.
+async fn mac_bench_start(State(s): St, body: Option<Json<BenchBody>>) -> ApiResult<Json<Value>> {
+    let quick = body.map(|b| b.0.quick).unwrap_or_default();
+    let state = s.engine.start_mac_bench(quick).await?;
+    Ok(Json(serde_json::to_value(state).unwrap()))
+}
+
+async fn mac_bench_cancel(State(s): St) -> Json<Value> {
+    s.engine.mac_bench.cancel();
+    Json(serde_json::to_value(s.engine.mac_bench.state()).unwrap())
+}
+
+async fn mac_bench_clear(State(s): St) -> Json<Value> {
+    s.engine.mac_bench.clear();
+    Json(serde_json::to_value(s.engine.mac_bench.state()).unwrap())
 }
 
 async fn backend_start(State(s): St) -> ApiResult<Json<Value>> {

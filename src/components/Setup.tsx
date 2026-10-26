@@ -4,7 +4,7 @@ import { api } from "../lib/api";
 import { formatBytes, installItemShort, installProgress, installStep, installTimeLeft } from "../lib/logic";
 import { native } from "../lib/native";
 import { inBrowser } from "../lib/platform";
-import { refreshStatus, setState, toastError, toastInfo, useStore } from "../lib/store";
+import { afterStartScreens, refreshStatus, setState, toastError, toastInfo, useStore } from "../lib/store";
 import type { GpuBackend, HardwareReport, InstallItem, InstallStatus, ModelScan, ModelSlot, ModelsStatus, SetupReport } from "../lib/types";
 import { OwnModels } from "./OwnModels";
 import { Seg } from "./ui";
@@ -318,8 +318,8 @@ export function Setup() {
       if (st?.engine?.update_needed) ui.engineUpdateSkipped = st.engine.release;
       await api.saveConfig({ ...cfg, setupComplete: true, ui });
       setState({ needsSetup: false, setupMode: null });
-      // Load the model in the background; the status indicator shows progress.
-      api.startBackend().then(refreshStatus, toastError);
+      // On a Mac, the Mac engine offer first; then the model loads in the background (the status indicator shows it).
+      afterStartScreens();
       refreshStatus();
     } catch (e) {
       toastError(e);

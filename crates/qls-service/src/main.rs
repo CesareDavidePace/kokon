@@ -347,6 +347,7 @@ async fn run(args: Vec<String>) {
     }
 
     let _ = engine.clear_private();
+    engine.mac_bench.cancel();
     // Shutdown: stop sd-server unless the user wants it kept loaded.
     let cfg = engine.config();
     if !cfg.keep_server_running {

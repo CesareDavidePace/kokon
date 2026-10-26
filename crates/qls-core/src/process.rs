@@ -19,6 +19,9 @@ use crate::sdcpp::{Capabilities, SdcppClient};
 // ---------------------------------------------------------------------------------------
 
 pub fn build_server_args(cfg: &AppConfig, profile: &ModelProfile) -> Vec<String> {
+    if cfg.uses_mac_engine() {
+        return build_mac_engine_args(cfg, profile);
+    }
     let p = |p: &Path| p.to_string_lossy().into_owned();
     let mut a: Vec<String> = vec![
         "--listen-ip".into(),
@@ -117,6 +120,37 @@ pub fn build_server_args(cfg: &AppConfig, profile: &ModelProfile) -> Vec<String>
     a.extend(profile.backend_args.iter().cloned());
     a.extend(cfg.extra_server_args.iter().cloned());
     a
+}
+
+/// `kokon-engine-mac serve`: the same files and port as sd-server. The engine decides its own memory and units, so
+/// none of sd-server's placement or backend flags apply; the vision projector is for edits, not supported yet.
+pub fn build_mac_engine_args(cfg: &AppConfig, profile: &ModelProfile) -> Vec<String> {
+    let p = |p: &Path| p.to_string_lossy().into_owned();
+    let mut a: Vec<String> = vec![
+        "serve".into(),
+        "--listen-ip".into(),
+        "127.0.0.1".into(),
+        "--listen-port".into(),
+        cfg.server_port.to_string(),
+        "--diffusion-model".into(),
+        p(&profile.diffusion_model),
+        "--vae".into(),
+        p(&profile.vae),
+        "--llm".into(),
+        p(&profile.text_encoder),
+    ];
+    // The vision tower: edits need it, as sd-server's.
+    if let Some(v) = &profile.vision_projector {
+        a.push("--llm_vision".into());
+        a.push(p(v));
+    }
+    a
+}
+
+/// A process this module may reuse or stop: sd-server, or Kokon's Mac engine.
+fn is_server_process(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name.starts_with("sd-server") || name.starts_with(crate::config::MAC_ENGINE_EXE)
 }
 
 fn trim_float(v: f32) -> String {
@@ -342,6 +376,8 @@ pub struct ServerManager {
     data_dir: PathBuf,
     pub log: Arc<LogBuffer>,
     lines_tx: broadcast::Sender<String>,
+    /// Why the server may not start now (the Mac benchmark needs the GPU): [`Self::ensure_ready`] refuses.
+    held: Mutex<Option<String>>,
 }
 
 #[cfg(windows)]
@@ -369,7 +405,13 @@ impl ServerManager {
             data_dir,
             log: Arc::new(LogBuffer::new(4000)),
             lines_tx,
+            held: Mutex::new(None),
         })
+    }
+
+    /// Keeps the server from starting until `None` (set it before [`Self::stop`]: a start in progress finishes first).
+    pub fn hold(&self, reason: Option<String>) {
+        *self.held.lock().unwrap() = reason;
     }
 
     /// Live stream of server log lines (only available for servers this app launched).
@@ -425,6 +467,9 @@ impl ServerManager {
     /// launches it. Serialized so concurrent callers never start two instances.
     pub async fn ensure_ready(&self, cfg: &AppConfig) -> Result<Capabilities, AppError> {
         let _guard = self.start_lock.lock().await;
+        if let Some(why) = self.held.lock().unwrap().clone() {
+            return Err(AppError::new(ErrorCode::ServerUnavailable, why).suggest("Wait for it to finish, or cancel it in Settings → Performance."));
+        }
         let profile = cfg.profile().clone();
         // Our server may run on a fallback port (see `launch_port`); otherwise the configured one.
         let rec = self.read_record().filter(|r| process_alive(r.pid));
@@ -433,7 +478,8 @@ impl ServerManager {
 
         if let Ok(caps) = client.capabilities(Duration::from_secs(3)).await {
             let rec = rec.filter(|r| r.port == port);
-            if caps.model_matches(&profile.diffusion_model) && caps.supports_img_gen() {
+            // The right kind of server too: switching Kokon's Mac engine on or off restarts ours.
+            if caps.model_matches(&profile.diffusion_model) && caps.supports_img_gen() && caps.is_mac_engine() == cfg.uses_mac_engine() {
                 let owned = rec.is_some();
                 if let Some(r) = &rec
                     && self.inner.lock().unwrap().tail_stop.is_none()
@@ -728,9 +774,7 @@ pub fn process_alive(pid: u32) -> bool {
     let mut sys = System::new();
     let pid = Pid::from_u32(pid);
     sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), true, ProcessRefreshKind::nothing());
-    sys.process(pid)
-        .map(|p| p.name().to_string_lossy().to_ascii_lowercase().starts_with("sd-server"))
-        .unwrap_or(false)
+    sys.process(pid).map(|p| is_server_process(&p.name().to_string_lossy())).unwrap_or(false)
 }
 
 /// Whether any process with this pid exists (used for client liveness, not sd-server).
@@ -748,7 +792,7 @@ fn kill_pid(pid: u32) {
     let p = Pid::from_u32(pid);
     sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[p]), true, ProcessRefreshKind::nothing());
     if let Some(proc_) = sys.process(p)
-        && proc_.name().to_string_lossy().to_ascii_lowercase().starts_with("sd-server")
+        && is_server_process(&proc_.name().to_string_lossy())
     {
         proc_.kill();
         let _ = proc_.wait();
@@ -793,6 +837,15 @@ pub fn parse_device_list(text: &str) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn held_server_does_not_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let m = ServerManager::new(dir.path().to_path_buf());
+        m.hold(Some("The Mac is running the benchmark.".into()));
+        let e = m.ensure_ready(&AppConfig::default()).await.unwrap_err();
+        assert_eq!((e.code, e.message.as_str()), (ErrorCode::ServerUnavailable, "The Mac is running the benchmark."));
+    }
 
     #[test]
     fn default_launch_args() {
@@ -949,6 +1002,70 @@ mod tests {
         let s = build_server_args(&cfg, cfg.profile()).join(" ");
         assert!(s.contains("--backend mtl0 --params-backend disk"), "{s}");
         assert!(!s.contains("--eager-load"), "nothing to preload when weights stream from disk");
+    }
+
+    #[test]
+    fn mac_engine_launch() {
+        let mut cfg = AppConfig::default();
+        cfg.gpu_backend = crate::config::GpuBackend::Metal;
+        assert!(!cfg.uses_mac_engine(), "off by default");
+        let sdcpp = build_server_args(&cfg, cfg.profile());
+        cfg.mac_engine = true;
+        assert!(cfg.uses_mac_engine());
+        assert!(cfg.server_exe().ends_with("engine-mac/kokon-engine-mac"), "{}", cfg.server_exe().display());
+        let a = build_server_args(&cfg, cfg.profile());
+        let p = |p: &Path| p.to_string_lossy().into_owned();
+        let profile = cfg.profile();
+        let mut want: Vec<String> = ["serve", "--listen-ip", "127.0.0.1", "--listen-port", &cfg.server_port.to_string(), "--diffusion-model",
+            &p(&profile.diffusion_model), "--vae", &p(&profile.vae), "--llm", &p(&profile.text_encoder)].map(String::from).to_vec();
+        if let Some(v) = &profile.vision_projector {
+            want.extend(["--llm_vision".to_string(), p(v)]);   // edits
+        }
+        assert_eq!(a, want);
+        assert!(profile.vision_projector.is_some(), "the default profile has the mmproj, so the engine can edit");
+        assert_ne!(a, sdcpp, "a different launch: switching restarts the server");
+        // Only on the Metal backend: elsewhere sd.cpp stays the engine.
+        cfg.gpu_backend = crate::config::GpuBackend::Cuda;
+        assert!(!cfg.uses_mac_engine());
+        assert!(build_server_args(&cfg, cfg.profile()).contains(&"--diffusion-model".to_string()));
+        assert!(!build_server_args(&cfg, cfg.profile()).contains(&"serve".to_string()));
+        assert!(cfg.server_exe().file_name().unwrap().to_string_lossy().starts_with("sd-server"));
+    }
+
+    #[test]
+    fn server_process_names() {
+        assert!(is_server_process("sd-server") && is_server_process("sd-server.exe") && is_server_process("SD-Server.exe"));
+        assert!(is_server_process("kokon-engine-mac"));
+        assert!(!is_server_process("kokon-service") && !is_server_process("sleep"));
+    }
+
+    /// The lines `kokon-engine-mac serve` prints for a job (engine-mac/Sources/KokonEngine/EngineServer.swift).
+    const MAC_ENGINE_LOG: &str = "[INFO   ] engine-mac - generate_image 1024x1024
+[INFO   ] engine-mac - sampling using Euler method
+[INFO   ] engine-mac - get_learned_condition completed, 37 tokens, taking 2.01s
+[INFO   ] engine-mac - generating image: 1/1 - seed 42
+  |======>                                           | 1/8 - 8.35s/it
+  |============>                                     | 2/8 - 7.36s/it
+  |=================================================>| 7/8 - 7.31s/it
+  |==================================================| 8/8 - 7.33s/it
+[INFO   ] engine-mac - sampling completed, taking 59.70s
+[INFO   ] engine-mac - decoding 1 latents
+[INFO   ] engine-mac - memory: footprint 3.10 GB (peak 3.90 GB), resident 9.80 GB (peak 10.20 GB)
+[INFO   ] engine-mac - generate_image completed in 65.20s";
+
+    #[test]
+    fn progress_from_mac_engine_log() {
+        let mut p = ProgressParser::default();
+        let updates: Vec<BackendProgress> = MAC_ENGINE_LOG.split(['\n', '\r']).filter_map(|l| p.feed(l)).collect();
+        let stages: Vec<BackendStage> = updates.iter().map(|u| u.stage).collect();
+        assert_eq!(stages.first(), Some(&BackendStage::Preparing));
+        assert!(stages.contains(&BackendStage::EncodingPrompt));
+        assert_eq!(updates.iter().find(|u| u.stage == BackendStage::Generating).unwrap().image, Some((1, 1)));
+        let steps: Vec<(u32, u32, Option<f32>)> = updates.iter().filter_map(|u| u.step.map(|s| (s.0, s.1, u.seconds_per_step))).collect();
+        assert_eq!(steps.iter().map(|s| (s.0, s.1)).collect::<Vec<_>>(), vec![(1, 8), (2, 8), (7, 8), (8, 8)]);
+        assert_eq!(steps[1].2, Some(7.36));
+        assert!(stages.contains(&BackendStage::Decoding));
+        assert_eq!(stages.last(), Some(&BackendStage::Finishing));
     }
 
     #[test]

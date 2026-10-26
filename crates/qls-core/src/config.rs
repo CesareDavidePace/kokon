@@ -69,6 +69,11 @@ pub enum TextEncoderPlacement {
 }
 
 /// Which stable-diffusion.cpp build runs the model. Each build lives in its own folder, so
+/// Folder of Kokon's Mac engine, in the stable-diffusion.cpp folder (beside `engine-metal`), and its executable
+/// (the engine's kernels and resources are the `KokonEngineMac_KokonEngine.bundle` next to it).
+pub const MAC_ENGINE_DIR: &str = "engine-mac";
+pub const MAC_ENGINE_EXE: &str = "kokon-engine-mac";
+
 /// switching back and forth needs no re-download.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -331,6 +336,11 @@ pub struct AppConfig {
     /// which avoided grid patterns on clean renders in an A/B on 8 images (2026-10-12).
     pub upscale_prescale: bool,
     pub extra_server_args: Vec<String>,
+    /// Kokon's own engine for Apple Silicon (`engine-mac/`, `kokon-engine-mac serve`) instead of sd.cpp's Metal build:
+    /// the GPU, the CPU's matrix unit and the Neural Engine together, ~4x faster text to image on an M2 Pro. Experimental
+    /// and off by default (Settings → Performance); text to image only for now. sd.cpp stays the default, the
+    /// fallback, and the engine on Windows and Linux.
+    pub mac_engine: bool,
     pub output_dir: PathBuf,
     pub keep_server_running: bool,
     /// When no desktop window is attached (e.g. MCP only), unload the model after this
@@ -382,6 +392,7 @@ impl Default for AppConfig {
             upscale_blend: 1.0,
             upscale_prescale: false,
             extra_server_args: vec![],
+            mac_engine: false,
             output_dir: default_output_dir(),
             keep_server_running: false,
             idle_unload_minutes: 15,
@@ -705,6 +716,12 @@ impl AppConfig {
     /// Why the inference server cannot start: the engine or a model file is missing.
     pub fn missing_files_error(&self) -> Option<AppError> {
         let exe = self.server_exe();
+        if !exe.is_file() && self.uses_mac_engine() {
+            return Some(
+                AppError::new(ErrorCode::MissingModel, format!("Kokon's Mac engine was not found in {}.", exe.parent().unwrap_or(&exe).display()))
+                    .suggest("Turn off Kokon's Mac engine in Settings → Performance to use the standard engine."),
+            );
+        }
         if !exe.is_file() {
             return Some(
                 AppError::new(ErrorCode::MissingModel, format!("sd-server was not found in {}.", self.engine_dir().display()))
@@ -776,7 +793,22 @@ impl AppConfig {
     }
 
     pub fn server_exe(&self) -> PathBuf {
+        if self.uses_mac_engine() {
+            return self.mac_engine_exe();
+        }
         self.engine_dir().join(if cfg!(windows) { "sd-server.exe" } else { "sd-server" })
+    }
+
+    /// Kokon's Mac engine, on or off: the copy inside the app (next to kokon-service; `tauri dev` puts one there too),
+    /// else the one `engine-mac/tools/install-dev.sh` puts in the stable-diffusion.cpp folder.
+    pub fn mac_engine_exe(&self) -> PathBuf {
+        let here = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf));
+        mac_engine_in(here.as_deref(), &self.sdcpp_dir)
+    }
+
+    /// Kokon's Mac engine runs instead of sd-server: chosen in Settings, on the Metal backend only.
+    pub fn uses_mac_engine(&self) -> bool {
+        self.mac_engine && self.gpu_backend == GpuBackend::Metal
     }
 
     /// The configured device when it belongs to the active engine, else its first GPU.
@@ -900,9 +932,25 @@ fn extra_weights_mib(diffusion: u64, text_encoder: u64, unified: bool) -> u64 {
     extra >> 20
 }
 
+/// See [`AppConfig::mac_engine_exe`]: `app_dir` is kokon-service's folder.
+fn mac_engine_in(app_dir: Option<&Path>, sdcpp_dir: &Path) -> PathBuf {
+    app_dir.map(|d| d.join(MAC_ENGINE_EXE)).filter(|p| p.is_file()).unwrap_or_else(|| sdcpp_dir.join(MAC_ENGINE_DIR).join(MAC_ENGINE_EXE))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mac_engine_inside_the_app_first() {
+        let app = tempfile::tempdir().unwrap();
+        let sdcpp = tempfile::tempdir().unwrap();
+        let dev = sdcpp.path().join(MAC_ENGINE_DIR).join(MAC_ENGINE_EXE);
+        assert_eq!(mac_engine_in(Some(app.path()), sdcpp.path()), dev);
+        assert_eq!(mac_engine_in(None, sdcpp.path()), dev);
+        std::fs::write(app.path().join(MAC_ENGINE_EXE), b"").unwrap();
+        assert_eq!(mac_engine_in(Some(app.path()), sdcpp.path()), app.path().join(MAC_ENGINE_EXE));
+    }
 
     /// Empty files at every path of `p`.
     fn touch_files(p: &ModelProfile) {

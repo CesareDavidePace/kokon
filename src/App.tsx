@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, ApiError, configure, setSignedOutHandler } from "./lib/api";
 import { native } from "./lib/native";
 import { inBrowser, isNarrow, useNarrow } from "./lib/platform";
+import { macEngineOfferDue } from "./lib/logic";
 import {
   addExampleProjects, closeStarPrompt, loadProjects, dismissToast, getState, initStarPrompt, redoVersion, refreshLoras, refreshStatus, selectItem, setState, startEvents, startTour, submitComposer, toastError, toastInfo, undoVersion, useStore,
 } from "./lib/store";
@@ -20,6 +21,7 @@ import { Tour } from "./components/Tour";
 import { PromptTips } from "./components/PromptTips";
 import { Shortcuts } from "./components/Shortcuts";
 import { WhatsNew, whatsNewDue } from "./components/WhatsNew";
+import { MacEngineOffer } from "./components/MacEngineOffer";
 import { UpscalerCompare } from "./components/Upscalers";
 import { KokonMark, Welcome } from "./components/Welcome";
 import { PhoneApp } from "./components/PhoneApp";
@@ -168,7 +170,9 @@ export default function App() {
         // newer one (it can be postponed there; offered again only for another release).
         const whatsNew = cfg.setupComplete && whatsNewDue(ui, st?.engine);
         const engineUpdate = whatsNew && !!st?.engine?.update_needed;
-        setState({ needsSetup: !cfg.setupComplete, ...(!welcomeSeen ? { overlay: "welcome" } : whatsNew ? { overlay: "whats-new" } : {}) });
+        // Otherwise, once on a Mac: Kokon's Mac engine (before the model loads, on the engine chosen).
+        const macOffer = !inBrowser && welcomeSeen && !whatsNew && macEngineOfferDue(st, ui, cfg.setupComplete);
+        setState({ needsSetup: !cfg.setupComplete, ...(!welcomeSeen ? { overlay: "welcome" } : whatsNew ? { overlay: "whats-new" } : macOffer ? { overlay: "mac-engine" } : {}) });
         setBoot("ok");
         if (!inBrowser) autoCheckForUpdate();
         // Own model files that run but don't suit Kokon's 8 steps (the base model instead of Turbo).
@@ -178,7 +182,7 @@ export default function App() {
             if (w) toastError(new ApiError({ code: "model_warning", message: w, suggestion: "Settings → Models: download the official files, or use other files of your own." }, 200));
           }, () => {});
         // Preload the model so the first generation starts immediately (not an engine about to be replaced).
-        if (cfg.setupComplete && !engineUpdate && st && st.server.state === "stopped") api.startBackend().then(refreshStatus, () => refreshStatus());
+        if (cfg.setupComplete && !engineUpdate && !macOffer && st && st.server.state === "stopped") api.startBackend().then(refreshStatus, () => refreshStatus());
       } catch (e) {
         setBoot(String(e));
       }
@@ -346,6 +350,7 @@ export default function App() {
       {overlay === "settings" && <SettingsDialog />}
       {overlay === "welcome" && <Welcome />}
       {overlay === "whats-new" && <WhatsNew />}
+      {overlay === "mac-engine" && <MacEngineOffer />}
       {overlay === "prompt-tips" && <PromptTips />}
       {overlay === "shortcuts" && <Shortcuts />}
       {compareUpscalers && <UpscalerCompare />}

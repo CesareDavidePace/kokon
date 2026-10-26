@@ -9,10 +9,10 @@ import { inBrowser, isNarrow } from "./platform";
 import { useSyncExternalStore } from "react";
 import { markFresh } from "../components/Cocoon";
 import { api, ApiError, setPrivateInputs, subscribe, urls } from "./api";
-import { activeLoras, buildRequest, composing, emptyComposer, goneVersions, needsPrompt, newKey, pageOutdated, persistentAdvanced, refFromGen, refFromInput, reviewRequest, stageFitsPreview, starPromptDue, timelineLinks, undoTarget, versionLabels, wantsPromptReview, type CompareMode, type Composer, type Ref } from "./logic";
-import type { AppErrorBody, GenerationRecord, GenerationRequest, InputRecord, JobView, LoraItem, ServerState, StatusResponse } from "./types";
+import { activeLoras, buildRequest, composing, emptyComposer, goneVersions, macEngineOfferDue, needsPrompt, newKey, pageOutdated, persistentAdvanced, refFromGen, refFromInput, reviewRequest, stageFitsPreview, starPromptDue, timelineLinks, undoTarget, versionLabels, wantsPromptReview, type CompareMode, type Composer, type Ref } from "./logic";
+import type { AppErrorBody, GenerationRecord, GenerationRequest, InputRecord, JobView, LoraItem, MacBenchState, ServerState, StatusResponse } from "./types";
 
-export type Overlay = null | "gallery" | "settings" | "inpaint" | "expand" | "welcome" | "whats-new" | "prompt-tips" | "shortcuts";
+export type Overlay = null | "gallery" | "settings" | "inpaint" | "expand" | "welcome" | "whats-new" | "mac-engine" | "prompt-tips" | "shortcuts";
 
 export interface SessionItem {
   key: string;
@@ -74,6 +74,8 @@ export interface State {
   compareUpscalers: boolean;
   toasts: Toast[];
   galleryVersion: number;
+  /** Benchmark this Mac: null until Settings asks the service. */
+  macBench: MacBenchState | null;
   needsSetup: boolean;
   /** Setup opens on "Use models I already have" or on the official download (Settings → Models). */
   setupMode: "own" | "official" | null;
@@ -406,6 +408,7 @@ let state: State = {
   compareUpscalers: false,
   toasts: [],
   galleryVersion: 0,
+  macBench: null,
   needsSetup: false,
   setupMode: null,
   compare: "off",
@@ -492,6 +495,21 @@ export function dismissToast(id: string) {
 
 let unsub: (() => void) | null = null;
 
+/** After Setup or What's new: the Mac engine offer when it is due (the answer decides which engine loads), else the
+ * model loads in the background so the first image starts at once. */
+export async function afterStartScreens() {
+  try {
+    const [cfg, st] = await Promise.all([api.config(), api.status()]);
+    if (!inBrowser && macEngineOfferDue(st, (cfg.ui ?? {}) as Record<string, unknown>, cfg.setupComplete)) {
+      setState({ overlay: "mac-engine" });
+      return;
+    }
+  } catch {
+    // The offer can wait for the next start; the model still loads.
+  }
+  api.startBackend().then(refreshStatus, () => refreshStatus());
+}
+
 export async function refreshStatus() {
   try {
     const st = await api.status();
@@ -562,6 +580,7 @@ export function startEvents() {
       }
       else if (ev.type === "gallery") setState((s) => ({ galleryVersion: s.galleryVersion + 1 }));
       else if (ev.type === "projects") onProjectEvent(ev.id, ev.rev, ev.deleted);
+      else if (ev.type === "mac_bench") setState({ macBench: ev.bench });
     },
     (ok) => {
       setState({ connected: ok });

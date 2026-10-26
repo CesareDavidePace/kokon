@@ -25,6 +25,10 @@ Third-party software included in the Kokon installer
   and Zod (https://zod.dev), MIT, bundled in kokon-mcp.
 - Other Rust crates and npm packages, each under its own license as listed in Cargo.lock,
   package-lock.json and mcp/package-lock.json.
+- The Mac engine (engine-mac/) uses techniques from Siliconed by gwenn-ha
+  (https://github.com/gwenn-ha-dev/Siliconed), Apache-2.0: the Neural Engine matrix product as a
+  Core ML program written at run time (including the layout of its coremldata.bin), and the GPU,
+  AMX and Neural Engine sharing one product by rows.
 - 4xNomos2_hq_mosr upscaler model by Philip Hofmann (Phhofm), from
   https://github.com/Phhofm/models/releases/tag/4xNomos2_hq_mosr, licensed under the
   Creative Commons Attribution 4.0 International License (CC BY 4.0,

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the macOS release on an Apple Silicon Mac: kokon-service, kokon-mcp, Kokon.app and
+# Builds the macOS release on an Apple Silicon Mac: kokon-service, kokon-mcp, kokon-engine-mac, Kokon.app and
 # the disk image ("Kokon_<version>_aarch64.dmg"), copied to dist-release/.
 #
 #   bash scripts/build-release-mac.sh
@@ -30,6 +30,9 @@ echo "3/5 kokon-service (release)"
 cargo build -p qls-service --release
 mkdir -p src-tauri/binaries
 cp target/release/kokon-service "src-tauri/binaries/kokon-service-$TRIPLE"
+# Kokon's Mac engine: its tests compile and run the kernels on this Mac's GPU (~15 s), then it goes into the app.
+(cd engine-mac && swift test 2>&1 | grep -E "Executed [0-9]+ tests" | tail -1)
+bash engine-mac/tools/stage-app.sh
 
 echo "4/5 kokon-mcp + MCP tests (they drive the bundle and the service built above)"
 (cd mcp && npm run build:exe && npx vitest run)

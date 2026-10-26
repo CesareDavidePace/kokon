@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  macEngineOfferDue,
+  macBenchProgress,
   activeLoras, activeOverrides, buildRequest, composing, editing, reviewRequest, wantsPromptReview, toggleLora, MAX_LORAS, jobPercent, compareBase, composerFromRecord, enhancerApplies, diffPixels, emptyComposer, expansionPixels, expansionPreset, jobLabel, jobSecondsLeft, lutInfo, moveRef, needsPrompt, normalizeQuality, persistentAdvanced, pipelineSummary,
   planPipeline, remainingSeconds, sizeForWidth, timeAgo, upscaleRequest, upscaleTargets, versionLabels, type JobClock, type Ref,
   neighbourAfterRemoval, pageOutdated, previewIndex, starPromptDue, STAR_PROMPT_AFTER, formatBytes, formatDuration, installItemShort, installItemText, installProgress, installStep, installTimeLeft, timelineLinks, undoTarget, aspectLabel, parseRatio, sizeForRatio, sizeForLongSide, expandToRatio, expandToSize, arcLayout,
@@ -618,5 +620,37 @@ describe("opening a project in a browser", () => {
     // A deleted input is dropped too; with no copy known, nothing is dropped.
     expect([...goneVersions(items, { generations: { g1: {}, g2: {}, g3: {} }, inputs: {} }, ["i"])]).toEqual(["i"]);
     expect(goneVersions(items, { generations: {}, inputs: {} }, []).size).toBe(0);
+  });
+});
+
+describe("macBenchProgress", () => {
+  const started_at = "2026-10-26T10:00:00Z";
+  const t0 = Date.parse(started_at);
+  it("shows the step, the run and the minutes", () => {
+    const p = macBenchProgress({ state: "running", k: 2, n: 7, label: "default (paths above): accuracy at 512²", started_at, quick: false }, t0 + 185_000);
+    expect(p).toEqual({ frac: 1 / 7, text: "Step 2 of 7 · Default: accuracy at 512² · 3 min" });
+  });
+  it("starts empty before the first step", () => {
+    expect(macBenchProgress({ state: "running", k: 0, n: 0, label: "Starting", started_at, quick: true }, t0)).toEqual({ frac: 0, text: "Starting · 0 min" });
+  });
+  it("is nothing when not running", () => {
+    expect(macBenchProgress({ state: "idle" }, t0)).toBeNull();
+    expect(macBenchProgress({ state: "done", report: "r", finished_at: started_at, quick: false }, t0)).toBeNull();
+  });
+});
+
+describe("macEngineOfferDue", () => {
+  const gpu = (gb: number) => ({ name: "Apple M2 Pro", vendor: "apple", unified: true, memory_total_mib: gb * 1024, memory_used_mib: 0, memory_free_mib: 0, driver_version: "" });
+  const st = (available: boolean, on: boolean, gb = 16) => ({ gpu: gpu(gb), mac_engine: { available, on } });
+  it("offers it once on a set-up Mac with the engine in the app", () => {
+    expect(macEngineOfferDue(st(true, false), {}, true)).toBe(true);
+    expect(macEngineOfferDue(st(true, false), { macEngineOffered: true }, true)).toBe(false);
+  });
+  it("not before setup, without the engine, when it is on, or below 16 GB", () => {
+    expect(macEngineOfferDue(st(true, false), {}, false)).toBe(false);
+    expect(macEngineOfferDue(st(false, false), {}, true)).toBe(false);
+    expect(macEngineOfferDue(st(true, true), {}, true)).toBe(false);
+    expect(macEngineOfferDue(st(true, false, 8), {}, true)).toBe(false);
+    expect(macEngineOfferDue({ gpu: null, mac_engine: undefined }, {}, true)).toBe(false);
   });
 });

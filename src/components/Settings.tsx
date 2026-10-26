@@ -5,18 +5,20 @@ import { api } from "../lib/api";
 import { native } from "../lib/native";
 import { inBrowser } from "../lib/platform";
 import { getState, openModelSetup, refreshStatus, setState, startTour, toastError, toastInfo, useStore } from "../lib/store";
-import { formatBytes } from "../lib/logic";
+import { formatBytes, macBenchProgress } from "../lib/logic";
 import { setThemeChoice, themeChoice, type ThemeChoice } from "../lib/theme";
 import { LoraSettings } from "./LoraSettings";
 import { RemoteAccess } from "./RemoteAccess";
 import { UpscalerControls } from "./Upscalers";
 import { WHATS_NEW_VERSION } from "./WhatsNew";
-import type { AppConfig, Check, ModelProfile, ModelsStatus, SetupReport, TextEncoderPlacement } from "../lib/types";
+import type { AppConfig, Check, MacBenchState, ModelProfile, ModelsStatus, SetupReport, TextEncoderPlacement } from "../lib/types";
 import { IconButton, Seg, Switch } from "./ui";
 import { autoCheckEnabled, checkForUpdate } from "../lib/updates";
 
 const REPO_URL = "https://github.com/GabrieleLozupone/kokon";
 const SUPPORT_URL = "https://kokon.app/support/";
+/** Where testers paste their Mac engine bench report. */
+const BENCH_DISCUSSION_URL = "https://github.com/GabrieleLozupone/kokon/discussions/43";
 
 /** Top of Settings → General: where Kokon lives. */
 export function RepoCard() {
@@ -122,6 +124,87 @@ function EnhancerPrompt(props: { label: string; help: string; value: string; bui
         onChange={(e) => props.onChange(e.target.value.trim() === props.builtin?.trim() ? "" : e.target.value)}
       />
       <span className="muted">{props.help}</span>
+    </div>
+  );
+}
+
+/** Settings → Performance on a Mac: runs `kokon-engine-mac bench` on this Mac and gives the report to paste on
+ * GitHub. `blocked`: why it cannot run with the saved settings. */
+function MacBench({ blocked }: { blocked: string | null }) {
+  const bench = useStore((s) => s.macBench);
+  const [now, setNow] = useState(Date.now());
+  const [starting, setStarting] = useState(false);
+  useEffect(() => {
+    api.macBench().then((b) => setState({ macBench: b }), () => {});
+  }, []);
+  const running = bench?.state === "running";
+  useEffect(() => {
+    if (!running) return;
+    const t = window.setInterval(() => setNow(Date.now()), 15000);
+    return () => window.clearInterval(t);
+  }, [running]);
+  const progress = bench && macBenchProgress(bench, now);
+  const act = async (f: () => Promise<MacBenchState>) => {
+    try {
+      setState({ macBench: await f() });
+    } catch (e) {
+      toastError(e);
+    }
+  };
+  const run = async () => {
+    setStarting(true);
+    await act(() => api.startMacBench());
+    setStarting(false);
+  };
+  const report = bench?.state === "done" ? bench.report : "";
+  return (
+    <div className="field">
+      <div className="setting-card">
+        <div className="setting-card-text">
+          <strong>Benchmark this Mac</strong>
+          <span className="muted">
+            Measures Kokon's Mac engine on this Mac: speed, memory and accuracy, with each chip-specific path on and off. It takes about 10 minutes and
+            uses the whole Mac: close other apps and keep it plugged in. Images can't be made while it runs.
+          </span>
+        </div>
+        {running ? (
+          <button className="btn" onClick={() => act(api.cancelMacBench)}>
+            <X size={15} /> Cancel
+          </button>
+        ) : (
+          <button className="btn primary" disabled={!!blocked || starting} title={blocked ?? undefined} onClick={run}>
+            <Activity size={15} /> {bench?.state === "done" ? "Run again" : "Run"}
+          </button>
+        )}
+      </div>
+      {progress && (
+        <>
+          <div className="progress thick">
+            <i style={{ width: `${progress.frac * 100}%` }} />
+          </div>
+          <span className="muted">{progress.text}</span>
+        </>
+      )}
+      {bench?.state === "failed" && (
+        <>
+          <span className="muted">{bench.error}</span>
+          {bench.log && <pre className="diag" style={{ maxHeight: 180 }}>{bench.log}</pre>}
+        </>
+      )}
+      {report && (
+        <>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button className="btn" onClick={async () => (await writeText(report), toastInfo("Report copied"))}>
+              <Copy size={14} /> Copy report
+            </button>
+            <button className="btn" onClick={() => native.openLink(BENCH_DISCUSSION_URL).catch(toastError)}>
+              Share on GitHub
+            </button>
+          </div>
+          <span className="muted">Paste the report in the GitHub discussion: it shows which paths suit this chip. Nothing is sent by Kokon.</span>
+          <pre className="diag" style={{ maxHeight: 260 }}>{report}</pre>
+        </>
+      )}
     </div>
   );
 }
@@ -583,8 +666,17 @@ export function Settings() {
             <>
               <div className="field">
                 <span>Engine</span>
-                <span>Metal (Apple Silicon GPU, beta)</span>
+                <span>{cfg.macEngine ? "Kokon's Mac engine (experimental)" : "Metal (Apple Silicon GPU, beta)"}</span>
               </div>
+              <div className="field-row">
+                <span>Kokon's Mac engine (experimental)</span>
+                <Switch on={!!cfg.macEngine} onChange={(v) => set({ macEngine: v })} />
+              </div>
+              <span className="muted" style={{ marginTop: -10 }}>
+                Kokon's own engine for Apple Silicon: the GPU, the CPU's matrix unit and the Neural Engine work together, about 4 times faster. New images, edits, brushed edits, extending and Prompt+ work on it; LoRAs and the upscaler model still need it off.
+              </span>
+              {!inBrowser && <MacBench blocked={dirty ? "Save or discard your changes first" : !cfg.macEngine ? "Turn on Kokon's Mac engine and save first" : null} />}
+              {!cfg.macEngine && (
               <div className="field">
                 <span>Model memory</span>
                 <Seg<TextEncoderPlacement>
@@ -599,6 +691,7 @@ export function Settings() {
                   Keep loaded: every model stays in memory, fastest between steps; needs 24 GB or more. Load when needed: each model (text encoder, image model, decoder) is loaded from the SSD when it runs and released after, so the image model has room to work on 16 GB Macs. It adds a few seconds per image. macOS cannot swap memory the GPU is using, so this is what makes 16 GB work.
                 </span>
               </div>
+              )}
               <label className="field-row">
                 <span>Memory kept free for macOS (GiB)</span>
                 <input className="input" type="number" min={0} max={16} step={0.5} style={{ width: 90 }} value={cfg.vramReserveGib} onChange={(e) => set({ vramReserveGib: Math.max(0, Number(e.target.value) || 0) })} />

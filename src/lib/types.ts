@@ -241,6 +241,8 @@ export interface StatusResponse {
   /** The installed engine predates `release` (needed for the upscaler): Setup updates it. */
   engine?: { release: string; update_needed: boolean };
   setup_complete: boolean;
+  /** Kokon's Mac engine: installed (inside the app or by hand) and switched on. */
+  mac_engine?: { available: boolean; on: boolean };
 }
 
 export interface Check { id: string; label: string; ok: boolean; detail: string }
@@ -298,6 +300,8 @@ export interface AppConfig {
   /** Shrink the input before upscaling (enlargements under ~2.8x). */
   upscalePrescale: boolean;
   extraServerArgs: string[];
+  /** Kokon's own engine for Apple Silicon instead of sd.cpp's Metal build (experimental, off by default; Metal only). */
+  macEngine?: boolean;
   outputDir: string;
   keepServerRunning: boolean;
   idleUnloadMinutes: number;
@@ -433,8 +437,17 @@ export interface HardwareReport {
   issues_url: string;
 }
 
+/** Settings → Performance → Benchmark this Mac (`qls_core::mac_bench::BenchState`). */
+export type MacBenchState =
+  | { state: "idle" }
+  /** Step `k` of `n`; `n` is 0 until the engine prints its first step. */
+  | { state: "running"; k: number; n: number; label: string; started_at: string; quick: boolean }
+  | { state: "done"; report: string; finished_at: string; quick: boolean }
+  | { state: "failed"; error: string; log: string };
+
 export type ServiceEvent =
   | { type: "job"; job: JobView }
   | { type: "server"; state: ServerState; owned: boolean; error: AppErrorBody | null }
   | { type: "gallery"; id: string; change: "added" | "updated" | "deleted" }
-  | { type: "projects"; id: string; rev: number; deleted: boolean };
+  | { type: "projects"; id: string; rev: number; deleted: boolean }
+  | { type: "mac_bench"; bench: MacBenchState };

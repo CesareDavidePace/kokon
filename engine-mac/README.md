@@ -1,5 +1,8 @@
 # kokon-engine-mac
 
+**New here? Read [docs/mac-engine.md](docs/mac-engine.md) first**: the whole engine explained from zero, chapter by
+chapter, with diagrams. This README is the lab notebook: every measurement, A/B run and check command.
+
 Kokon's own engine for Apple Silicon (in development). Goal: Qwen-Image 2.1 Turbo with the GPU, the CPU's
 matrix unit (AMX) and the Neural Engine all busy for the whole render, reading the same GGUF files Kokon
 already downloads for sd.cpp, and answering the same `/sdcpp/v1` API so the service, the app and MCP do not

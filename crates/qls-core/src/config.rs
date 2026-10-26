@@ -339,8 +339,9 @@ pub struct AppConfig {
     pub extra_server_args: Vec<String>,
     /// Kokon's own engine for Apple Silicon (`engine-mac/`, `kokon-engine-mac serve`) instead of sd.cpp's Metal build:
     /// the GPU, the CPU's matrix unit and the Neural Engine together, ~4x faster text to image on an M2 Pro. Experimental
-    /// and off by default (Settings → Performance); text to image only for now. sd.cpp stays the default, the
-    /// fallback, and the engine on Windows and Linux.
+    /// and off by default (Settings → Performance). Text to image, edits with references, brushed edits, extending an
+    /// image and Prompt+; no LoRAs or second passes yet (`Capabilities::mac_engine_unsupported`). sd.cpp stays the default,
+    /// the fallback, and the engine on Windows and Linux.
     pub mac_engine: bool,
     pub output_dir: PathBuf,
     pub keep_server_running: bool,

@@ -123,7 +123,7 @@ pub fn build_server_args(cfg: &AppConfig, profile: &ModelProfile) -> Vec<String>
 }
 
 /// `kokon-engine-mac serve`: the same files and port as sd-server. The engine decides its own memory and units, so
-/// none of sd-server's placement or backend flags apply; the vision projector is for edits, not supported yet.
+/// none of sd-server's placement or backend flags apply; the vision projector (`--llm_vision`) is for edits.
 pub fn build_mac_engine_args(cfg: &AppConfig, profile: &ModelProfile) -> Vec<String> {
     let p = |p: &Path| p.to_string_lossy().into_owned();
     let mut a: Vec<String> = vec![

@@ -350,7 +350,7 @@ mod tests {
             ..ModelProfile::default()
         };
         let out = report_path(Path::new("/data"));
-        assert_eq!(out, PathBuf::from("/data/mac-bench-report.md"));
+        assert_eq!(out, Path::new("/data").join("mac-bench-report.md"));
         let a = bench_args(&profile, &out, false);
         assert_eq!(
             a,
@@ -363,7 +363,7 @@ mod tests {
                 "--vae",
                 "/m/vae.safetensors",
                 "--out",
-                "/data/mac-bench-report.md"
+                out.to_str().unwrap()
             ]
         );
         assert_eq!(

@@ -1,6 +1,6 @@
 # Status
 
-**Updated 2026-10-24.** What is in progress, what comes next, and where help is welcome. Kept current at the end
+**Updated 2026-10-26.** What is in progress, what comes next, and where help is welcome. Kept current at the end
 of every task (see [AGENTS.md](../AGENTS.md#keeping-docsstatusmd-current)); GitHub is the source of truth.
 
 ## Current version: [0.11.0](https://github.com/GabrieleLozupone/kokon/releases/tag/v0.11.0) (2026-10-24)
@@ -10,6 +10,10 @@ Windows, macOS (Apple Silicon, 15+) and Linux (`.deb`, `.rpm`). Installed copies
 ## Next
 
 - **0.12: reliability foundations** (details soon).
+- **Next update, done and being tested:** visible text selection in the dark theme on Linux
+  ([#41](https://github.com/GabrieleLozupone/kokon/issues/41)), a ratio lock and 1080p / 1440p / 4K sizes in Expand
+  ([#42](https://github.com/GabrieleLozupone/kokon/issues/42)), the same sizes in the size menu, where an exact size
+  left in the fields can now be picked again without retyping it.
 - After 0.11: the desktop app as a client of a Kokon server elsewhere, and a Docker image for AMD and Intel
   (Vulkan) once it can be tested.
 - On the list, no dates yet: a custom upscaler picker
@@ -18,9 +22,9 @@ Windows, macOS (Apple Silicon, 15+) and Linux (`.deb`, `.rpm`). Installed copies
 
 ## Known issues
 
-- **AMD RX 6000 (RDNA2) cards are slow on Vulkan** (an RX 6700 XT takes about 41 s per step at 1 MP).
-  Most of each step (over 80 % at 1 MP) goes into the attention kernel, which is slow on GPUs without matrix cores.
-  RX 7000 and RX 9000 cards have them and work well (RX 9070 XT: 1.75 s per step at 1 MP).
+- **AMD RX 6000 (RDNA2) cards: turn flash attention off** (Settings → Performance). On GPUs without matrix cores
+  the flash-attention path is about 10x slower, and Kokon turns it on by default: an RX 6700 XT goes from 21 to
+  4.5 s per step at 1024x704. The next update lets the engine choose per card.
 - **LoRA is beta** and tested on Windows only; reports from macOS and Linux are welcome
   ([#33](https://github.com/GabrieleLozupone/kokon/issues/33) has a product-shot test).
 - **Macs are slow** compared with NVIDIA cards (about 4 minutes for 1 MP on an M2 Pro 16 GB). Engine speed-ups are

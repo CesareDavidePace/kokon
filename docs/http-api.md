@@ -139,6 +139,7 @@ result (`"kind": "gen"`, `genId`) or an imported image (`"kind": "input"`, `inpu
 | POST | `/models/scan`, `/models/inspect` | List the model files in a folder (sub-folders included) with the suggested file for each role; inspect one file by `{"path": "..."}` |
 | POST | `/models/user`, `/models/use` | Save your own model files as a profile; switch between the official files and yours |
 | POST | `/models/vae` | Download the texture-fix VAE and make the active model use it (progress in `/setup/install`) |
+| POST | `/models/dit` | Download the Q4_K_M image model and make the active model use it (progress in `/setup/install`) |
 | GET | `/upscalers` | The upscalers Settings offers and whether each is installed |
 | POST | `/upscalers/{name}/download` | Download one upscaler (progress in `/setup/install`) |
 | GET, POST | `/loras` | List LoRAs; add one from a path: `{"path": "..."}` (copied into Kokon's LoRA folder) |

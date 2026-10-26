@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::catalog::{Download, Preset, TEXT_ENCODER_Q4_K_M, TEXT_ENCODER_Q8_0, TURBO_Q4_K, VAE, VAE_ORIGINAL, VISION_PROJECTOR};
+use crate::catalog::{Download, Preset, TEXT_ENCODER_Q4_K_M, TEXT_ENCODER_Q8_0, TURBO_Q4_K, TURBO_Q4_K_M, VAE, VAE_ORIGINAL, VISION_PROJECTOR};
 use crate::config::ModelProfile;
 use crate::error::AppError;
 
@@ -158,10 +158,24 @@ struct Tensor {
     dtype: String,
 }
 
+/// Fingerprint of [`TURBO_Q4_K`], the image model installed up to 0.11.0.
+const OLD_TURBO_Q4_K_FINGERPRINT: &str = "7fe006396566cac6819c2eb78ef3f01f";
+
+/// `path` is the image model installed up to 0.11.0 (DogukanUrker's Q4_K), under any name and
+/// in any folder: same size and fingerprint. Own files like it are offered the Q4_K_M.
+pub fn is_old_turbo_q4k(path: &Path) -> bool {
+    is_known_file(path, TURBO_Q4_K.size, OLD_TURBO_Q4_K_FINGERPRINT)
+}
+
+/// `path` has this size and fingerprint (only a file of that size is read).
+fn is_known_file(path: &Path, size: u64, fp: &str) -> bool {
+    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.len() == size) && fingerprint(path, size).is_ok_and(|f| f == fp)
+}
+
 /// The catalog download a file with this name and size is (any folder).
 pub fn official_download(path: &Path, size: u64) -> Option<Download> {
     let name = path.file_name()?.to_string_lossy().to_ascii_lowercase();
-    [TURBO_Q4_K, VAE, VAE_ORIGINAL, TEXT_ENCODER_Q4_K_M, TEXT_ENCODER_Q8_0, VISION_PROJECTOR]
+    [TURBO_Q4_K_M, TURBO_Q4_K, VAE, VAE_ORIGINAL, TEXT_ENCODER_Q4_K_M, TEXT_ENCODER_Q8_0, VISION_PROJECTOR]
         .into_iter()
         .find(|d| d.size == size && d.dest.rsplit('/').next().is_some_and(|f| f.eq_ignore_ascii_case(&name)))
 }
@@ -809,6 +823,19 @@ pub(crate) mod tests {
         // A scan with only the text-only files suggests no text encoder (the official one is downloaded).
         std::fs::remove_file(&vl).unwrap();
         assert_eq!(best(&scan_with(dir.path(), 0), None).text_encoder, None);
+    }
+
+    #[test]
+    fn old_q4k_is_known_by_size_and_fingerprint() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("any name.gguf");
+        std::fs::write(&f, vec![7u8; 200_000]).unwrap();
+        let fp = fingerprint(&f, 200_000).unwrap();
+        assert!(is_known_file(&f, 200_000, &fp));
+        assert!(!is_known_file(&f, 200_001, &fp), "another size is never read");
+        assert!(!is_known_file(&f, 200_000, OLD_TURBO_Q4_K_FINGERPRINT), "same size, other content");
+        assert!(!is_known_file(&dir.path().join("gone.gguf"), 200_000, &fp));
+        assert!(!is_old_turbo_q4k(&f));
     }
 
     #[test]

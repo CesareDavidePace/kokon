@@ -296,8 +296,9 @@ async fn run(args: Vec<String>) {
     // The upscaler ships with the app: put it where sd-server looks (no download needed).
     let e = engine.clone();
     let _ = tokio::task::spawn_blocking(move || e.place_bundled_upscaler()).await;
-    // The original VAE left behind when a busy server held it open during the update.
+    // The original VAE or Q4_K model left behind when a busy server held it open during the update.
     engine.remove_unused_original_vae();
+    engine.remove_unused_old_dit();
     let token = load_or_create_token(&dir);
     let info = ServiceInfo { port, token: token.clone(), pid: std::process::id(), version: APP_VERSION.into() };
     let _ = std::fs::write(service_info_path(), serde_json::to_string_pretty(&info).unwrap());
@@ -355,6 +356,7 @@ async fn run(args: Vec<String>) {
             tracing::info!("stopped sd-server on exit");
         }
         engine.remove_unused_original_vae();
+        engine.remove_unused_old_dit();
     } else {
         tracing::info!("leaving sd-server running (keep_server_running)");
     }

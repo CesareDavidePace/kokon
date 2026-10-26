@@ -219,15 +219,16 @@ impl ModelProfile {
     /// The official weights a hardware preset downloads (GGUF of Qwen/Qwen-Image-2.1-Turbo,
     /// Qwen's own Qwen3-VL GGUF, the 2.1 VAE).
     pub fn official(sdcpp_dir: &Path, preset: &crate::catalog::Preset) -> Self {
-        use crate::catalog::{official_vae, VISION_PROJECTOR};
-        let quant = preset.diffusion.dest.rsplit('-').next().unwrap_or("").trim_end_matches(".gguf");
+        use crate::catalog::{official_dit, official_vae, VISION_PROJECTOR};
+        let diffusion = official_dit(preset, sdcpp_dir);
+        let quant = diffusion.dest.rsplit('-').next().unwrap_or("").trim_end_matches(".gguf");
         Self {
             id: OFFICIAL_PROFILE_ID.into(),
             display_name: format!("Qwen-Image 2.1 Turbo {quant} (official)"),
             model: QWEN_IMAGE_21.into(),
             source: ProfileSource::Official,
             scan_dir: None,
-            diffusion_model: preset.diffusion.path(sdcpp_dir),
+            diffusion_model: diffusion.path(sdcpp_dir),
             vae: official_vae(sdcpp_dir).path(sdcpp_dir),
             text_encoder: preset.text_encoder.path(sdcpp_dir),
             vision_projector: Some(VISION_PROJECTOR.path(sdcpp_dir)),
@@ -702,6 +703,18 @@ impl AppConfig {
         self.normalize();
     }
 
+    /// Makes the active model use the Q4_K_M image model in the app's folder, once downloaded.
+    /// The official files switch by themselves (`catalog::official_dit`); the user's own profile
+    /// points to it instead of their file, which stays where it is.
+    pub fn use_new_dit(&mut self) {
+        let dit = crate::catalog::TURBO_Q4_K_M.path(&self.sdcpp_dir);
+        let active = self.active_profile.clone();
+        if let Some(p) = self.profiles.iter_mut().find(|p| p.id == active && !p.is_official()) {
+            p.diffusion_model = dit;
+        }
+        self.normalize();
+    }
+
     /// Makes the official files the active model (they may still need downloading).
     pub fn use_official(&mut self) {
         self.normalize();
@@ -922,7 +935,8 @@ impl AppConfig {
 }
 
 /// [`AppConfig::model_vram_extra_mib`] for files of these sizes (bytes; text encoder plus
-/// vision projector together). Smaller files give nothing back: the budgets stay as measured.
+/// vision projector together). Smaller files give nothing back: the budgets stay as measured
+/// (with the Q4_K; the default Q4_K_M counts its extra ~140 MiB).
 fn extra_weights_mib(diffusion: u64, text_encoder: u64, unified: bool) -> u64 {
     use crate::catalog::{TEXT_ENCODER_Q4_K_M, TURBO_Q4_K, VISION_PROJECTOR};
     let mut extra = diffusion.saturating_sub(TURBO_Q4_K.size);
@@ -1089,9 +1103,13 @@ mod tests {
         let c = AppConfig::default();
         let p = c.profile();
         assert_eq!(p.id, OFFICIAL_PROFILE_ID);
-        assert_eq!(p.display_name, "Qwen-Image 2.1 Turbo Q4_K (official)");
-        assert!(p.diffusion_model.ends_with("qwen-image-2.1-turbo-Q4_K.gguf"));
         assert!(p.diffusion_model.starts_with(default_sdcpp_dir()));
+        // A new install (no earlier model file in the folder) gets the Q4_K_M.
+        let dir = tempfile::tempdir().unwrap();
+        let mut fresh = AppConfig { sdcpp_dir: dir.path().to_path_buf(), ..AppConfig::default() };
+        fresh.normalize();
+        assert_eq!(fresh.profile().display_name, "Qwen-Image 2.1 Turbo Q4_K_M (official)");
+        assert!(fresh.profile().diffusion_model.ends_with("qwen-image-2.1-turbo-Q4_K_M.gguf"));
         assert_eq!(c.hardware_preset, "16gb");
         assert_eq!(c.planning_vram_mib(Some(16303)), Some(16303));
         assert_eq!(c.device, "cuda0");
@@ -1153,14 +1171,14 @@ mod tests {
         let off = c.profiles.iter().find(|p| p.id == OFFICIAL_PROFILE_ID).unwrap();
         // Catalog paths are joined per component, so the separator is the platform's own.
         let sd = |f: &str| crate::catalog::join_rel(Path::new(r"D:\sd"), &format!("models/qwen21/{f}"));
-        assert_eq!(off.diffusion_model, sd("qwen-image-2.1-turbo-Q4_K.gguf"));
+        assert_eq!(off.diffusion_model, sd("qwen-image-2.1-turbo-Q4_K_M.gguf"));
         // Saved again, nothing is added twice.
         c.save_to(&p).unwrap();
         assert_eq!(AppConfig::load_from(&p).profiles.len(), 2);
         // A file without profiles uses its own folder and preset.
         std::fs::write(&p, r#"{"sdcppDir":"D:\\sd","hardwarePreset":"24gb"}"#).unwrap();
         let c = AppConfig::load_from(&p);
-        assert_eq!(c.profile().diffusion_model, sd("qwen-image-2.1-turbo-Q4_K.gguf"));
+        assert_eq!(c.profile().diffusion_model, sd("qwen-image-2.1-turbo-Q4_K_M.gguf"));
     }
 
     #[test]
@@ -1188,13 +1206,14 @@ mod tests {
 
     #[test]
     fn presets_switch_weights_and_keep_tuning() {
-        let mut c = AppConfig::default();
+        let dir = tempfile::tempdir().unwrap();
+        let mut c = AppConfig { sdcpp_dir: dir.path().to_path_buf(), ..AppConfig::default() };
         c.profiles[0].recommended_settings.area_fast = 768 * 768;
         c.apply_preset(crate::catalog::preset("32gb").unwrap());
         let p = c.profile();
-        assert!(p.diffusion_model.ends_with("qwen-image-2.1-turbo-Q4_K.gguf"), "4-bit Turbo on every preset");
+        assert!(p.diffusion_model.ends_with("qwen-image-2.1-turbo-Q4_K_M.gguf"), "4-bit Turbo on every preset");
         assert!(p.text_encoder.ends_with("Qwen3VL-8B-Instruct-Q8_0.gguf"));
-        assert_eq!(p.display_name, "Qwen-Image 2.1 Turbo Q4_K (official)");
+        assert_eq!(p.display_name, "Qwen-Image 2.1 Turbo Q4_K_M (official)");
         assert_eq!(p.recommended_settings.area_fast, 768 * 768);
         assert_eq!((c.hardware_preset.as_str(), c.profiles.len()), ("32gb", 1));
         c.vram_override_mib = 12_288;
@@ -1234,8 +1253,8 @@ mod tests {
         std::fs::write(&p, old).unwrap();
         let c = AppConfig::load_from(&p);
         let off = c.profile();
-        assert_eq!(off.diffusion_model, crate::catalog::join_rel(Path::new(r"D:\sd"), "models/qwen21/qwen-image-2.1-turbo-Q4_K.gguf"));
-        assert_eq!(off.display_name, "Qwen-Image 2.1 Turbo Q4_K (official)");
+        assert_eq!(off.diffusion_model, crate::catalog::join_rel(Path::new(r"D:\sd"), "models/qwen21/qwen-image-2.1-turbo-Q4_K_M.gguf"));
+        assert_eq!(off.display_name, "Qwen-Image 2.1 Turbo Q4_K_M (official)");
         assert_eq!(off.backend_args, vec!["--x".to_string()], "launch flags stay");
         assert_eq!(off.recommended_settings, RecommendedSettings::default());
         let mine = c.profiles.iter().find(|p| p.id == "mine").unwrap();

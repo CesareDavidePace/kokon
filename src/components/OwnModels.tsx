@@ -135,7 +135,8 @@ export function OwnModels(props: {
   const teHasVision = !!teInfo?.has_vision;
   const officialSize = (role: ModelRole) => {
     const id = ROLES.find((r) => r.role === role)!.official;
-    return props.officialFiles.find((f) => f.id === id || (id === "text_encoder" && f.id.startsWith("text_encoder")))?.size ?? 0;
+    // By family: the text encoder of the preset, the image model the official files use.
+    return props.officialFiles.find((f) => f.id === id || f.id.startsWith(`${id}_`))?.size ?? 0;
   };
 
   // What each row says, and whether the set can be used.

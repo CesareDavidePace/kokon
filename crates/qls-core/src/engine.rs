@@ -429,6 +429,17 @@ impl Engine {
         }
     }
 
+    /// Deletes the Q4_K image model from the app's folder once the Q4_K_M replaced it and no
+    /// profile uses it (after the update, and at start in case a busy server held it open).
+    /// Files outside the app's folder are never deleted.
+    pub fn remove_unused_old_dit(&self) {
+        let Some(old) = crate::catalog::unused_old_dit(&self.config()) else { return };
+        match std::fs::remove_file(&old) {
+            Ok(()) => tracing::info!("deleted the Q4_K image model {} (replaced by the Q4_K_M)", old.display()),
+            Err(e) => tracing::warn!("could not delete the Q4_K image model {} yet: {e}", old.display()),
+        }
+    }
+
     /// The installed engine is from another release than the catalog's (or the engine
     /// manifest's): Setup offers the update. An engine without a release marker (built by hand,
     /// an external server) only needs it when it cannot run the upscaler.

@@ -77,6 +77,7 @@ pub fn router(state: Arc<AppState>, lan: bool) -> Router {
         .route("/models/user", post(models_set_user))
         .route("/models/use", post(models_use))
         .route("/models/vae", post(models_improve_vae))
+        .route("/models/dit", post(models_new_dit))
         .route("/upscalers", get(list_upscalers))
         .route("/upscalers/{name}/download", post(download_upscaler))
         .route("/config", get(get_config).put(put_config))
@@ -1459,6 +1460,43 @@ async fn models_improve_vae(State(s): St) -> ApiResult<Json<Value>> {
     Ok(Json(serde_json::to_value(s.engine.installer.status()).unwrap()))
 }
 
+/// Downloads the Q4_K_M image model into the app's folder and makes the active model use it
+/// (progress in `/setup/install`), like [`models_improve_vae`]: the server restarts once idle,
+/// then the Q4_K in the app's folder is deleted if no profile uses it. The user's own files are
+/// never deleted.
+async fn models_new_dit(State(s): St) -> ApiResult<Json<Value>> {
+    let dir = s.engine.config().sdcpp_dir;
+    let engine = s.engine.clone();
+    let on_finish = Box::new(move |complete: bool| {
+        if !complete {
+            return;
+        }
+        let mut c = engine.config();
+        c.use_new_dit();
+        let restart = match engine.set_config(c) {
+            Ok(r) => r,
+            Err(e) => return tracing::error!("could not switch to the Q4_K_M image model: {}", e.message),
+        };
+        tracing::info!("switched to the Q4_K_M image model");
+        tokio::spawn(async move {
+            if restart {
+                while engine.has_pending_work() {
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                }
+                let st = engine.server.status();
+                if st.owned && st.state != qls_core::process::ServerState::Stopped {
+                    engine.server.stop().await;
+                    engine.emit_server();
+                }
+            }
+            let e = engine.clone();
+            let _ = tokio::task::spawn_blocking(move || e.remove_unused_old_dit()).await;
+        });
+    });
+    s.engine.installer.start(dir, "dit", vec![catalog::TURBO_Q4_K_M], on_finish)?;
+    Ok(Json(serde_json::to_value(s.engine.installer.status()).unwrap()))
+}
+
 fn role_of(label: &str) -> Option<Role> {
     Role::ALL.into_iter().find(|r| r.label() == label)
 }
@@ -1500,6 +1538,12 @@ async fn models_status(State(s): St) -> ApiResult<Json<Value>> {
                 "improved": cfg.uses_improved_vae(),
                 "download_bytes": if catalog::VAE.is_present(&cfg.sdcpp_dir) { 0 } else { catalog::VAE.size },
                 "page": catalog::VAE.page,
+            },
+            // The Q4_K_M image model (0.11.1): what is offered, and what switching downloads.
+            "dit": {
+                "update": catalog::dit_update(&cfg),
+                "download_bytes": if catalog::TURBO_Q4_K_M.is_present(&cfg.sdcpp_dir) { 0 } else { catalog::TURBO_Q4_K_M.size },
+                "page": catalog::TURBO_Q4_K_M.page,
             },
         })
     })

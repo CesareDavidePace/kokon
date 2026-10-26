@@ -273,7 +273,7 @@ pub fn browser_allowed(method: &str, path: &str) -> bool {
         ("GET" | "PUT" | "DELETE", ["projects", _]) => true,
         ("PUT", ["config"]) => true,
         ("POST", ["setup", "install" | "gpu"] | ["setup", "install", "cancel"]) => true,
-        ("POST", ["models", "use" | "vae"]) => true,
+        ("POST", ["models", "use" | "vae" | "dit"]) => true,
         ("POST", ["upscalers", _, "download"]) => true,
         ("POST", ["backend", "start" | "stop" | "restart"]) => true,
         ("POST", ["plan" | "jobs" | "inputs" | "examples"] | ["projects", "import"]) => true,

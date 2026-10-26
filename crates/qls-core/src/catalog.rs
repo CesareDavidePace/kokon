@@ -379,27 +379,57 @@ pub fn apply_engine_release(m: &EngineManifest, app_version: &str) -> Result<boo
 
 const QWEN_TE: &str = "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/tree/main";
 
-const TURBO_GGUF: &str = "https://huggingface.co/DogukanUrker/Qwen-Image-2.1-Turbo-GGUF";
-
 /// The image model: Qwen's official 8-step distilled Qwen-Image 2.1 (Qwen/Qwen-Image-2.1-Turbo,
-/// Qwen Research License like the base model), as a GGUF converted with stable-diffusion.cpp.
-/// Same-seed A/B on an RTX 5070 Ti (2026-10-10): ~2x faster than the 20-step base model at
-/// equal quality, faithful edits. The base Qwen-Image 2.1 weights were dropped on 2026-10-09.
-/// Every preset uses this 4-bit file (user choice, 2026-10-09; the repo's Q4_K was judged
-/// almost identical to its Q8_0).
+/// Qwen Research License like the base model), as unsloth's GGUF. Same-seed A/B on an RTX 5070 Ti
+/// (2026-10-10): ~2x faster than the 20-step base model at equal quality, faithful edits. The
+/// base Qwen-Image 2.1 weights were dropped on 2026-10-09. Every preset uses this 4-bit file
+/// (0.11.1): a tie with the Q4_K below on a same-seed vote (2026-10-25, RTX 5070 Ti, ~6 % slower
+/// per job there), from a widely used source, and the file the Mac engine is checked against.
+pub const TURBO_Q4_K_M: Download = Download {
+    id: "turbo_q4_k_m",
+    label: "Qwen-Image 2.1 Turbo Q4_K_M",
+    kind: FileKind::Model,
+    url: "https://huggingface.co/unsloth/Qwen-Image-2.1-Turbo-GGUF/resolve/main/qwen-image-2.1-turbo-Q4_K_M.gguf",
+    fallback_urls: &[],
+    page: "https://huggingface.co/unsloth/Qwen-Image-2.1-Turbo-GGUF",
+    size: 4_199_565_120,
+    sha256: "8940e8b522af886e0c0f5afddf720e82dd223cb9a43580b5f61c4d740452ac20",
+    dest: "models/qwen21/qwen-image-2.1-turbo-Q4_K_M.gguf",
+    provides: &[],
+    engine_tag: None,
+};
+
+/// The image model installed up to 0.11.0 (DogukanUrker's GGUF conversion, made with
+/// stable-diffusion.cpp). Kept while its owner has not chosen the Q4_K_M ([`official_dit`]);
+/// deleted once they have ([`unused_old_dit`]).
 pub const TURBO_Q4_K: Download = Download {
     id: "turbo_q4_k",
     label: "Qwen-Image 2.1 Turbo Q4_K",
     kind: FileKind::Model,
     url: "https://huggingface.co/DogukanUrker/Qwen-Image-2.1-Turbo-GGUF/resolve/main/qwen-image-2.1-turbo-Q4_K.gguf",
     fallback_urls: &[],
-    page: TURBO_GGUF,
+    page: "https://huggingface.co/DogukanUrker/Qwen-Image-2.1-Turbo-GGUF",
     size: 4_050_916_384,
     sha256: "f8d5611b495848b632f8ae14dc7da6525fe2796eb80998f8dee5e04d0a2f69eb",
     dest: "models/qwen21/qwen-image-2.1-turbo-Q4_K.gguf",
     provides: &[],
     engine_tag: None,
 };
+
+/// The image model the official files of preset `p` use in `sdcpp_dir`: the preset's once it is
+/// there, else the Q4_K of an earlier install (its owner has not accepted the new one), else the
+/// preset's to download. Like [`official_vae`], nothing here downloads it uninvited.
+pub fn official_dit(p: &Preset, sdcpp_dir: &Path) -> Download {
+    if p.diffusion.id == TURBO_Q4_K_M.id && !TURBO_Q4_K_M.is_present(sdcpp_dir) && TURBO_Q4_K.is_present(sdcpp_dir) { TURBO_Q4_K } else { p.diffusion }
+}
+
+/// The Q4_K in the app's own folder once the Q4_K_M is there and no profile uses it any more,
+/// so it can be deleted.
+pub fn unused_old_dit(cfg: &crate::config::AppConfig) -> Option<PathBuf> {
+    let old = TURBO_Q4_K.path(&cfg.sdcpp_dir);
+    let used = cfg.profiles.iter().any(|p| p.diffusion_model == old);
+    (TURBO_Q4_K_M.is_present(&cfg.sdcpp_dir) && !used && old.is_file()).then_some(old)
+}
 
 /// The VAE of new installs (0.9.3): Qwen's VAE with the decoder fine-tuned by madebyollin
 /// (author of TAESD) to remove the 2-px checkerboard of the original (#21). Same tensors and
@@ -449,6 +479,33 @@ pub fn unused_original_vae(cfg: &crate::config::AppConfig) -> Option<PathBuf> {
     let old = VAE_ORIGINAL.path(&cfg.sdcpp_dir);
     let used = cfg.profiles.iter().any(|p| p.vae == old);
     (VAE.is_present(&cfg.sdcpp_dir) && !used && old.is_file()).then_some(old)
+}
+
+/// What the image-model update (0.11.1) offers for the active model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DitUpdate {
+    /// The official files still use the Q4_K: switch to the Q4_K_M and delete the Q4_K.
+    Official,
+    /// The user's own image model is that same Q4_K (any name, any folder): a suggestion to use
+    /// the Q4_K_M from the app's folder instead. Their file is never touched.
+    Own,
+}
+
+/// [`DitUpdate`] for the active model; None when it already uses the Q4_K_M or the user chose
+/// another file (their choice: no offer).
+pub fn dit_update(cfg: &crate::config::AppConfig) -> Option<DitUpdate> {
+    dit_update_with(cfg, crate::modelfile::is_old_turbo_q4k)
+}
+
+/// [`dit_update`], `is_old` telling whether a file of the user's is the Q4_K.
+fn dit_update_with(cfg: &crate::config::AppConfig, is_old: impl Fn(&Path) -> bool) -> Option<DitUpdate> {
+    let p = cfg.profile();
+    if p.is_official() {
+        (p.diffusion_model == TURBO_Q4_K.path(&cfg.sdcpp_dir)).then_some(DitUpdate::Official)
+    } else {
+        is_old(&p.diffusion_model).then_some(DitUpdate::Own)
+    }
 }
 
 /// Text encoder from Qwen's own GGUF repository (the one sd.cpp's docs point to).
@@ -606,7 +663,7 @@ pub const PRESETS: &[Preset] = &[
         unified_label: "",
         unified_summary: "",
         min_vram_mib: 0,
-        diffusion: TURBO_Q4_K,
+        diffusion: TURBO_Q4_K_M,
         text_encoder: TEXT_ENCODER_Q4_K_M,
         text_encoder_placement: TextEncoderPlacement::Ram,
         vram_reserve_gib: 1.5,
@@ -619,7 +676,7 @@ pub const PRESETS: &[Preset] = &[
         unified_label: "16–24 GB Mac",
         unified_summary: "4-bit image model and text encoder; images of about 1–1.5 megapixels",
         min_vram_mib: 10 * 1024,
-        diffusion: TURBO_Q4_K,
+        diffusion: TURBO_Q4_K_M,
         text_encoder: TEXT_ENCODER_Q4_K_M,
         text_encoder_placement: TextEncoderPlacement::Ram,
         vram_reserve_gib: 1.0,
@@ -632,7 +689,7 @@ pub const PRESETS: &[Preset] = &[
         unified_label: "32–36 GB Mac",
         unified_summary: "4-bit image model and text encoder; native 2K for Quality",
         min_vram_mib: 14 * 1024,
-        diffusion: TURBO_Q4_K,
+        diffusion: TURBO_Q4_K_M,
         text_encoder: TEXT_ENCODER_Q4_K_M,
         text_encoder_placement: TextEncoderPlacement::Ram,
         vram_reserve_gib: 1.0,
@@ -645,7 +702,7 @@ pub const PRESETS: &[Preset] = &[
         unified_label: "48 GB Mac",
         unified_summary: "4-bit image model and text encoder; larger edits fit",
         min_vram_mib: 20 * 1024,
-        diffusion: TURBO_Q4_K,
+        diffusion: TURBO_Q4_K_M,
         text_encoder: TEXT_ENCODER_Q4_K_M,
         text_encoder_placement: TextEncoderPlacement::Ram,
         vram_reserve_gib: 1.0,
@@ -658,7 +715,7 @@ pub const PRESETS: &[Preset] = &[
         unified_label: "64 GB+ Mac",
         unified_summary: "4-bit image model and 8-bit text encoder",
         min_vram_mib: 28 * 1024,
-        diffusion: TURBO_Q4_K,
+        diffusion: TURBO_Q4_K_M,
         text_encoder: TEXT_ENCODER_Q8_0,
         text_encoder_placement: TextEncoderPlacement::Ram,
         vram_reserve_gib: 1.0,
@@ -699,7 +756,7 @@ pub fn downloads_for(p: &Preset, backend: GpuBackend, sdcpp_dir: &Path) -> Vec<D
     if backend != GpuBackend::Metal {
         v.push(SUPERSCALE);
     }
-    v.extend([official_vae(sdcpp_dir), VISION_PROJECTOR, p.text_encoder, p.diffusion]);
+    v.extend([official_vae(sdcpp_dir), VISION_PROJECTOR, p.text_encoder, official_dit(p, sdcpp_dir)]);
     v
 }
 
@@ -707,7 +764,7 @@ pub fn downloads_for(p: &Preset, backend: GpuBackend, sdcpp_dir: &Path) -> Vec<D
 /// (a piece the user chose to download, or an official file deleted from their folder), each
 /// saved where the profile expects it. Existing files are never replaced, whatever their name.
 pub fn profile_model_downloads(profile: &crate::config::ModelProfile) -> Vec<Download> {
-    let official = [TURBO_Q4_K, VAE, VAE_ORIGINAL, TEXT_ENCODER_Q4_K_M, TEXT_ENCODER_Q8_0, VISION_PROJECTOR];
+    let official = [TURBO_Q4_K_M, TURBO_Q4_K, VAE, VAE_ORIGINAL, TEXT_ENCODER_Q4_K_M, TEXT_ENCODER_Q8_0, VISION_PROJECTOR];
     profile
         .files()
         .into_iter()
@@ -768,7 +825,7 @@ mod tests {
 
     #[test]
     fn catalog_is_well_formed() {
-        let all = [ENGINE_CUDA, CUDA_RUNTIME, ENGINE_VULKAN, ENGINE_METAL, TURBO_Q4_K, VAE, VAE_ORIGINAL, TEXT_ENCODER_Q4_K_M, TEXT_ENCODER_Q8_0, VISION_PROJECTOR, UPSCALER, SUPERSCALE, ULTRASHARP];
+        let all = [ENGINE_CUDA, CUDA_RUNTIME, ENGINE_VULKAN, ENGINE_METAL, TURBO_Q4_K_M, TURBO_Q4_K, VAE, VAE_ORIGINAL, TEXT_ENCODER_Q4_K_M, TEXT_ENCODER_Q8_0, VISION_PROJECTOR, UPSCALER, SUPERSCALE, ULTRASHARP];
         for d in all {
             assert!(d.urls().all(|u| u.starts_with("https://")), "{}", d.id);
             assert_eq!(d.sha256.len(), 64, "{}", d.id);
@@ -972,6 +1029,82 @@ mod tests {
         assert!(cfg.uses_improved_vae());
         assert_eq!(cfg.profile().vae, VAE.path(d));
         assert_eq!(unused_original_vae(&cfg), Some(VAE_ORIGINAL.path(d)));
+    }
+
+    #[test]
+    fn q4_k_m_replaces_the_q4_k_only_once_accepted() {
+        use crate::config::{AppConfig, ModelProfile};
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        std::fs::create_dir_all(join_rel(d, MODEL_SUBDIR)).unwrap();
+        let fill = |f: Download| std::fs::File::create(f.path(d)).unwrap().set_len(f.size).unwrap();
+        let mut cfg = AppConfig { sdcpp_dir: d.to_path_buf(), ..Default::default() };
+        cfg.normalize();
+        // A new install gets the Q4_K_M on every preset, and nothing is offered.
+        for p in PRESETS {
+            assert_eq!(official_dit(p, d).id, "turbo_q4_k_m", "{}", p.id);
+            assert!(downloads_for(p, GpuBackend::Cuda, d).iter().any(|x| x.id == "turbo_q4_k_m"));
+        }
+        assert_eq!(cfg.profile().diffusion_model, TURBO_Q4_K_M.path(d));
+        assert_eq!(dit_update(&cfg), None);
+        // An earlier install keeps its Q4_K until the user accepts (postponing changes nothing),
+        // and no preset or engine update downloads the Q4_K_M uninvited.
+        fill(TURBO_Q4_K);
+        cfg.normalize();
+        assert_eq!(cfg.profile().diffusion_model, TURBO_Q4_K.path(d));
+        assert_eq!(cfg.profile().display_name, "Qwen-Image 2.1 Turbo Q4_K (official)");
+        for p in PRESETS {
+            assert!(downloads_for(p, GpuBackend::Vulkan, d).iter().all(|x| x.id != "turbo_q4_k_m"), "{}", p.id);
+        }
+        assert_eq!(dit_update(&cfg), Some(DitUpdate::Official));
+        assert_eq!(unused_old_dit(&cfg), None, "in use");
+        // An unfinished download changes nothing and deletes nothing.
+        std::fs::write(TURBO_Q4_K_M.path(d), b"part").unwrap();
+        cfg.use_new_dit();
+        assert_eq!(cfg.profile().diffusion_model, TURBO_Q4_K.path(d));
+        assert_eq!(unused_old_dit(&cfg), None);
+        // Once downloaded and verified, the official files switch and the Q4_K can go.
+        fill(TURBO_Q4_K_M);
+        cfg.use_new_dit();
+        assert_eq!(cfg.profile().diffusion_model, TURBO_Q4_K_M.path(d));
+        assert_eq!(cfg.profile().display_name, "Qwen-Image 2.1 Turbo Q4_K_M (official)");
+        assert_eq!(dit_update(&cfg), None);
+        assert_eq!(unused_old_dit(&cfg), Some(TURBO_Q4_K.path(d)));
+        // ...unless a profile of the user's points to it.
+        cfg.set_user_files(ModelProfile::user(TURBO_Q4_K.path(d), VAE.path(d), d.join("te.gguf"), None));
+        assert_eq!(unused_old_dit(&cfg), None);
+    }
+
+    #[test]
+    fn own_files_only_get_a_suggestion() {
+        use crate::config::{AppConfig, ModelProfile};
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path().join("sd");
+        std::fs::create_dir_all(join_rel(&d, MODEL_SUBDIR)).unwrap();
+        let mine = dir.path().join("elsewhere").join("my turbo.gguf");
+        std::fs::create_dir_all(mine.parent().unwrap()).unwrap();
+        std::fs::write(&mine, b"the user's Q4_K").unwrap();
+        let is_old = |p: &Path| p == mine;
+        let mut cfg = AppConfig { sdcpp_dir: d.clone(), ..Default::default() };
+        let own = |dit: &Path| ModelProfile::user(dit.to_path_buf(), dir.path().join("vae.safetensors"), dir.path().join("te.gguf"), None);
+        // Their file is the old Q4_K (any name, any folder): a suggestion.
+        cfg.set_user_files(own(&mine));
+        assert_eq!(dit_update_with(&cfg, is_old), Some(DitUpdate::Own));
+        // Already the Q4_K_M, or any other file: their choice, no offer.
+        cfg.set_user_files(own(&dir.path().join("qwen-image-2.1-turbo-Q4_K_M.gguf")));
+        assert_eq!(dit_update_with(&cfg, is_old), None);
+        cfg.set_user_files(own(&dir.path().join("qwen_image_2.1_turbo-Q8_0.gguf")));
+        assert_eq!(dit_update_with(&cfg, is_old), None);
+        // Accepted: the profile points to the app's copy; their file stays where it is and is
+        // never a candidate for deletion.
+        cfg.set_user_files(own(&mine));
+        std::fs::File::create(TURBO_Q4_K_M.path(&d)).unwrap().set_len(TURBO_Q4_K_M.size).unwrap();
+        cfg.use_new_dit();
+        assert_eq!(cfg.active_profile, crate::config::USER_PROFILE_ID);
+        assert_eq!(cfg.profile().diffusion_model, TURBO_Q4_K_M.path(&d));
+        assert_eq!(dit_update_with(&cfg, is_old), None);
+        assert!(mine.is_file());
+        assert_eq!(unused_old_dit(&cfg), None);
     }
 
     #[test]

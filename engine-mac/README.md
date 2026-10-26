@@ -20,6 +20,8 @@ swift test                                   # no model needed
 .build/release/kokon-engine-mac bench        # a few minutes: speed and accuracy of this Mac's paths, a report
 .build/release/kokon-engine-mac check-na     # the Metal 4 matrix product against MPS
 .build/release/kokon-engine-mac check-ane8   # the int8 Neural Engine programs against the fp16 one
+bash tools/ab.sh snapshot base; bash tools/ab.sh run 2 "base|base|X=1" "new|new|X=1" -- time-dit <dit.gguf> 64 32
+                                             # alternated A/B of build snapshots and settings (steps, page-ins)
 ```
 
 In the app: `bash tools/install-dev.sh` puts the build where Kokon looks for it, then Settings → Performance →

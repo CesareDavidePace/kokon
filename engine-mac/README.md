@@ -437,6 +437,22 @@ chip. Close other apps and keep the Mac plugged in: the units share one power an
 
 ## Tried and not kept, the VAE, credits
 
+**The Neural Engine on its own rows through the layer while the GPU attends (lanes): measured, not kept** (M2 Pro,
+2026-10-26; patch in `~/kokon-bench/patches/lanes-2026-10-26.patch`). In the joint split the Neural Engine idles through
+each layer's attention (~66 ms of ~230 at 1024²). Tried: the Neural Engine takes the target's last r rows through every
+product of the layer (to_out, gate, proj, MLP out, the next q, k, v), its rows' attention computed first and its glue
+(unpack, residual, LN, SwiGLU, packing, its weights unpacked straight from Q4_K into lifted tiles) on the GPU; the GPU and
+the AMX take the other rows; the two meet only at the attention. The velocity is the joint split's to the bit with the
+same shares, so only speed decided. A first experiment said it could pay: N product tiles on the Neural Engine during
+each attention slowed the GPU's heads 66 → 67–68 ms and the CPU's 70 → 72–87.
+- Glue on a second Metal queue: its kernels got the GPU only between the main queue's long ones, 10–40 ms late each
+  (cutting the products into 256-row pieces and the attention into 4-head pieces changed nothing): 8.1–8.2 s an
+  evaluation against 7.4 joint.
+- Glue on the one queue, each step placed where the Neural Engine is predicted done: the Neural Engine still idles
+  31–45 ms a layer while its rows are attended, its weights must be unpacked again mid-attention, and each unit's rate
+  per row barely changes (during the products the units were already full). Alternated in one process at each one's
+  shares (`check-lanes`): r = 2304 8.20 s against 7.88 joint (1792 rows), r = 2048 8.32 against 8.03.
+
 **int8 on the Neural Engine with finer scales: measured, not kept** (M2 Pro, 2026-10-25). First the accuracy, with
 int8 rounding simulated on the fp16 path (each column's weights, or each row's values, rounded to 127 levels of its
 own piece of K, then packed as fp16), velocity at 896² against diffusers fp32 (`dit-t2i-896`; fp16 path 7.6e-4):

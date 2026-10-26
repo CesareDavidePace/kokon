@@ -163,7 +163,7 @@ function MacBench({ blocked }: { blocked: string | null }) {
         <div className="setting-card-text">
           <strong>Benchmark this Mac</strong>
           <span className="muted">
-            Measures Kokon's Mac engine on this Mac: speed, memory and accuracy, with each chip-specific path on and off. It takes 10 to 15 minutes and
+            Measures Kokon's Mac engine on this Mac: speed, memory and accuracy, with each chip-specific path on and off. It takes about 10 minutes and
             uses the whole Mac: close other apps and keep it plugged in. Images can't be made while it runs.
           </span>
         </div>

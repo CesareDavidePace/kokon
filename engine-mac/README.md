@@ -433,25 +433,32 @@ correctness test that runs on any Mac (`PerChipTests`). Only the M2 Pro has meas
 ## Testing on your Mac (`bench`)
 
 For anyone with an Apple Silicon Mac, to measure these paths on hardware we do not have (M1, M3, M4, M5, base chips).
-In Kokon: Settings → Performance, turn on Kokon's Mac engine and save, then **Benchmark this Mac → Run** (10–15 min; the
+In Kokon: Settings → Performance, turn on Kokon's Mac engine and save, then **Benchmark this Mac → Run** (~10 min; the
 server is stopped while it runs and images wait). It runs the same `bench` on the app's engine and model files, shows
 the step it is on, and gives the report with Copy report and a link to
 [Discussion #43](https://github.com/GabrieleLozupone/kokon/discussions/43). From the source:
 
 ```bash
 git clone https://github.com/GabrieleLozupone/kokon.git && cd kokon && git checkout macos-optimization
-bash engine-mac/tools/bench.sh            # 10–15 min; --quick: one image per run
+bash engine-mac/tools/bench.sh            # ~10 min; --quick: one image per run
 ```
 
 It needs the Xcode command line tools and Kokon's model files (Kokon set up once, or `--encoder`, `--dit`, `--vae`),
 and writes `kokon-bench-report.md`: chip, GPU family and cores, memory, macOS, the paths selected, the units' shares,
 time per step and per image at 1024² (image 1 with the loading, image 2 with the engine already running, 10 s after image 1; each split into text encoder, DiT load, step 1, steps 2–8 and VAE), peak memory, and accuracy at
 512² against the engine's own fp32 GPU path on the same Mac (the first step's velocity and the image, in 8-bit
-levels), then the same with each chip-specific path off (and the int8 path on, on M3 and later; below 32 GB, with `KOKON_PREFETCH=0`: the models not read back into the file cache after an image). Paste it in
+levels), then the same with each chip-specific path off (and the int8 path on, on M3 and later). Paste it in
 [Discussion #43](https://github.com/GabrieleLozupone/kokon/discussions/43). A row with a path off that is faster than the default means that path should not be on for that
 chip. Close other apps and keep the Mac plugged in: the units share one power and memory limit.
 
 ## Tried and not kept, the VAE, credits
+
+**Reading the models back into the file cache after each image (prefetch): measured, not kept** (M2 Pro 16 GB,
+Benchmark button, 2026-10-26; commit ce9185f). Below 32 GB a second image takes 3–7 s more than the first, with the steps
+unchanged: text encoder ~2 s, step 1 0.5–3 s, VAE 0.3–0.8 s. Tried: after the decode, the files not kept (encoder, DiT,
+VAE, ~10 GB) read on a utility thread, 10 s before the next image. Image 2's text encoder 4.24 → 3.93–4.00 s only, step 1
+8.68 → 9.84–11.00 s and VAE 3.54 → 3.98–4.25 s: on 16 GB the files do not all fit with the engine's own memory, so the
+later files push out the earlier ones and the engine's memory. Where image 2's extra time goes is not measured yet.
 
 **The Neural Engine on its own rows through the layer while the GPU attends (lanes): measured, not kept** (M2 Pro,
 2026-10-26; patch in `~/kokon-bench/patches/lanes-2026-10-26.patch`). In the joint split the Neural Engine idles through

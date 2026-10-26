@@ -30,7 +30,7 @@ Windows, macOS (Apple Silicon, 15+) and Linux (`.deb`, `.rpm`). Installed copies
   as an experimental switch in Settings → Performance (off by default). Since then (2026-10-26, not yet re-measured as
   whole images): one denoising step ~5 % faster, the decoder ~1 s faster per image, an edit's image reading 2.6 → 1.7 s. LoRAs and the upscaler still need the standard
   engine (not planned for its first release). A "Benchmark this Mac" button in Settings → Performance runs the engine's
-  bench from the app (10–15 min) and gives the report to paste in
+  bench from the app (~10 min) and gives the report to paste in
   [Discussion #43](https://github.com/GabrieleLozupone/kokon/discussions/43).
 - The Windows installer is not code-signed: SmartScreen or Smart App Control may block it (README FAQ: Unblock).
 - HEIC photos can't be opened on Linux yet.

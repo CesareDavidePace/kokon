@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   activeLoras, activeOverrides, buildRequest, composing, editing, reviewRequest, wantsPromptReview, toggleLora, MAX_LORAS, jobPercent, compareBase, composerFromRecord, enhancerApplies, diffPixels, emptyComposer, expansionPixels, expansionPreset, jobLabel, jobSecondsLeft, lutInfo, moveRef, needsPrompt, normalizeQuality, persistentAdvanced, pipelineSummary,
   planPipeline, remainingSeconds, sizeForWidth, timeAgo, upscaleRequest, upscaleTargets, versionLabels, type JobClock, type Ref,
-  neighbourAfterRemoval, pageOutdated, previewIndex, starPromptDue, STAR_PROMPT_AFTER, formatBytes, formatDuration, installItemShort, installItemText, installProgress, installStep, installTimeLeft, timelineLinks, undoTarget, aspectLabel, parseRatio, sizeForRatio, expandToRatio, expandToSize, arcLayout,
+  neighbourAfterRemoval, pageOutdated, previewIndex, starPromptDue, STAR_PROMPT_AFTER, formatBytes, formatDuration, installItemShort, installItemText, installProgress, installStep, installTimeLeft, timelineLinks, undoTarget, aspectLabel, parseRatio, sizeForRatio, sizeForLongSide, expandToRatio, expandToSize, arcLayout,
   goneVersions, PREVIEW_SIDE, stageFitsPreview, viewerWantsFull,
 } from "./logic";
 import type { GenerationRecord, InstallItem, JobView, LoraItem, Plan } from "./types";
@@ -117,6 +117,11 @@ describe("buildRequest", () => {
     expect([c.prompt, c.enhance]).toEqual(["un gatto", true]);
     const plain = composerFromRecord({ ...g, original_prompt: null }, { ...emptyComposer(), enhance: true });
     expect([plain.prompt, plain.enhance]).toEqual(["A tabby cat sleeping on a sunlit windowsill.", false]);
+  });
+  it("reusing the settings keeps a fixed seed and leaves a random one random", () => {
+    const g = { prompt: "x", original_prompt: null, seed: 77, references: [], mask_input_id: null, outpaint: null, quality: "fast", request: { mode: "auto", seed: 42 } } as unknown as GenerationRecord;
+    expect(composerFromRecord(g, emptyComposer()).seed).toBe(42);
+    expect(composerFromRecord({ ...g, request: { mode: "auto", seed: null } } as unknown as GenerationRecord, emptyComposer()).seed).toBe(null);
   });
   it("New image with images makes a new image that uses them as references", () => {
     const c = { ...emptyComposer(), prompt: "lei che beve questo caffè", refs: [ref(1), ref(2)], create: true, aspect: "4:5" };
@@ -486,6 +491,11 @@ describe("aspect ratios", () => {
     expect(s.width % 16 + (s.height % 16)).toBe(0);
     expect(Math.abs((s.width * s.height) / (1024 * 1024) - 1)).toBeLessThan(0.03);
     expect(aspectLabel(s.width, s.height)).toBe("16:9");
+  });
+  it("sizes a screen preset by its long side, in either orientation", () => {
+    expect(sizeForLongSide(16 / 9, 3840)).toEqual({ width: 3840, height: 2160 });
+    expect(sizeForLongSide(9 / 16, 1920)).toEqual({ width: 1080, height: 1920 });
+    expect(sizeForLongSide(1760 / 2368, 3840)).toEqual({ width: 2854, height: 3840 });
   });
   it("expands to a ratio or an exact size without cropping", () => {
     expect(expandToRatio(1000, 1000, 2)).toEqual({ left: 500, right: 500, top: 0, bottom: 0, units: "pixels" });

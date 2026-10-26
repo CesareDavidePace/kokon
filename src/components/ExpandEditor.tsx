@@ -1,7 +1,7 @@
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, ChevronDown, Maximize, RotateCcw, X } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, ChevronDown, Lock, LockOpen, Maximize, RotateCcw, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { urls } from "../lib/api";
-import { aspectLabel, expandToRatio, expandToSize, expansionPixels, expansionPreset, parseRatio } from "../lib/logic";
+import { LONG_SIDE_PRESETS, aspectLabel, expandToRatio, expandToSize, expansionPixels, expansionPreset, parseRatio, sizeForLongSide } from "../lib/logic";
 import { focusPrompt, setState, updateComposer, useStore } from "../lib/store";
 import type { OutpaintSpec, Units } from "../lib/types";
 import { AspectGrid, RatioIcon } from "./SizeMenus";
@@ -10,17 +10,65 @@ import { IconButton, Popover, Seg } from "./ui";
 type Side = "left" | "right" | "top" | "bottom";
 const MAX_FINAL = 16384;
 
-/** Exact final size: each side can only grow (an expansion never crops). */
+const LOCK_KEY = "kokon.expandRatioLock";
+const loadLock = () => {
+  try {
+    return localStorage.getItem(LOCK_KEY) === "1";
+  } catch {
+    return false;
+  }
+};
+
+/** Exact final size: each side can only grow (an expansion never crops). With the lock on,
+ * typing one side sets the other to the ratio the fields had when it was locked (#42). */
 function SizeForm(props: { w: number; h: number; minW: number; minH: number; onApply: (w: number, h: number) => void }) {
   const [w, setW] = useState(props.w);
   const [h, setH] = useState(props.h);
+  const [lock, setLock] = useState(loadLock);
+  const [ratio, setRatio] = useState(props.w / props.h);
   const ok = w >= props.minW && h >= props.minH && w <= MAX_FINAL && h <= MAX_FINAL && (w > props.minW || h > props.minH);
+  const toggleLock = () => {
+    const on = !lock;
+    setLock(on);
+    if (on && w > 0 && h > 0) setRatio(w / h);
+    try {
+      localStorage.setItem(LOCK_KEY, on ? "1" : "0");
+    } catch {
+      // the lock just isn't remembered
+    }
+  };
+  const typeW = (v: number) => {
+    setW(v);
+    if (lock && v > 0) setH(Math.round(v / ratio));
+  };
+  const typeH = (v: number) => {
+    setH(v);
+    if (lock && v > 0) setW(Math.round(v * ratio));
+  };
+  // Screen presets keep the fields' ratio; one smaller than the image can't be reached.
+  const presets = LONG_SIDE_PRESETS.map((p) => ({ ...p, size: sizeForLongSide(w > 0 && h > 0 ? w / h : ratio, p.long) }));
   return (
     <div className="expand-size">
       <span className="pair">
-        <input className="input" type="number" min={props.minW} max={MAX_FINAL} value={w} onChange={(e) => setW(Math.round(Number(e.target.value) || 0))} onKeyDown={(e) => e.key === "Enter" && ok && props.onApply(w, h)} aria-label="Final width" />
+        <input className="input" type="number" min={props.minW} max={MAX_FINAL} value={w} onChange={(e) => typeW(Math.round(Number(e.target.value) || 0))} onKeyDown={(e) => e.key === "Enter" && ok && props.onApply(w, h)} aria-label="Final width" />
         <span className="muted">×</span>
-        <input className="input" type="number" min={props.minH} max={MAX_FINAL} value={h} onChange={(e) => setH(Math.round(Number(e.target.value) || 0))} onKeyDown={(e) => e.key === "Enter" && ok && props.onApply(w, h)} aria-label="Final height" />
+        <input className="input" type="number" min={props.minH} max={MAX_FINAL} value={h} onChange={(e) => typeH(Math.round(Number(e.target.value) || 0))} onKeyDown={(e) => e.key === "Enter" && ok && props.onApply(w, h)} aria-label="Final height" />
+        <button className={`icon-btn sm ${lock ? "active" : ""}`} onClick={toggleLock} aria-pressed={lock} title={lock ? "Ratio locked: changing one side changes the other" : "Lock the ratio"}>
+          {lock ? <Lock size={14} /> : <LockOpen size={14} />}
+        </button>
+      </span>
+      <span className="size-presets">
+        {presets.map((p) => (
+          <button
+            key={p.label}
+            className={p.size.width === w && p.size.height === h ? "on" : ""}
+            disabled={p.size.width < props.minW || p.size.height < props.minH}
+            onClick={() => (setW(p.size.width), setH(p.size.height))}
+            title={`${p.size.width}×${p.size.height}`}
+          >
+            {p.label}
+          </button>
+        ))}
       </span>
       {w > 0 && h > 0 && (
         <span className="ratio-tag">

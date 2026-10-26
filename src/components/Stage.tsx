@@ -229,6 +229,14 @@ function Failed({ job, item }: { job: JobView; item: SessionItem }) {
   );
 }
 
+function CopyText({ text, title }: { text: string; title: string }) {
+  return (
+    <IconButton small title={title} onClick={() => void native.copyText(text).then(() => toastInfo("Prompt copied"), toastError)}>
+      <Copy size={13} />
+    </IconButton>
+  );
+}
+
 export function InfoPanel({ g }: { g: GenerationRecord }) {
   const pipeline = pipelineSummary(g);
   const lut = lutInfo(g);
@@ -255,10 +263,16 @@ export function InfoPanel({ g }: { g: GenerationRecord }) {
   ];
   return (
     <div className="info-panel" style={{ padding: 8, display: "flex", flexDirection: "column", gap: 6 }}>
-      <div style={{ fontSize: 13, userSelect: "text", maxHeight: 160, overflow: "auto" }}>{g.prompt}</div>
+      <div className="info-prompt">
+        <div style={{ fontSize: 13, maxHeight: 160, overflow: "auto" }}>{g.prompt}</div>
+        <CopyText text={g.prompt} title={g.original_prompt ? "Copy the prompt Prompt+ wrote" : "Copy the prompt"} />
+      </div>
       {g.original_prompt && (
-        <div className="muted" style={{ userSelect: "text", maxHeight: 80, overflow: "auto" }}>
-          <WandSparkles size={11} style={{ verticalAlign: -1 }} /> Written by the prompt enhancer from: “{g.original_prompt}”
+        <div className="info-prompt">
+          <div className="muted" style={{ maxHeight: 80, overflow: "auto" }}>
+            <WandSparkles size={11} style={{ verticalAlign: -1 }} /> Written by the prompt enhancer from: “{g.original_prompt}”
+          </div>
+          <CopyText text={g.original_prompt} title="Copy your prompt" />
         </div>
       )}
       {g.negative_prompt && <div className="muted">Negative: {g.negative_prompt}</div>}
@@ -266,12 +280,12 @@ export function InfoPanel({ g }: { g: GenerationRecord }) {
         {rows.map(([k, v]) => (
           <Fragment key={k}>
             <span className="muted">{k}</span>
-            <span style={{ userSelect: "text", wordBreak: "break-all" }}>{v}</span>
+            <span style={{ wordBreak: "break-all" }}>{v}</span>
           </Fragment>
         ))}
       </div>
       {g.notes.length > 0 && <div className="muted">{g.notes.join(" ")}</div>}
-      <div className="muted" style={{ wordBreak: "break-all", userSelect: "text" }}>{g.file_path}</div>
+      <div className="muted" style={{ wordBreak: "break-all" }}>{g.file_path}</div>
     </div>
   );
 }

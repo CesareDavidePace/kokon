@@ -1,6 +1,6 @@
 import { ArrowLeftRight, Check } from "lucide-react";
 import { useState } from "react";
-import { ASPECTS, aspectLabel, parseRatio, planPipeline, sizeForRatio } from "../lib/logic";
+import { ASPECTS, LONG_SIDE_PRESETS, aspectLabel, parseRatio, planPipeline, sizeForLongSide, sizeForRatio } from "../lib/logic";
 import { getState, updateComposer, useStore } from "../lib/store";
 import type { Plan, ResolutionMode } from "../lib/types";
 import { Option } from "./ui";
@@ -17,14 +17,14 @@ export function RatioIcon({ ratio, size = 16 }: { ratio: number; size?: number }
 }
 
 /** Two numbers typed by hand (a ratio such as 7:5, or a size such as 1920×1080). */
-function PairFields(props: { a: number | ""; b: number | ""; sep: string; max: number; onA: (v: number | "") => void; onB: (v: number | "") => void; label: string; onEnter?: () => void }) {
+function PairFields(props: { a: number | ""; b: number | ""; sep: string; max: number; onA: (v: number | "") => void; onB: (v: number | "") => void; label: string; onEnter?: () => void; onFocus?: () => void }) {
   const num = (v: string): number | "" => (v === "" ? "" : Math.max(0, Math.min(props.max, Number(v) || 0)));
   const key = (e: React.KeyboardEvent) => e.key === "Enter" && props.onEnter?.();
   return (
     <span className="pair" aria-label={props.label}>
-      <input className="input" type="number" min={1} max={props.max} value={props.a} onChange={(e) => props.onA(num(e.target.value))} onKeyDown={key} />
+      <input className="input" type="number" min={1} max={props.max} value={props.a} onChange={(e) => props.onA(num(e.target.value))} onKeyDown={key} onFocus={props.onFocus} />
       <span className="muted">{props.sep}</span>
-      <input className="input" type="number" min={1} max={props.max} value={props.b} onChange={(e) => props.onB(num(e.target.value))} onKeyDown={key} />
+      <input className="input" type="number" min={1} max={props.max} value={props.b} onChange={(e) => props.onB(num(e.target.value))} onKeyDown={key} onFocus={props.onFocus} />
     </span>
   );
 }
@@ -87,18 +87,23 @@ export function ResolutionMenu({ plan, close }: { plan: Plan | null; close: () =
     setH(nh);
     if (typeof nw === "number" && typeof nh === "number" && nw >= 64 && nh >= 64) updateComposer({ resolution: "custom", customWidth: nw, customHeight: nh });
   };
+  // The size already in the fields is picked by clicking the row or a field: before, only a
+  // changed value picked it, so a size left from an earlier image had to be retyped.
+  const pick = () => valid && c.resolution !== "custom" && updateComposer({ resolution: "custom", customWidth: w as number, customHeight: h as number });
+  // Screen presets keep the ratio already typed (16:9 when there is none).
+  const ratio = valid ? (w as number) / (h as number) : 16 / 9;
   return (
     <div className="res-menu">
       {RES_OPTIONS.filter((o) => o.value !== "source" || editing).map((o) => (
         <Option key={o.value} selected={c.resolution === o.value} label={o.label} sub={o.sub} onClick={() => (updateComposer({ resolution: o.value }), close())} />
       ))}
       <div className={`res-custom ${c.resolution === "custom" ? "on" : ""}`}>
-        <span className="res-custom-head">
+        <button className="res-custom-head" onClick={pick}>
           <span className="check">{c.resolution === "custom" && <Check size={15} />}</span>
           Exact size
-        </span>
+        </button>
         <span className="res-custom-row">
-          <PairFields a={w} b={h} sep="×" max={4096} onA={(v) => apply(v, h)} onB={(v) => apply(w, v)} label="Width and height" onEnter={close} />
+          <PairFields a={w} b={h} sep="×" max={4096} onA={(v) => apply(v, h)} onB={(v) => apply(w, v)} label="Width and height" onEnter={close} onFocus={pick} />
           <button className="icon-btn sm" title="Swap width and height" onClick={() => apply(h, w)}>
             <ArrowLeftRight size={14} />
           </button>
@@ -108,6 +113,17 @@ export function ResolutionMenu({ plan, close }: { plan: Plan | null; close: () =
               {aspectLabel(w as number, h as number)}
             </span>
           )}
+        </span>
+        <span className="res-custom-row size-presets">
+          {LONG_SIDE_PRESETS.map((p) => {
+            const s = sizeForLongSide(ratio, p.long);
+            const on = c.resolution === "custom" && c.customWidth === s.width && c.customHeight === s.height;
+            return (
+              <button key={p.label} className={on ? "on" : ""} onClick={() => apply(s.width, s.height)} title={`${s.width}×${s.height}`}>
+                {p.label}
+              </button>
+            );
+          })}
         </span>
       </div>
       {plan && (

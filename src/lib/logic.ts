@@ -235,7 +235,8 @@ export function composerFromRecord(g: GenerationRecord, base: Composer): Compose
     quality: normalizeQuality(g.quality, base.quality),
     resolution: req?.resolution ?? base.resolution,
     aspect: req?.aspect_ratio ?? "auto",
-    seed: null,
+    // A seed the user fixed is a setting too; a random one stays random.
+    seed: req?.seed ?? null,
     advanced: cleanAdvanced(req?.advanced ?? {}),
     // The LoRAs it was made with (none for images made before LoRAs or without them).
     loras: (g.loras ?? []).map((l) => l.id),
@@ -742,6 +743,18 @@ export function aspectLabel(w: number, h: number): string {
 export function sizeForRatio(r: number, area: number, max = 4096): Size {
   const r16 = (v: number) => Math.max(64, Math.min(max, Math.round(v / 16) * 16));
   return { width: r16(Math.sqrt(area * r)), height: r16(Math.sqrt(area / r)) };
+}
+
+/** Common screen sizes by their long side (16:9 gives 1920×1080, 2560×1440, 3840×2160). */
+export const LONG_SIDE_PRESETS = [
+  { label: "1080p", long: 1920 },
+  { label: "1440p", long: 2560 },
+  { label: "4K", long: 3840 },
+] as const;
+
+/** Width × height with ratio `r` and the given long side; the short side is rounded. */
+export function sizeForLongSide(r: number, long: number): Size {
+  return r >= 1 ? { width: long, height: Math.max(1, Math.round(long / r)) } : { width: Math.max(1, Math.round(long * r)), height: long };
 }
 
 /** Expansion (source pixels, centred) that turns a w×h image into ratio `r` without cropping. */

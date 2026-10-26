@@ -4,6 +4,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { ask, open, save } from "@tauri-apps/plugin-dialog";
 import { inBrowser } from "./platform";
 
@@ -34,6 +35,21 @@ export const native = {
     if (!res.ok) throw new Error("Could not read the image.");
     const png = await asPng(await res.blob());
     await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+  },
+  /** Text to the clipboard. A browser page on plain http (the LAN) has no clipboard API: the old
+   * copy command still works there. */
+  copyText: async (text: string) => {
+    if (!inBrowser) return writeText(text);
+    if (window.isSecureContext && navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    const ok = document.execCommand("copy");
+    area.remove();
+    if (!ok) throw new Error("Could not copy the text.");
   },
   readClipboardImage: async (): Promise<Uint8Array | null> => {
     if (inBrowser) return null;

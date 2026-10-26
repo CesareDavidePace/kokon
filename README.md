@@ -754,8 +754,8 @@ or macOS version and the log from `KokonData/logs` (see the table above).
 - [x] **0.11:** the interface in a browser on your other devices, served by Kokon itself, with a password,
   and a Docker image for NVIDIA ([#15](https://github.com/GabrieleLozupone/kokon/issues/15))
 - [ ] Docker image for AMD and Intel (Vulkan); the desktop app as a client of a Kokon server elsewhere
-- [ ] Kokon's own engine for Apple Silicon (GPU, CPU matrix unit and Neural Engine together; in development, text to
-  image ~3.5× faster on an M2 Pro so far)
+- [ ] Kokon's own engine for Apple Silicon (GPU, CPU matrix unit and Neural Engine together; experimental, coming
+  in 0.11.1: text to image about 4× faster on an M2 Pro)
 - [ ] Intel GPUs through Vulkan (to verify)
 - [ ] Background removal and transparent cutouts
 - [ ] Batch edits: one instruction for a whole folder

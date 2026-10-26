@@ -10,10 +10,13 @@ Windows, macOS (Apple Silicon, 15+) and Linux (`.deb`, `.rpm`). Installed copies
 ## Next
 
 - **0.12: reliability foundations** (details soon).
-- **Next update, done and being tested:** visible text selection in the dark theme on Linux
-  ([#41](https://github.com/GabrieleLozupone/kokon/issues/41)), a ratio lock and 1080p / 1440p / 4K sizes in Expand
-  ([#42](https://github.com/GabrieleLozupone/kokon/issues/42)), the same sizes in the size menu, where an exact size
-  left in the fields can now be picked again without retyping it.
+- **0.11.1, done on master and being tested:** Kokon's own Mac engine inside Kokon.app, offered once at start on
+  Macs with 16 GB or more (experimental, off until tried, rollback in Settings → Performance); Unsloth's
+  Qwen-Image 2.1 Turbo Q4_K_M as the image model of new installs, offered as an update to earlier installs (never
+  switched for own model files); visible text selection in the dark theme on Linux
+  ([#41](https://github.com/GabrieleLozupone/kokon/issues/41)); a ratio lock and 1080p / 1440p / 4K sizes in Expand
+  ([#42](https://github.com/GabrieleLozupone/kokon/issues/42)) and in the size menu, where an exact size left in the
+  fields can now be picked again; a selectable info panel with copy buttons; Reuse keeps a fixed seed.
 - After 0.11: the desktop app as a client of a Kokon server elsewhere, and a Docker image for AMD and Intel
   (Vulkan) once it can be tested.
 - On the list, no dates yet: a custom upscaler picker
@@ -28,13 +31,13 @@ Windows, macOS (Apple Silicon, 15+) and Linux (`.deb`, `.rpm`). Installed copies
 - **LoRA is beta** and tested on Windows only; reports from macOS and Linux are welcome
   ([#33](https://github.com/GabrieleLozupone/kokon/issues/33) has a product-shot test).
 - **Macs are slow** compared with NVIDIA cards (about 4 minutes for 1 MP on an M2 Pro 16 GB). Kokon's own Mac
-  engine is in development on the `macos-optimization` branch (`engine-mac/`, not released): text to image,
+  engine (`engine-mac/`, not released yet): text to image,
   Prompt+ (a prompt written in about 7–9 s), edits with reference images (Prompt+ looking at them too), brushed edits and
   extending an image, about 64–67 s for 1 MP text to image and ~106 s for a 1 MP edit on the same Mac (peak memory 5 GB),
-  as an experimental switch in Settings → Performance (off by default). Since then (2026-10-26, not yet re-measured as
+  as an experimental switch in Settings → Performance (off by default). Merged into master on 2026-10-26 for 0.11.1. Since then (2026-10-26, not yet re-measured as
   whole images): one denoising step ~5 % faster, the decoder ~1 s faster per image, an edit's image reading 2.6 → 1.7 s. LoRAs and the upscaler still need the standard
-  engine (not planned for its first release). On the branch it now ships inside Kokon.app (1.7 MB) and Kokon offers it once at start
-  on Macs with 16 GB or more (planned for 0.11.1, with rollback in Settings). A "Benchmark this Mac" button in Settings → Performance runs the engine's
+  engine (not planned for its first release). It ships inside Kokon.app (1.7 MB) and Kokon offers it once at start
+  on Macs with 16 GB or more (0.11.1, with rollback in Settings). A "Benchmark this Mac" button in Settings → Performance runs the engine's
   bench from the app (~10 min) and gives the report to paste in
   [Discussion #43](https://github.com/GabrieleLozupone/kokon/discussions/43).
 - The Windows installer is not code-signed: SmartScreen or Smart App Control may block it (README FAQ: Unblock).

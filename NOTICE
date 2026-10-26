@@ -54,8 +54,9 @@ Every file is pinned by URL, size and SHA-256 in crates/qls-core/src/catalog.rs.
 - Qwen-Image 2.1 Turbo by the Qwen team (https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo),
   Qwen Research License (research and evaluation only, no commercial use):
   "Qwen is licensed under the Qwen RESEARCH LICENSE AGREEMENT, Copyright (c) 2026 Hangzhou
-  Tongyi Laboratory Technology Co., Ltd. All Rights Reserved." Downloaded as the GGUF conversion by DogukanUrker
-  (https://huggingface.co/DogukanUrker/Qwen-Image-2.1-Turbo-GGUF).
+  Tongyi Laboratory Technology Co., Ltd. All Rights Reserved." Downloaded as Unsloth's GGUF
+  (https://huggingface.co/unsloth/Qwen-Image-2.1-Turbo-GGUF); installs from Kokon 0.11.0 or earlier may
+  still use the GGUF conversion by DogukanUrker (https://huggingface.co/DogukanUrker/Qwen-Image-2.1-Turbo-GGUF).
 - Qwen-Image 2.1 VAE, from https://huggingface.co/Comfy-Org/Qwen-Image-2.1; see
   https://huggingface.co/Qwen/Qwen-Image-2.1 for the terms.
 - Qwen3-VL 8B Instruct text encoder and vision projector by the Qwen team, from

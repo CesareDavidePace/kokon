@@ -208,10 +208,15 @@ removed on 2026-10-10: on the M2 Pro 16 GB it took 5 min 25 s against 4 min 20 s
 
 Every job runs Qwen's official 8-step distilled model
 ([Qwen/Qwen-Image-2.1-Turbo](https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo), released
-2026-10-09, Qwen Research License like the base), as the stable-diffusion.cpp conversion
-[DogukanUrker/Qwen-Image-2.1-Turbo-GGUF](https://huggingface.co/DogukanUrker/Qwen-Image-2.1-Turbo-GGUF):
-Q4_K (4.05 GB, `catalog::TURBO_Q4_K`) on every preset (the larger presets differ in working
-size and text encoder only). t2i and edits. The base Qwen-Image 2.1 weights are no
+2026-10-09, Qwen Research License like the base), as
+[unsloth/Qwen-Image-2.1-Turbo-GGUF](https://huggingface.co/unsloth/Qwen-Image-2.1-Turbo-GGUF)
+Q4_K_M (4.2 GB, `catalog::TURBO_Q4_K_M`) on every preset since 0.11.1 (the larger presets differ in
+working size and text encoder only). Up to 0.11.0 it was DogukanUrker's stable-diffusion.cpp
+conversion, Q4_K (4.05 GB, `catalog::TURBO_Q4_K`): a tie on a same-seed vote (2026-10-25, RTX 5070
+Ti), the Q4_K_M ~6 % slower per job there. Earlier installs keep the Q4_K until the user accepts
+(`catalog::official_dit`, What's new / Settings → Models, `POST /models/dit`); the Q4_K is then
+deleted from the app's folder once no profile uses it (`catalog::unused_old_dit`). Own files that
+are that Q4_K (size + fingerprint, any folder) only get a suggestion (`catalog::dit_update`). t2i and edits. The base Qwen-Image 2.1 weights are no
 longer downloaded; config schema 7 points the official profile at the preset's Turbo file (the
 old base file stays on disk until the user deletes it).
 

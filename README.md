@@ -272,18 +272,19 @@ preset later from Settings → Models → **Set up models…**
 
 | Preset | Diffusion model | Text encoder (in RAM) | Download | Tested on real hardware |
 | --- | --- | --- | --- | --- |
-| 8 GB (beta) | Qwen-Image 2.1 Turbo Q4_K (4.1 GB) | Qwen3-VL 8B Q4_K_M | ~12 GB | by users: RTX 3060 Ti, RTX 5050 Laptop |
-| 12 GB | Qwen-Image 2.1 Turbo Q4_K | Qwen3-VL 8B Q4_K_M | ~12 GB | ✅ RTX 5070 (12 GB) |
-| 16 GB | Qwen-Image 2.1 Turbo Q4_K | Qwen3-VL 8B Q4_K_M | ~12 GB | ✅ RTX 5070 Ti |
-| 24 GB | Qwen-Image 2.1 Turbo Q4_K | Qwen3-VL 8B Q4_K_M | ~12 GB | by users: RX 7900 XTX (Vulkan) |
-| 32 GB+ | Qwen-Image 2.1 Turbo Q4_K | Qwen3-VL 8B Q8_0 (8.7 GB) | ~16 GB | not yet |
+| 8 GB (beta) | Qwen-Image 2.1 Turbo Q4_K_M (4.2 GB) | Qwen3-VL 8B Q4_K_M | ~12 GB | by users: RTX 3060 Ti, RTX 5050 Laptop |
+| 12 GB | Qwen-Image 2.1 Turbo Q4_K_M | Qwen3-VL 8B Q4_K_M | ~12 GB | ✅ RTX 5070 (12 GB) |
+| 16 GB | Qwen-Image 2.1 Turbo Q4_K_M | Qwen3-VL 8B Q4_K_M | ~12 GB | ✅ RTX 5070 Ti |
+| 24 GB | Qwen-Image 2.1 Turbo Q4_K_M | Qwen3-VL 8B Q4_K_M | ~12 GB | by users: RX 7900 XTX (Vulkan) |
+| 32 GB+ | Qwen-Image 2.1 Turbo Q4_K_M | Qwen3-VL 8B Q8_0 (8.7 GB) | ~16 GB | not yet |
 
 Every preset also gets stable-diffusion.cpp (the CUDA 12 build on NVIDIA, the Vulkan build on AMD and Intel, the Metal build on a Mac), the Qwen-Image 2.1 VAE with
 [madebyollin's texture fix](https://huggingface.co/madebyollin/texture-fix-vae-for-qwen-image-2.1) (it removes the faint
 2-pixel checkerboard of the original decoder; installs from 0.9.2 or earlier switch to it when you accept the update), the
 Qwen3-VL vision projector and, on a PC, the Superscale-SP upscaler (67 MB). The image model is Qwen's
 official 8-step [Qwen-Image 2.1 Turbo](https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo) through
-[DogukanUrker/Qwen-Image-2.1-Turbo-GGUF](https://huggingface.co/DogukanUrker/Qwen-Image-2.1-Turbo-GGUF);
+[unsloth/Qwen-Image-2.1-Turbo-GGUF](https://huggingface.co/unsloth/Qwen-Image-2.1-Turbo-GGUF) (installs from 0.11.0
+or earlier keep their Q4_K file until you accept the update);
 the other sources are
 [Qwen/Qwen3-VL-8B-Instruct-GGUF](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF),
 [madebyollin/texture-fix-vae-for-qwen-image-2.1](https://huggingface.co/madebyollin/texture-fix-vae-for-qwen-image-2.1) and
@@ -860,7 +861,7 @@ Model weights and the upscaler are downloaded from their authors and keep their 
 Kokon builds on [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) by
 leejet (since 0.10 through [our fork](https://github.com/GabrieleLozupone/stable-diffusion.cpp/tree/kokon),
 kept close to upstream), [Qwen-Image 2.1](https://huggingface.co/Qwen/Qwen-Image-2.1) and its Turbo model by the
-Qwen team, DogukanUrker's Turbo GGUF conversions, [Tauri](https://tauri.app) and
+Qwen team, Unsloth's Turbo GGUF files, [Tauri](https://tauri.app) and
 the upscalers by Nmkd (Superscale-SP), Philip Hofmann (4xNomos2 MoSR) and Kim2091 (UltraSharp).
 Thank you.
 

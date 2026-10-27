@@ -12,6 +12,22 @@ All timings in this guide come from one Mac, an **M2 Pro (19-core GPU, 16 GB, ma
 line says otherwise. Other Macs have not been measured by us yet; [Testing on your Mac](#27-measuring-a-mac-bench-and-the-tools)
 says how to help.
 
+### Who made this
+
+**The idea and the specification are Gabriele Lozupone's.** Matrix products can be cut by rows and attention by
+heads, so the engine should run them on the CPU (AMX), the GPU and the Neural Engine at once and reach the machine's
+limit. To get there, each unit gets work in proportion to its throughput, so dead time disappears. The coordination
+must respect the data dependencies: no unit should wait longer than it has to, and no unit should start a step before
+the result it depends on is ready. And every operation runs at the precision its layer can take without losing
+accuracy.
+
+**The implementation and this guide were written by Claude (Anthropic), working in Claude Code** under Gabriele's
+direction. That covers the Swift code, the Metal kernels, the Neural Engine programs, the balancing loop, the checks
+against diffusers and transformers, and every measurement reported here. Gabriele ran the long benchmarks on his Mac,
+reviewed the results and took the product decisions: which paths ship by default, the int8 cache on 16 GB Macs, what
+stays opt-in. The Neural Engine technique and the three-unit split build on [Siliconed](https://github.com/gwenn-ha-dev/Siliconed);
+see the [credits](#credits).
+
 ## Contents
 
 **Part 1: the background**

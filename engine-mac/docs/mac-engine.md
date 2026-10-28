@@ -649,6 +649,15 @@ the [balancing loop](#15-the-balancing-loop).
 A rule that keeps this safe: a reserve or a surface is rewritten only after the GPU has waited for the product that
 read it. That is why there are two reserves and two sets of Neural Engine programs, alternating.
 
+**When the CPU sees a signal.** On the M5 Pro (macOS 26.6) a signal inside a command buffer reaches the CPU only at
+the next wait the command buffer encodes, or at its end: GPU work of 3 × 20 ms with a signal after each, the CPU saw
+them at 60 / 60 / 60 ms, and with a wait after each signal at 20 / 40 / 60. In the sequence above the first wait comes
+after the GPU's rows, so there the AMX and the Neural Engine started only when the GPU was done, and the timeline read
+the GPU's rows as ~1 ms (the balancer then gave the AMX nothing and the CPU no heads). On that chip `release` encodes a
+wait on `ready` right after its signal, on a value already reached ([chapter 26](#26-per-chip-paths),
+`KOKON_FLUSH_READY`). `PerChipTests` checks on every Mac that the flushed release reaches the CPU before the command
+buffer's end.
+
 ## 14. The Neural Engine in detail
 
 *Source: `NeuralEngine.swift`, `Kernels/ane.metal`, the packing parts of `Coexecution.swift`.*
@@ -1264,6 +1273,7 @@ any Mac.**
 | **GPU rows on Metal 4 tensor operations** (`na_matmul`, MetalPerformancePrimitives' `matmul2d`): on the M5 the GPU cores' matrix units, before it the shader cores | wherever Metal 4 runs | 6.3 vs MPS 5.6 TFLOP/s, bit for bit the same; an evaluation 7.57 → 7.48 s | `KOKON_NA=0` |
 | **Attention reading K/V from memory** (`flash_attention_direct`) | Apple9+ GPUs (M3 and later) | 142 ms vs 91 (so not on M2) | `KOKON_ATTENTION_DIRECT=0/1` |
 | **int8 products on the Neural Engine** (libnnc's M3/M4 path) | opt-in on every chip | a tile 10.1 → 7.0 ms, but 15–50× the error | `KOKON_ANE_INT8=1` or `w8` |
+| **Each product released at once** (`Coexecutor.release`: a wait on `ready` right after its signal, so the CPU sees it before the GPU's own rows) | the M5 Pro only (`Chip.name`) | not selected (M5 Pro: an evaluation 5.50–5.89 → 4.44–4.46 s) | `KOKON_FLUSH_READY=0/1` |
 | **Starting shares** scaled by the chip's estimated units | always | — | `KOKON_BALANCE=0` keeps the defaults |
 
 Only the M2 Pro has measured these. `bench` exists to measure them on the Macs we do not have.
@@ -1443,6 +1453,7 @@ All are environment variables read once at start. Defaults are what users run.
 | `KOKON_ACTIVATIONS` | fp16 | `fp32`: fp32 inputs to the GPU's and AMX's products (checks) |
 | `KOKON_ATTENTION` | fp16 packed kernel | `fp32`: fp32 kernel; `graph`: MPSGraph; `unpacked`: no K/V packing |
 | `KOKON_ATTENTION_DIRECT` | on from Apple9 | `0`/`1`: choose the direct-load attention |
+| `KOKON_FLUSH_READY` | on the M5 Pro | `0`/`1`: a wait right after each release, so the AMX and the Neural Engine see it at once |
 | `KOKON_FUSED_CAST`, `KOKON_FUSED_PACK`, `KOKON_FUSED_RESIDUAL`, `KOKON_SHARED_ROWS` | on | `0`: the separate passes, for comparison |
 | `KOKON_PREFIX_CACHE` | fp16 or q8 | `0`: off; `fp32`, `fp16`, `q8`: choose the format |
 | `KOKON_PREFIX_CACHE_MB` | 1536 below 32 GB, memory/8 above | the cache's limit |

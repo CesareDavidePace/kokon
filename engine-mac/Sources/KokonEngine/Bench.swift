@@ -28,6 +28,9 @@ public enum Bench {
         if NeuralAccelerators.selected(device: device), NeuralAccelerators.make(device: device) != nil {
             paths.append(("GPU products on Metal 4 tensor operations (the M5's neural accelerators; shader cores before)", "KOKON_NA", "0"))
         }
+        if Coexecutor.flushReleaseSelected(chipName: chip.name) {
+            paths.append(("each product released to the AMX and the Neural Engine at once (M5 Pro path)", "KOKON_FLUSH_READY", "0"))
+        }
         if QwenDiT.directAttention(device: device) {
             paths.append(("attention reading K/V straight from memory (Apple9+ path)", "KOKON_ATTENTION_DIRECT", "0"))
         }

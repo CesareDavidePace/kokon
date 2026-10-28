@@ -435,6 +435,11 @@ correctness test that runs on any Mac (`PerChipTests`). Only the M2 Pro has meas
   activation rows with outliers). **Finer scales do not fix it** (2026-10-25, below): int8 stays opt-in.
 - **Attention reading K and V straight from memory** (`flash_attention_direct`) on Apple9+ GPUs (M3 and later), as
   MFA's tables prefer there (`KOKON_ATTENTION_DIRECT=0` off); 142 ms on the M2 Pro against 91, unmeasured on an M3+.
+- **Each product released at once** on the M5 Pro (`KOKON_FLUSH_READY=0` off): a wait on `ready` right after its
+  signal. On the M5 Pro (macOS 26.6) a signal inside a command buffer reaches the CPU only at the next wait the
+  command buffer encodes, which was after the GPU's own rows: the AMX and the Neural Engine ran after the GPU instead of
+  beside it, and the balancer, reading ~1 ms for the GPU's rows, gave them almost nothing. M5 Pro 20-core, 24 GB,
+  `time-dit` at 1024², 3 alternated rounds (third evaluation): 5.50–5.89 → 4.44–4.46 s.
 - **Starting shares per chip**: the balancer's M2 Pro rates scaled by the chip's estimated units (GPU cores × clock,
   the Neural Engine's published TOPS, performance cores; `Chip.unitScale`), so the first image starts near balanced;
   the loop measures the real rates from the first evaluation on.

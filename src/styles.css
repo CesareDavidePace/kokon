@@ -248,6 +248,7 @@ svg { display: block; flex: none; }
    fits above it and the percentage under it at any card size, in container units. */
 .progress-phase { position: absolute; inset: 0; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: space-between; padding: 3.5cqh 6cqw 5.5cqh; color: var(--text-2); font-size: 13px; text-align: center; animation: phase-in 0.8s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
 @keyframes phase-in { from { opacity: 0; filter: blur(4px); } to { opacity: 1; filter: none; } }
+.progress-phase.resumed { animation: none; }
 .progress-phase .stop-corner { position: absolute; top: 3.5cqh; right: 3cqw; height: 28px; font-size: 12px; }
 .progress-foot { display: flex; flex-direction: column; align-items: center; gap: clamp(4px, 1.6cqh, 8px); width: 100%; }
 .progress-detail { max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -281,6 +282,8 @@ svg { display: block; flex: none; }
 .enhanced-label { display: flex; align-items: center; gap: 6px; color: var(--text-3); font-size: 12px; letter-spacing: 0.02em; }
 /* each word arrives out of a soft blur */
 .prompt-text .w { animation: word-in 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+/* Already read before the card came back (Stage.tsx PromptPhase). */
+.prompt-text .w.seen { animation: none; }
 @keyframes word-in { from { opacity: 0; filter: blur(6px); } 40% { opacity: 0.55; } to { opacity: 1; filter: blur(0); } }
 .shimmer { background: linear-gradient(90deg, var(--text-3) 0%, var(--text-3) 35%, var(--text) 50%, var(--text-3) 65%, var(--text-3) 100%); background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 2s linear infinite; }
 .shimmer svg { color: var(--text-2); }

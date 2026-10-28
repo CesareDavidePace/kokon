@@ -1,11 +1,19 @@
 # Status
 
-**Updated 2026-10-27.** What is in progress, what comes next, and where help is welcome. Kept current at the end
+**Updated 2026-10-28.** What is in progress, what comes next, and where help is welcome. Kept current at the end
 of every task (see [AGENTS.md](../AGENTS.md#keeping-docsstatusmd-current)); GitHub is the source of truth.
 
 ## Current version: [0.11.1](https://github.com/GabrieleLozupone/kokon/releases/tag/v0.11.1) (2026-10-26)
 
 Windows, macOS (Apple Silicon, 15+) and Linux (`.deb`, `.rpm`). Installed copies update from the app.
+
+## Done on master, not released yet: 0.11.2
+
+Mac engine 0.1.1 (on macOS 26 the matrix unit and the Neural Engine work beside the GPU, found by
+@CesareDavidePace in [#46](https://github.com/GabrieleLozupone/kokon/pull/46); on M3, M4 and M5 Macs 8–18 % faster
+steps), the progress card keeps its place when you come back to it, Settings ask before closing with unsaved
+changes, setup buttons always in view and readable file names while downloading, visible selection on Linux with
+WebKitGTK ([#41](https://github.com/GabrieleLozupone/kokon/issues/41)), Android full screen.
 
 ## Next
 

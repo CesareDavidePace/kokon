@@ -763,6 +763,7 @@ or macOS version and the log from `KokonData/logs` (see the table above).
 
 What is in progress right now, known issues and where help is welcome: [docs/STATUS.md](docs/STATUS.md).
 Have an idea? [Start a discussion](https://github.com/GabrieleLozupone/kokon/discussions) or 👍 an existing one.
+Press, creators and anything that isn't a bug: [hello@kokon.app](mailto:hello@kokon.app) (press kit: [kokon.app/press](https://kokon.app/press/)).
 
 ## Build from source
 
@@ -853,7 +854,7 @@ license. The license covers the code, not the images you make with it.
 
 Want to ship Kokon inside a closed-source product or service? A commercial license is
 available: open a [discussion](https://github.com/GabrieleLozupone/kokon/discussions) or
-contact the author.
+write to [hello@kokon.app](mailto:hello@kokon.app).
 
 Model weights and the upscaler are downloaded from their authors and keep their own licenses
 (see the [FAQ](#faq)).

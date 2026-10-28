@@ -82,6 +82,29 @@ final class Coexecutor {
         }
     }
     static var int8Rows: Bool { ProcessInfo.processInfo.environment["KOKON_ANE_INT8"] != "w8" }
+    /// **The release made visible at once**: a wait on `ready` right after its signal. On the M5 Pro (macOS 26.6) a
+    /// signal inside a command buffer reaches the CPU only at the command buffer's end or at the next wait it encodes
+    /// (a 3 × 20 ms test: the CPU saw the three signals at 60 / 60 / 60 ms, with a wait after each at 20 / 40 / 60).
+    /// Here the next wait is after the GPU's own rows, so the AMX and the Neural Engine started only when the GPU was
+    /// done, one after the other instead of together, and the timeline read the GPU's rows as ~1 ms. The wait is on a
+    /// value already reached: the GPU does not stop. Measured on the M5 Pro only; `KOKON_FLUSH_READY=0` / `=1`.
+    let flushRelease: Bool
+    static func flushReleaseSelected(chipName: String) -> Bool {
+        switch ProcessInfo.processInfo.environment["KOKON_FLUSH_READY"] {
+        case "0": return false
+        case "1": return true
+        default: return chipName == "Apple M5 Pro"
+        }
+    }
+
+    /// Releases operation `p` to the AMX and the Neural Engine.
+    func release(_ p: UInt64, _ commands: MTLCommandBuffer) {
+        Coexecutor.release(ready, p, flush: flushRelease, commands)
+    }
+    static func release(_ event: MTLSharedEvent, _ p: UInt64, flush: Bool, _ commands: MTLCommandBuffer) {
+        commands.encodeSignalEvent(event, value: p)
+        if flush { commands.encodeWaitForEvent(event, value: p) }
+    }
     /// The reserves hold fp16 weights (`QwenDiT.halfWeights`): the AMX and the Neural Engine's packing read them so.
     let halfWeights: Bool
     /// **The GPU's and the AMX's rows of A read as fp16**, cast by the GPU into `aHalf` (`KOKON_ACTIVATIONS=fp32`: off).
@@ -113,6 +136,7 @@ final class Coexecutor {
         self.amxEnabled = amx
         aneInt8 = ane && Coexecutor.int8Selected(Chip.current)
         aneHalfRows = !Coexecutor.int8Rows
+        flushRelease = Coexecutor.flushReleaseSelected(chipName: Chip.current.name)
         // The first evaluation's shares from the cost model on this chip's estimated rates (`Chip.unitScale`; on the
         // M2 Pro its measured ones). Remembered shares replace them (`recall`).
         balancer = Balancer(aneAttention: ane && aneAttention, chip: Chip.current)
@@ -312,7 +336,7 @@ final class Coexecutor {
                 e.dispatchThreads(MTLSize(width: Int(count), height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
             }
         }
-        if s.amx > 0 || s.ane > 0 { commands.encodeSignalEvent(ready, value: p) }
+        if s.amx > 0 || s.ane > 0 { release(p, commands) }
         // The next weight's own work while the AMX and the Neural Engine run this product.
         try ahead?(commands)
         if s.amx > 0 {

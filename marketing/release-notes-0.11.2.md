@@ -37,7 +37,7 @@ AMD RX 6000 (RDNA2) cards: turn flash attention off in Settings → Performance 
 
 | File | SHA-256 |
 |---|---|
-| `Kokon_0.11.2_x64-setup.exe` (Windows) | `TBD` |
-| `Kokon_0.11.2_aarch64.dmg` (Mac, macOS 15+) | `TBD` |
-| `Kokon_0.11.2_amd64.deb` (Ubuntu, Debian, Mint) | `TBD` |
-| `Kokon-0.11.2-1.x86_64.rpm` (Fedora) | `TBD` |
+| `Kokon_0.11.2_x64-setup.exe` (Windows) | `802669d6c2cb8efdbc9de7ef6f8d43cdfce85187a79273f4381c23dfd3380b45` |
+| `Kokon_0.11.2_aarch64.dmg` (Mac, macOS 15+) | `2dfc3d798d76dcfe400bd04d399597ab78cc822f1c883a54b8e51b2db41b9442` |
+| `Kokon_0.11.2_amd64.deb` (Ubuntu, Debian, Mint) | `81c6e991c6e2afbe402e59914c7a919c8c7f4efa8842713b4c752afc70f15cda` |
+| `Kokon-0.11.2-1.x86_64.rpm` (Fedora) | `26109b866d274e82181991caf1c9c9188bb495a9c973072d9e330f22e9e38311` |
